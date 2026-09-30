@@ -1,0 +1,17 @@
+Origin:
+
+Preserve the burst size, SCB access and unsupported-request mode flags
+when selecting the optional RCB/MPS bit. The conditional expression must
+be grouped before it is combined with the other register flags.
+
+--- a/Silicon/Broadcom/Bcm27xx/Library/Bcm2712PciHostBridgeLib/Bcm2712PciHostBridge.c
++++ b/Silicon/Broadcom/Bcm27xx/Library/Bcm2712PciHostBridgeLib/Bcm2712PciHostBridge.c
+@@ -387,7 +387,7 @@
+     PCIE_MISC_MISC_CTRL_MAX_BURST_SIZE_128 << PCIE_MISC_MISC_CTRL_MAX_BURST_SIZE_SHIFT |
+     PCIE_MISC_MISC_CTRL_SCB_ACCESS_EN_MASK |
+     PCIE_MISC_MISC_CTRL_CFG_READ_UR_MODE_MASK |
+-    Pcie->Settings->RcbMatchMps ? PCIE_MISC_MISC_CTRL_PCIE_RCB_MPS_MODE_MASK : 0
++    (Pcie->Settings->RcbMatchMps ? PCIE_MISC_MISC_CTRL_PCIE_RCB_MPS_MODE_MASK : 0)
+     );
+ 
+   //

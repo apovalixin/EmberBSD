@@ -1,0 +1,47 @@
+#!/bin/sh
+#
+# PROVIDE: netguard
+# REQUIRE: NETWORKING
+#
+# A safety net for changes that can cut the stand off the network (it is
+# reached over Wi-Fi only). Arm it before such a change:
+#	mkdir -p /root/netguard && cp rollback.sh /root/netguard/ &&
+#	touch /root/netguard/armed
+# After the next boot it waits up to 8 minutes for the default gateway to
+# answer. If it does, the guard disarms; if not, it runs rollback.sh and
+# reboots.
+
+$_rc_subr_loaded . /etc/rc.subr
+
+name="netguard"
+rcvar=$name
+start_cmd="netguard_start"
+stop_cmd=":"
+
+netguard_start()
+{
+	dir=/root/netguard
+	[ -f $dir/armed ] || return 0
+	echo "netguard: armed, waiting for the network"
+	(
+		i=0
+		while [ $i -lt 96 ]; do
+			gw=$(route -n get default 2>/dev/null | awk '/gateway:/{print $2}')
+			if [ -n "$gw" ] && ping -n -c 1 -w 2 "$gw" >/dev/null 2>&1; then
+				rm -f $dir/armed
+				logger -t netguard "network up after $((i * 5)) s, disarmed"
+				exit 0
+			fi
+			sleep 5
+			i=$((i + 1))
+		done
+		logger -t netguard "no network for 8 minutes: rolling back"
+		rm -f $dir/armed
+		sh $dir/rollback.sh >> $dir/rollback.log 2>&1
+		sync
+		shutdown -r now "netguard rollback"
+	) </dev/null >/dev/null 2>&1 &
+}
+
+load_rc_config $name
+run_rc_command "$1"

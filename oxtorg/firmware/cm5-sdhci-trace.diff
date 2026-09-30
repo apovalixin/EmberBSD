@@ -1,0 +1,139 @@
+Origin:
+
+Optional RP1 console diagnostics for SDHCI capabilities, host phases
+and boot-device discovery. Read status registers without changing them.
+The default build has no new output or console routing.
+
+--- a/Silicon/Broadcom/Drivers/BrcmStbSdhciDxe/BrcmStbSdhciDxe.c
++++ b/Silicon/Broadcom/Drivers/BrcmStbSdhciDxe/BrcmStbSdhciDxe.c
+@@ -17,6 +17,31 @@
+ #include <Protocol/SdMmcOverride.h>
+ 
+ #include "BrcmStbSdhciDxe.h"
++#ifdef RP1_UART_CONSOLE
++#include <Library/SerialPortLib.h>
++#include <Library/BaseMemoryLib.h>
++#endif
++
++#ifdef RP1_UART_CONSOLE
++STATIC
++VOID
++SdhciDiagnosticHex (CONST CHAR8 *Label, UINT64 Value)
++{
++  STATIC CONST CHAR8  Digits[] = "0123456789abcdef";
++  CHAR8               Buffer[19];
++  UINTN               Index;
++
++  for (Index = 0; Index < 16; Index++) {
++    Buffer[Index] = Digits[(Value >> ((15 - Index) * 4)) & 15];
++  }
++
++  Buffer[16] = '\r';
++  Buffer[17] = '\n';
++  Buffer[18] = '\0';
++  SerialPortWrite ((UINT8 *)Label, AsciiStrLen (Label));
++  SerialPortWrite ((UINT8 *)Buffer, 18);
++}
++#endif
+ 
+ STATIC
+ EFI_STATUS
+@@ -51,6 +76,15 @@
+   Capability->Sdr50  = 0;
+   Capability->Sdr104 = 0;
+   Capability->Ddr50  = 0;
++#ifdef RP1_UART_CONSOLE
++  {
++    UINT64  RawCapability;
++
++    CopyMem (&RawCapability, Capability, sizeof (RawCapability));
++    SdhciDiagnosticHex ("[CM5 SDHCI] capabilities=", RawCapability);
++    SdhciDiagnosticHex ("[CM5 SDHCI] base MHz=", *BaseClkFreq);
++  }
++#endif
+ 
+   return EFI_SUCCESS;
+ }
+@@ -82,6 +116,12 @@
+     return EFI_UNSUPPORTED;
+   }
+ 
++#ifdef RP1_UART_CONSOLE
++  SdhciDiagnosticHex ("[CM5 SDHCI] phase=", PhaseType);
++  SdhciDiagnosticHex ("[CM5 SDHCI] present=", MmioRead32 (Device->HostAddress + 0x24));
++  SdhciDiagnosticHex ("[CM5 SDHCI] clock=", MmioRead32 (Device->HostAddress + 0x2c));
++#endif
++
+   switch (PhaseType) {
+     case EdkiiSdMmcSetSignalingVoltage:
+       if (PhaseData == NULL) {
+@@ -133,6 +173,13 @@
+                      ~SDIO_CFG_CTRL_SDCD_N_TEST_LEV,
+                      SDIO_CFG_CTRL_SDCD_N_TEST_EN);
+   }
++
++#ifdef RP1_UART_CONSOLE
++  SdhciDiagnosticHex ("[CM5 SDHCI] host=", This->HostAddress);
++  SdhciDiagnosticHex ("[CM5 SDHCI] removable=", This->IsSlotRemovable);
++  SdhciDiagnosticHex ("[CM5 SDHCI] config=", MmioRead32 (This->CfgAddress));
++  SdhciDiagnosticHex ("[CM5 SDHCI] pin select=", MmioRead32 (This->CfgAddress + 0x44));
++#endif
+ 
+   Status = RegisterNonDiscoverableMmioDevice (
+               NonDiscoverableDeviceTypeSdhci,
+--- a/Silicon/Broadcom/Drivers/BrcmStbSdhciDxe/BrcmStbSdhciDxe.inf
++++ b/Silicon/Broadcom/Drivers/BrcmStbSdhciDxe/BrcmStbSdhciDxe.inf
+@@ -24,6 +24,9 @@
+ 
+ [LibraryClasses]
+   DebugLib
++  BaseLib
++  BaseMemoryLib
++  SerialPortLib
+   IoLib
+   NonDiscoverableDeviceRegistrationLib
+   UefiLib
+--- a/Platform/RaspberryPi/RPi5/RPi5.dsc
++++ b/Platform/RaspberryPi/RPi5/RPi5.dsc
+@@ -657,7 +657,14 @@
+   MdeModulePkg/Bus/Sd/SdDxe/SdDxe.inf
+   MdeModulePkg/Bus/Sd/EmmcDxe/EmmcDxe.inf
+   MdeModulePkg/Bus/Pci/SdMmcPciHcDxe/SdMmcPciHcDxe.inf
++!if $(RP1_UART_CONSOLE) == TRUE
++  Silicon/Broadcom/Drivers/BrcmStbSdhciDxe/BrcmStbSdhciDxe.inf {
++    <LibraryClasses>
++      SerialPortLib|Platform/RaspberryPi/Library/Rp1SerialPortLib/Rp1SerialPortLib.inf
++  }
++!else
+   Silicon/Broadcom/Drivers/BrcmStbSdhciDxe/BrcmStbSdhciDxe.inf
++!endif
+ 
+   #
+   # Networking stack
+--- a/Platform/RaspberryPi/Library/PlatformBootManagerLib/PlatformBm.c
++++ b/Platform/RaspberryPi/Library/PlatformBootManagerLib/PlatformBm.c
+@@ -822,12 +822,24 @@
+     Print (BOOT_PROMPT);
+   }
+ 
++#ifdef RP1_UART_CONSOLE
++  SerialConPrint (L"\r\n[CM5 UEFI] boot discovery enter\r\n");
++#endif
+   Status = BootDiscoveryPolicyHandler ();
++#ifdef RP1_UART_CONSOLE
++  SerialConPrint (L"[CM5 UEFI] boot discovery returned\r\n");
++#endif
+   if (EFI_ERROR(Status)) {
+     DEBUG ((DEBUG_INFO, "Error applying Boot Discovery Policy:%r\n", Status));
+   }
+ 
++#ifdef RP1_UART_CONSOLE
++  SerialConPrint (L"\r\n[CM5 UEFI] boot discovery enter\r\n");
++#endif
+   Status = BootDiscoveryPolicyHandler ();
++#ifdef RP1_UART_CONSOLE
++  SerialConPrint (L"[CM5 UEFI] boot discovery returned\r\n");
++#endif
+   if (EFI_ERROR(Status)) {
+     DEBUG ((DEBUG_INFO, "Error applying Boot Discovery Policy:%r\n", Status));
+   }

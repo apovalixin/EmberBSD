@@ -1,0 +1,118 @@
+Origin:
+The VideoCore mailbox as a device for the OS: under SOCB, with the _HID and
+_CID BCM2849 of the Pi 4's RPIQ device, so that NetBSD's bcmmbox and
+vcmbox attach and give the CPU clock, the temperature and the real-time
+clock. The firmware's RTC runtime services then answer EFI_UNSUPPORTED:
+otherwise the firmware and the OS share the mailbox, and each drains
+replies meant for the other. After ExitBootServices the OS is the
+mailbox's only owner.
+
+diff --git a/Platform/RaspberryPi/Library/RpiRtcLib/RpiRtcLib.c b/Platform/RaspberryPi/Library/RpiRtcLib/RpiRtcLib.c
+index 298b367..d1204cf 100644
+--- a/Platform/RaspberryPi/Library/RpiRtcLib/RpiRtcLib.c
++++ b/Platform/RaspberryPi/Library/RpiRtcLib/RpiRtcLib.c
+@@ -63,6 +63,14 @@ LibGetTime (
+   EFI_STATUS  Status;
+   UINT32      EpochSeconds;
+ 
++  //
++  // Once the OS runs, the VideoCore mailbox is its own: two owners
++  // lose each other's replies (the OS drives the clock through it).
++  //
++  if (EfiAtRuntime ()) {
++    return EFI_UNSUPPORTED;
++  }
++
+   if (Time == NULL) {
+     return EFI_INVALID_PARAMETER;
+   }
+@@ -98,6 +106,13 @@ LibSetTime (
+   EFI_STATUS  Status;
+   UINT32      EpochSeconds;
+ 
++  //
++  // As in LibGetTime: at runtime the mailbox belongs to the OS.
++  //
++  if (EfiAtRuntime ()) {
++    return EFI_UNSUPPORTED;
++  }
++
+   if (Time == NULL || !IsTimeValid (Time)) {
+     return EFI_UNSUPPORTED;
+   }
+@@ -139,6 +154,13 @@ LibGetWakeupTime (
+   UINT32      EnableVal;
+   UINT32      PendingVal;
+ 
++  //
++  // As in LibGetTime: at runtime the mailbox belongs to the OS.
++  //
++  if (EfiAtRuntime ()) {
++    return EFI_UNSUPPORTED;
++  }
++
+   if (Time == NULL || Enabled == NULL || Pending == NULL) {
+     return EFI_INVALID_PARAMETER;
+   }
+@@ -199,6 +221,13 @@ LibSetWakeupTime (
+   EFI_STATUS  Status;
+   UINT32      EpochSeconds;
+ 
++  //
++  // As in LibGetTime: at runtime the mailbox belongs to the OS.
++  //
++  if (EfiAtRuntime ()) {
++    return EFI_UNSUPPORTED;
++  }
++
+   if (Enabled) {
+     if (Time == NULL || !IsTimeValid (Time)) {
+       return EFI_INVALID_PARAMETER;
+diff --git a/Platform/RaspberryPi/RPi5/AcpiTables/Dsdt.asl b/Platform/RaspberryPi/RPi5/AcpiTables/Dsdt.asl
+index aecfedc..7ba0914 100644
+--- a/Platform/RaspberryPi/RPi5/AcpiTables/Dsdt.asl
++++ b/Platform/RaspberryPi/RPi5/AcpiTables/Dsdt.asl
+@@ -152,6 +152,28 @@ DefinitionBlock ("Dsdt.aml", "DSDT", 2, "RPIFDN", "RPI5    ", 2)
+           }
+         })
+       }
++
++      //
++      // The VideoCore mailbox, for the OS: CPU clock, temperature,
++      // real-time clock. The firmware stops using it at runtime
++      // (RpiRtcLib), so the OS is its only owner once it runs. Named
++      // as on the Pi 4; under SOCB for its _DMA bus offset.
++      //
++      Device (MBX0) {
++        Name (_HID, "BCM2849")
++        Name (_CID, "BCM2849")
++        Name (_UID, 0x0)
++        Name (_CCA, 0x0)
++
++        Method (_CRS, 0x0, Serialized) {
++          Name (RBUF, ResourceTemplate () {
++            QWORDMEMORY_BUF (00, ResourceConsumer)
++            Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive) { BCM2712_MBOX_INTERRUPT }
++          })
++          QWORD_SET (00, BCM2712_MBOX_BASE, BCM2712_MBOX_LENGTH, 0)
++          Return (RBUF)
++        }
++      }
+     } // Device (SOCB)
+ 
+     //
+diff --git a/Silicon/Broadcom/Bcm27xx/Include/IndustryStandard/Bcm2712.h b/Silicon/Broadcom/Bcm27xx/Include/IndustryStandard/Bcm2712.h
+index 186df70..9ea52d3 100644
+--- a/Silicon/Broadcom/Bcm27xx/Include/IndustryStandard/Bcm2712.h
++++ b/Silicon/Broadcom/Bcm27xx/Include/IndustryStandard/Bcm2712.h
+@@ -21,6 +21,10 @@
+ #define BCM2712_PM_BASE                                   0x107d200000
+ #define BCM2712_PM_LENGTH                                 0x308
+ 
++#define BCM2712_MBOX_BASE                                 0x107c013880
++#define BCM2712_MBOX_LENGTH                               0x40
++#define BCM2712_MBOX_INTERRUPT                            65    // GIC_SPI 33 + 32
++
+ #define BCM2712_BRCMSTB_GIO_BASE                          0x107d508500
+ #define BCM2712_BRCMSTB_GIO_LENGTH                        0x40
+ #define BCM2712_BRCMSTB_GIO_AON_BASE                      0x107d517c00

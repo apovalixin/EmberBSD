@@ -1,0 +1,92 @@
+Origin:
+bcmmbox(4) polls the
+VideoCore mailbox when it has no interrupt, and the ACPI attachment never
+has one; the poll had no limit, so a mailbox that never answers stopped
+the boot for good in vcmbox_attach(). A polled read now gives up after
+one second with ETIMEDOUT. The request's buffer is then left to the
+VideoCore, which may still write its answer there.
+
+--- sys/arch/arm/broadcom/bcm2835_mbox.c.orig
++++ sys/arch/arm/broadcom/bcm2835_mbox.c
+@@ -120,10 +120,19 @@ bcmmbox_intr(void *cookie)
+ 	return ret;
+ }
+ 
+-void
++/*
++ * How long a polled read waits for the VideoCore to answer.  Polling
++ * is all the ACPI attachment does; without a limit a mailbox that
++ * never answers stops the boot for good in vcmbox_attach().
++ */
++#define	BCMMBOX_POLL_TIMEOUT_US	1000000
++
++int
+ bcmmbox_read(uint8_t chan, uint32_t *data)
+ {
+ 	struct bcm2835mbox_softc *sc = bcm2835mbox_sc;
++	u_int waited = 0;
++	int error = 0;
+ 
+ 	KASSERT(sc != NULL);
+ 
+@@ -131,16 +140,28 @@ bcmmbox_read(uint8_t chan, uint32_t *data)
+ 
+ 	mutex_enter(&sc->sc_intr_lock);
+ 	while (BCM2835_MBOX_CHAN(sc->sc_mbox[chan]) == 0) {
+-		if (cold || sc->sc_intrh == NULL)
++		if (cold || sc->sc_intrh == NULL) {
+ 			bcmmbox_intr1(sc, 0);
+-		else
++			if (BCM2835_MBOX_CHAN(sc->sc_mbox[chan]) != 0)
++				break;
++			if (waited >= BCMMBOX_POLL_TIMEOUT_US) {
++				error = ETIMEDOUT;
++				break;
++			}
++			delay(10);
++			waited += 10;
++		} else
+ 			cv_wait(&sc->sc_chan[chan], &sc->sc_intr_lock);
+ 	}
+-	*data = BCM2835_MBOX_DATA(sc->sc_mbox[chan]);
+-	sc->sc_mbox[chan] = 0;
++	if (error == 0) {
++		*data = BCM2835_MBOX_DATA(sc->sc_mbox[chan]);
++		sc->sc_mbox[chan] = 0;
++	}
+ 	mutex_exit(&sc->sc_intr_lock);
+ 
+ 	mutex_exit(&sc->sc_lock);
++
++	return error;
+ }
+ 
+ void
+@@ -193,7 +214,15 @@ bcmmbox_request(uint8_t chan, void *buf, size_t buflen, uint32_t *pres)
+ 	bus_dmamap_sync(sc->sc_dmat, map, 0, buflen,
+ 	     BUS_DMASYNC_PREWRITE|BUS_DMASYNC_PREREAD);
+ 	bcmmbox_write(chan, map->dm_segs[0].ds_addr);
+-	bcmmbox_read(chan, pres);
++	error = bcmmbox_read(chan, pres);
++	if (error) {
++		/*
++		 * The VideoCore may still write its answer here: leave the
++		 * buffer to it rather than give the memory back.
++		 */
++		device_printf(sc->sc_dev, "no answer on channel %u\n", chan);
++		return error;
++	}
+ 	bus_dmamap_sync(sc->sc_dmat, map, 0, buflen,
+ 	    BUS_DMASYNC_POSTWRITE|BUS_DMASYNC_POSTREAD);
+ 
+--- sys/arch/arm/broadcom/bcm2835_mbox.h.orig
++++ sys/arch/arm/broadcom/bcm2835_mbox.h
+@@ -65,7 +65,7 @@ void bcm2835_mbox_write(bus_space_tag_t, bus_space_handle_t, uint8_t,
+ 
+ void bcmmbox_attach(struct bcm2835mbox_softc *);
+ int bcmmbox_intr(void *);
+-void bcmmbox_read(uint8_t, uint32_t *);
++int bcmmbox_read(uint8_t, uint32_t *);
+ void bcmmbox_write(uint8_t, uint32_t);
+ 
+ int bcmmbox_request(uint8_t, void *, size_t, uint32_t *);

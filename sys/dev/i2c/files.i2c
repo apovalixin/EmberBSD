@@ -1,4 +1,4 @@
-#	$NetBSD: files.i2c,v 1.133.2.1 2026/09/18 15:32:35 martin Exp $
+#	$NetBSD: files.i2c,v 1.133 2025/06/03 19:22:22 rjs Exp $
 
 obsolete defflag	opt_i2cbus.h		I2C_SCAN
 define	i2cbus { }
@@ -460,17 +460,7 @@ device emcfan: gpiobus, sysmon_envsys
 attach emcfan at iic
 file dev/i2c/emcfan.c				emcfan
 
-# Texas Instruments LM95221 temperature sensor
-device	lm95221ts: sysmon_envsys
-attach	lm95221ts at iic
-file	dev/i2c/lm95221.c			lm95221ts
-
-# NXP LM75A temperature sensor
-device	nxp75a: sysmon_envsys
-attach	nxp75a at iic
-file	dev/i2c/nxp75a.c			nxp75a
-
-# ADM7462 system monitor
-device	adt7462sm: sysmon_envsys
-attach	adt7462sm at iic
-file	dev/i2c/adt7462.c			adt7462sm
+# Raspberry Pi 5 WM8960 Audio HAT; loaded only when explicitly requested.
+device rp1wmcodec: audiobus
+attach rp1wmcodec at iic
+file dev/i2c/rp1wmcodec.c rp1wmcodec

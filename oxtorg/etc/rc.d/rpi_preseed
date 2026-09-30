@@ -1,0 +1,233 @@
+#!/bin/sh
+#
+# PROVIDE: rpi_preseed
+# REQUIRE: mountcritlocal
+# BEFORE: network
+#
+# First-boot settings from Raspberry Pi Imager. For an OS whose manifest
+# says "init_format": "rpi-preseed", Imager writes rpi-preseed.toml to the
+# FAT partition (rpi-imager src/customization_generator.cpp,
+# generateRpiPreseedToml). This applies what NetBSD has a place for: host
+# name, the account with its SSH keys, sshd, Wi-Fi with the country, time
+# zone and keyboard, the header I2C; then it removes the file, which holds
+# the Wi-Fi key. Imager hashes the password with sha256crypt or yescrypt,
+# which NetBSD's crypt(3) cannot check: such an account keeps no password,
+# log in with an SSH key.
+#
+# rpi_preseed_file	the file (default /boot/rpi-preseed.toml)
+# rpi_preseed_root	prefix for the files written (tests)
+# rpi_preseed_dryrun	YES: print the commands instead of running them
+
+$_rc_subr_loaded . /etc/rc.subr
+
+name="rpi_preseed"
+rcvar=$name
+start_cmd="rpi_preseed_start"
+stop_cmd=":"
+
+# The TOML Imager writes, as "section.key<TAB>value" lines: strings
+# unescaped (only \\ and \" occur), each array item on its own line.
+rpi_preseed_parse()
+{
+	awk '
+	function qstr(s,   out, c) {	# s starts after the opening quote
+		out = ""
+		while (length(s) > 0) {
+			c = substr(s, 1, 1)
+			if (c == "\\") { out = out substr(s, 2, 1); s = substr(s, 3); continue }
+			if (c == "\"") { rest = substr(s, 2); return out }
+			out = out c; s = substr(s, 2)
+		}
+		rest = ""; return out
+	}
+	function items(s, key) {	# every quoted string of s
+		while ((i = index(s, "\"")) > 0) {
+			v = qstr(substr(s, i + 1)); s = rest
+			print key "\t" v
+		}
+	}
+	/^[ \t]*(#|$)/ { next }
+	inarr { items($0, akey); if ($0 ~ /\]/) inarr = 0; next }
+	/^[ \t]*\[[A-Za-z0-9_]+\][ \t]*$/ {
+		sect = $0; gsub(/[][ \t]/, "", sect); next
+	}
+	/=/ {
+		key = $0; sub(/[ \t]*=.*/, "", key); gsub(/^[ \t]+/, "", key)
+		val = $0; sub(/^[^=]*=[ \t]*/, "", val)
+		full = (sect == "") ? key : sect "." key
+		if (val ~ /^"/) { print full "\t" qstr(substr(val, 2)) }
+		else if (val ~ /^\[/) { items(val, full); if (val !~ /\]/) { inarr = 1; akey = full } }
+		else { sub(/[ \t]*(#.*)?$/, "", val); print full "\t" val }
+	}' "$1"
+}
+
+rpi_preseed_start()
+{
+	f=${rpi_preseed_file:-/boot/rpi-preseed.toml}
+	root=${rpi_preseed_root:-}
+	rpi_preseed_dryrun=${rpi_preseed_dryrun:-NO}
+	case "$f" in
+	/boot/*) [ -f "$f" ] || mount /boot >/dev/null 2>&1 ;;
+	esac
+	[ -f "$f" ] || return 0
+
+	echo "rpi_preseed: applying $f"
+	kv=$(rpi_preseed_parse "$f")
+	get() { printf '%s\n' "$kv" | awk -F '\t' -v k="$1" '$1 == k { print substr($0, length(k) + 2); exit }'; }
+	all() { printf '%s\n' "$kv" | awk -F '\t' -v k="$1" '$1 == k { print substr($0, length(k) + 2) }'; }
+	# syslogd is not up yet: the lines go to the console, /var/run/rc.log
+	# and a log of their own.
+	say() { echo "rpi_preseed: $*"; echo "$(date '+%F %T') $*" >> "$root/var/log/rpi_preseed.log"; }
+	run() { if checkyesno rpi_preseed_dryrun; then echo "would run: $*"; else "$@"; fi; }
+	# Values end up in rc.conf, which sh runs at every boot: each one has
+	# to match its format whole, or it is dropped.
+	valid() { printf '%s' "$2" | grep -Eqx "$1"; }
+	keep() {	# FORMAT NAME VALUE: VALUE, or nothing with a warning
+		if [ -z "$3" ] || valid "$1" "$3"; then printf '%s' "$3"; else say "$2 rejected" >&2; fi
+	}
+	rcset() {	# KEY VALUE in rc.conf
+		c="$root/etc/rc.conf"
+		if grep -q "^$1=" "$c" 2>/dev/null; then
+			sed "s|^$1=.*|$1=$2|" "$c" > "$c.new" && mv "$c.new" "$c"
+		else
+			echo "$1=$2" >> "$c"
+		fi
+	}
+
+	host=$(keep '[A-Za-z0-9]([A-Za-z0-9.-]{0,61}[A-Za-z0-9])?' "host name" "$(get system.hostname)")
+	if [ -n "$host" ]; then
+		rcset hostname "$host"
+		echo "$host" > "$root/etc/myname"
+		run hostname "$host"
+		say "host name $host"
+	fi
+
+	user=$(keep '[a-z_][a-z0-9_-]{0,30}' "account name" "$(get user.name)")
+	if [ -n "$user" ]; then
+		if ! id "$user" >/dev/null 2>&1; then
+			groups=$(all user.groups | sed 's/^sudo$/wheel/' | grep -Ex '[a-z_][a-z0-9_-]{0,30}' |
+			    sort -u | paste -sd, -)
+			run useradd -m -s /bin/sh ${groups:+-G "$groups"} "$user"
+			say "account $user${groups:+ in $groups}"
+		fi
+		hash=$(get user.password)
+		case "$hash" in
+		'') ;;
+		\$1\$*|\$2a\$*|\$2b\$*|\$sha1\$*|\$argon2*)
+			run usermod -p "$hash" "$user"; say "password of $user set" ;;
+		*)
+			say "password of $user not set: crypt(3) cannot check its hash; log in with an SSH key" ;;
+		esac
+	fi
+
+	if [ "$(get ssh.enabled)" = true ]; then
+		rcset sshd YES
+		sc="$root/etc/ssh/sshd_config"
+		pa=no; [ "$(get ssh.password_authentication)" = true ] && pa=yes
+		if [ -f "$sc" ]; then
+			grep -v '^PasswordAuthentication ' "$sc" > "$sc.new" &&
+			    echo "PasswordAuthentication $pa" >> "$sc.new" && mv "$sc.new" "$sc"
+		fi
+		keys=$(all ssh.authorized_keys)
+		if [ -n "$user" ] && [ -n "$keys" ]; then
+			home=$(awk -F: -v u="$user" '$1 == u { print $6 }' /etc/passwd)
+			home="$root${home:-/home/$user}"
+			run mkdir -p "$home/.ssh"
+			ak="$home/.ssh/authorized_keys"
+			if ! checkyesno rpi_preseed_dryrun; then
+				printf '%s\n' "$keys" | while IFS= read -r k; do
+					grep -qxF "$k" "$ak" 2>/dev/null || echo "$k" >> "$ak"
+				done
+				chmod 700 "$home/.ssh"; chmod 600 "$ak"
+				chown -R "$user" "$home/.ssh" 2>/dev/null
+			fi
+			say "sshd on, $(printf '%s\n' "$keys" | wc -l | tr -d ' ') key(s) for $user, password login $pa"
+		else
+			say "sshd on, password login $pa"
+		fi
+	fi
+
+	net=
+	ssid=$(get wlan.ssid)
+	ssidhex=$(keep '([0-9A-Fa-f]{2}){1,32}' "SSID" "$(get wlan.ssid_hex)")
+	[ -z "$ssidhex" ] && [ -n "$ssid" ] &&
+	    ssidhex=$(printf '%s' "$ssid" | od -An -tx1 | tr -d ' \n')
+	if [ -n "$ssidhex" ]; then
+		pass=$(get wlan.password)
+		if [ -z "$pass" ]; then
+			net="key_mgmt=NONE"
+		elif [ "$(get wlan.password_encrypted)" = true ]; then
+			pass=$(keep '[0-9A-Fa-f]{64}' "Wi-Fi key" "$pass")
+			net=${pass:+psk=$pass}
+		else
+			pass=$(keep '[^"]{8,63}' "Wi-Fi passphrase" "$pass")
+			net=${pass:+psk=\"$pass\"}
+		fi
+		scan=; [ "$(get wlan.hidden)" = true ] && scan="scan_ssid=1"
+	fi
+	if [ -n "$ssidhex" ] && [ -z "$net" ]; then
+		say "Wi-Fi left as is"
+	elif [ -n "$ssidhex" ]; then
+		country=$(keep '[A-Z]{2}' "country" "$(get wlan.country)")
+		w="$root/etc/wpa_supplicant.conf"
+		umask 077
+		{
+			echo "ctrl_interface=/var/run/wpa_supplicant"
+			echo "ctrl_interface_group=wheel"
+			[ -n "$country" ] && echo "country=$country"
+			echo "network={"
+			echo "	ssid=$ssidhex"
+			echo "	$net"
+			[ -n "$scan" ] && echo "	$scan"
+			echo "}"
+		} > "$w"
+		umask 022
+		rcset wpa_supplicant YES
+		rcset dhcpcd YES
+		say "Wi-Fi network ${ssid:-$ssidhex}${country:+, country $country (bwfm keeps the firmware default)}"
+	fi
+
+	tz=$(keep '[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*' "time zone" "$(get locale.timezone)")
+	if [ -n "$tz" ]; then
+		if [ -f "/usr/share/zoneinfo/$tz" ]; then
+			run ln -fs "/usr/share/zoneinfo/$tz" "$root/etc/localtime"
+			say "time zone $tz"
+		else
+			say "time zone $tz unknown, left as is"
+		fi
+	fi
+
+	km=$(get locale.keymap)
+	case "$km" in
+	'') ;;
+	gb) enc=uk ;;
+	se) enc=sv ;;
+	us|de|fr|es|it|pt|ru|pl|dk|no|jp|be|hu|ua) enc=$km ;;
+	*) enc= ; say "keyboard $km has no wskbd encoding here, left as is" ;;
+	esac
+	if [ -n "$enc" ]; then
+		wc="$root/etc/wscons.conf"
+		grep -v '^encoding' "$wc" > "$wc.new" 2>/dev/null; echo "encoding $enc" >> "$wc.new"
+		mv "$wc.new" "$wc"
+		grep -q '^wscons=' "$root/etc/rc.conf" 2>/dev/null || rcset wscons YES
+		say "keyboard $enc"
+	fi
+
+	if [ "$(get interfaces.i2c)" = true ]; then
+		ct="$root/boot/config.txt"
+		if ! grep -q '^dtparam=i2c_arm=on' "$ct" 2>/dev/null; then
+			printf '\n[all]\ndtparam=i2c_arm=on\n' >> "$ct"
+			say "header I2C on from the next boot"
+		fi
+	fi
+	for k in spi onewire usb_gadget serial; do
+		[ -n "$(get interfaces.$k)" ] && say "interface $k: not supported, left as is"
+	done
+	[ "$(get connect.enabled)" = true ] && say "Raspberry Pi Connect: not on NetBSD, skipped"
+
+	run rm -f "$f"
+	say "done; $f removed"
+}
+
+load_rc_config $name
+run_rc_command "$1"

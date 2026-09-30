@@ -1,0 +1,53 @@
+Origin:
+Keep the microSD card at 3.3 V in UEFI and off the PHY DLL clock. With
+a UHS-I card, edk2's SD driver switches the card to 1.8 V (CMD11) and
+tunes when the slot claims SDR50, SDR104 or DDR50; StartDevice also
+always selects the PHY DLL as the slot's clock source. A 32 GB UHS-I
+card that Raspberry Pi OS boots from was read by UEFI that way, and
+NetBSD, which never switches voltage or tunes, then got answers to
+commands but no data (ACMD51 timed out, no root). With the UHS-I modes
+cleared but the DLL kept, UEFI itself no longer booted from the card.
+Clear the three UHS-I modes in the slot capability override and leave
+the clock source to the strap, as Linux does without tuning modes (and
+as wifi-sdio2.diff does for the Wi-Fi slot).
+
+diff --git a/Silicon/Broadcom/Drivers/BrcmStbSdhciDxe/BrcmStbSdhciDxe.c b/Silicon/Broadcom/Drivers/BrcmStbSdhciDxe/BrcmStbSdhciDxe.c
+index 80e30a2..d212a56 100644
+--- a/Silicon/Broadcom/Drivers/BrcmStbSdhciDxe/BrcmStbSdhciDxe.c
++++ b/Silicon/Broadcom/Drivers/BrcmStbSdhciDxe/BrcmStbSdhciDxe.c
+@@ -42,6 +42,16 @@ SdMmcCapability (
+   // Hardware retuning is not supported.
+   Capability->RetuningMod = 0;
+ 
++  //
++  // No UHS-I modes, so a UHS-I card is never switched to 1.8 V. A card
++  // stays at 1.8 V until its power is cut, and nothing cuts it before
++  // the OS: an OS that talks to it at 3.3 V (NetBSD) then gets answers
++  // to commands but no data. High Speed at 3.3 V is enough for booting.
++  //
++  Capability->Sdr50  = 0;
++  Capability->Sdr104 = 0;
++  Capability->Ddr50  = 0;
++
+   return EFI_SUCCESS;
+ }
+ 
+@@ -106,12 +116,13 @@ StartDevice (
+   EFI_STATUS Status;
+ 
+   //
+-  // Set the PHY DLL as clock source to support higher speed modes
+-  // reliably.
++  // The PHY DLL clock source is for the modes that tune (SDR50, SDR104),
++  // which SdMmcCapability takes away. Without tuning its sample point
++  // loses data on some cards, in UEFI and in the OS after it; keep the
++  // strap's clock source, as Linux does when it offers no tuning modes.
+   //
+-  MmioAndThenOr32 (This->CfgAddress + SDIO_CFG_MAX_50MHZ_MODE,
+-                   ~SDIO_CFG_MAX_50MHZ_MODE_ENABLE,
+-                   SDIO_CFG_MAX_50MHZ_MODE_STRAP_OVERRIDE);
++  MmioAnd32 (This->CfgAddress + SDIO_CFG_MAX_50MHZ_MODE,
++             ~SDIO_CFG_MAX_50MHZ_MODE_STRAP_OVERRIDE);
+ 
+   if (This->IsSlotRemovable) {
+     MmioAndThenOr32 (This->CfgAddress + SDIO_CFG_SD_PIN_SEL,

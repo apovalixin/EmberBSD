@@ -41,6 +41,7 @@ __KERNEL_RCSID(0, "$NetBSD: plcom_acpi.c,v 1.4 2023/01/24 06:56:40 mlelstv Exp $
 #include <dev/acpi/acpireg.h>
 #include <dev/acpi/acpivar.h>
 #include <dev/acpi/acpi_intr.h>
+#include <dev/acpi/acpi_util.h>
 
 #include <evbarm/dev/plcomreg.h>
 #include <evbarm/dev/plcomvar.h>
@@ -84,6 +85,8 @@ plcom_acpi_attach(device_t parent, device_t self, void *aux)
 	struct acpi_irq *irq;
 	ACPI_STATUS rv;
 	void *ih;
+	ACPI_INTEGER shared_rp1_irq;
+	int ipl = IPL_SERIAL;
 
 	sc->sc_dev = self;
 
@@ -128,8 +131,17 @@ plcom_acpi_attach(device_t parent, device_t self, void *aux)
 
 	plcom_attach_subr(sc);
 
+	/* RP1 shares PCIe INTA with USB and Ethernet at IPL_VM. */
+	if (ACPI_SUCCESS(acpi_dsd_integer(aa->aa_node->ad_handle,
+	    "raspberrypi,shared-rp1-irq", &shared_rp1_irq)) &&
+	    shared_rp1_irq == 1) {
+		/* plcomintr protects UART registers with its spin mutex. */
+		ipl = IPL_VM;
+		aprint_verbose_dev(self, "shared RP1 interrupt at IPL_VM\n");
+	}
+
 	ih = acpi_intr_establish(self, (uint64_t)aa->aa_node->ad_handle,
-	    IPL_SERIAL, true, plcomintr, sc, device_xname(self));
+	    ipl, true, plcomintr, sc, device_xname(self));
 	if (ih == NULL) {
 		aprint_error_dev(self, "couldn't install interrupt handler\n");
 		return;

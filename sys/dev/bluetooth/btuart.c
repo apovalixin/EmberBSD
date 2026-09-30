@@ -394,6 +394,7 @@ btuartinput(int c, struct tty *tp)
 	if (sc->sc_want > 0)
 		return 0;	/* want more */
 
+again:
 	switch (sc->sc_state) {
 	case BTUART_RECV_PKT_TYPE:	/* Got packet type */
 
@@ -472,6 +473,10 @@ btuartinput(int c, struct tty *tp)
 		panic("%s: invalid state %d!\n",
 		    device_xname(sc->sc_dev), sc->sc_state);
 	}
+
+	/* Complete an empty packet without consuming the next packet type. */
+	if (sc->sc_rxp != NULL && sc->sc_want == 0)
+		goto again;
 
 	return 0;
 }

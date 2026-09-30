@@ -1,0 +1,224 @@
+/* $NetBSD$ */
+
+/*
+ * Copyright (c) 2026
+ * All rights reserved.
+ *
+ * Modelled on genet_acpi.c and zynq_cemac.c.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
+ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
+ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
+ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
+ * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
+/*
+ * Cadence GEM described by ACPI: the Ethernet of the Raspberry Pi 5,
+ * behind its RP1 south bridge, as the eotics-com rpi5-uefi firmware
+ * hands it over (_HID PRP0001, _DSD compatible "cdns,macb").
+ *
+ * The firmware enables the clocks, takes the PHY out of reset and
+ * writes the board's MAC address into SA1; everything else is ours.
+ * The PHY is a BCM54213PE wired as rgmii-id, so the delays are set in
+ * the PHY. The interrupt is RP1's one INTx line, shared with its two
+ * xHCI controllers.
+ */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD$");
+
+#include <sys/param.h>
+#include <sys/bus.h>
+#include <sys/device.h>
+#include <sys/module.h>
+
+#include <net/if.h>
+#include <net/if_ether.h>
+#include <net/if_media.h>
+
+#include <dev/mii/miivar.h>
+
+#include <dev/acpi/acpireg.h>
+#include <dev/acpi/acpivar.h>
+#include <dev/acpi/acpi_intr.h>
+
+#include <dev/cadence/cemacreg.h>
+#include <dev/cadence/if_cemacvar.h>
+
+static const struct device_compatible_entry compat_data[] = {
+	{ .compat = "cdns,macb" },
+	DEVICE_COMPAT_EOL
+};
+
+static int	cemac_acpi_match(device_t, cfdata_t, void *);
+static void	cemac_acpi_attach(device_t, device_t, void *);
+
+CFATTACH_DECL_NEW(cemac_acpi, sizeof(struct cemac_softc),
+    cemac_acpi_match, cemac_acpi_attach, NULL, NULL);
+
+static int
+cemac_acpi_match(device_t parent, cfdata_t cf, void *aux)
+{
+	struct acpi_attach_args *aa = aux;
+
+	return acpi_compatible_match(aa, compat_data);
+}
+
+static void
+cemac_acpi_attach(device_t parent, device_t self, void *aux)
+{
+	struct cemac_softc * const sc = device_private(self);
+	struct acpi_attach_args *aa = aux;
+	ACPI_HANDLE handle = aa->aa_node->ad_handle;
+	struct acpi_resources res;
+	struct acpi_mem *mem;
+	struct acpi_irq *irq;
+	uint8_t enaddr[ETHER_ADDR_LEN];
+	uint32_t lo, hi;
+	ACPI_STATUS rv;
+	void *ih;
+	static const struct {
+		const char *name;
+		bus_size_t off;
+	} fwregs[] = {
+		{ "MID", 0x00fc },
+		{ "DCFG1", GEM_DCFG1 },
+		{ "DCFG6", GEM_DCFG6 },
+		{ "NCR", ETH_CTL },
+		{ "NCFGR", ETH_CFG },
+		{ "USRIO", GEM_USER_IO },
+		{ "DMACFG", GEM_DMA_CFG },
+	};
+	uint32_t fwval[__arraycount(fwregs)];
+
+	sc->sc_dev = self;
+
+	rv = acpi_resource_parse(self, handle, "_CRS",
+	    &res, &acpi_resource_parse_ops_default);
+	if (ACPI_FAILURE(rv))
+		return;
+
+	mem = acpi_res_mem(&res, 0);
+	if (mem == NULL) {
+		aprint_error_dev(self, "couldn't find mem resource\n");
+		goto done;
+	}
+	irq = acpi_res_irq(&res, 0);
+	if (irq == NULL) {
+		aprint_error_dev(self, "couldn't find irq resource\n");
+		goto done;
+	}
+
+	sc->sc_iot = aa->aa_memt;
+	if (bus_space_map(sc->sc_iot, mem->ar_base, mem->ar_length, 0,
+	    &sc->sc_ioh) != 0) {
+		aprint_error_dev(self, "couldn't map registers\n");
+		goto done;
+	}
+	/*
+	 * cemac's descriptors hold 32-bit addresses: the 32-bit tag keeps
+	 * the rings and buffers below 4 GB and bounces what is above.
+	 */
+	sc->sc_dmat = aa->aa_dmat;
+
+	/*
+	 * How the firmware left the core, before cemac_attach_common
+	 * overwrites it, and what the core was built with. Printed while
+	 * the driver is young: a board with a surprise shows it in dmesg.
+	 */
+	for (u_int i = 0; i < __arraycount(fwregs); i++) {
+		fwval[i] = bus_space_read_4(sc->sc_iot, sc->sc_ioh,
+		    fwregs[i].off);
+	}
+
+	/* The firmware's address, before cemac_attach_common rewrites SA1. */
+	lo = bus_space_read_4(sc->sc_iot, sc->sc_ioh, GEM_SA1L);
+	hi = bus_space_read_4(sc->sc_iot, sc->sc_ioh, GEM_SA1H);
+	enaddr[0] = lo & 0xff;
+	enaddr[1] = (lo >> 8) & 0xff;
+	enaddr[2] = (lo >> 16) & 0xff;
+	enaddr[3] = (lo >> 24) & 0xff;
+	enaddr[4] = hi & 0xff;
+	enaddr[5] = (hi >> 8) & 0xff;
+	if ((lo != 0 || (hi & 0xffff) != 0) && (enaddr[0] & 1) == 0) {
+		prop_dictionary_set_data(device_properties(self),
+		    "mac-address", enaddr, ETHER_ADDR_LEN);
+	} else {
+		aprint_error_dev(self,
+		    "no MAC address from the firmware, using a made-up one\n");
+	}
+
+	sc->cemac_flags = CEMAC_FLAG_GEM | CEMAC_FLAG_RGMII;
+	sc->sc_phyno = MII_PHY_ANY;
+	/* RP1's pclk is 200 MHz; /96 keeps MDC under 2.5 MHz. */
+	sc->sc_mdc_clk = GEM_CFG_CLK_96;
+	/* rgmii-id: the PHY adds both delays (OpenBSD cad(4), 971cb56de2ec). */
+	sc->sc_mii_flags = MIIF_RXID | MIIF_TXID;
+
+	cemac_attach_common(sc);
+
+	aprint_normal_dev(self, "firmware left");
+	for (u_int i = 0; i < __arraycount(fwregs); i++)
+		aprint_normal(" %s %08x", fwregs[i].name, fwval[i]);
+	aprint_normal("\n");
+
+	/*
+	 * Only now: the line is shared with RP1's xHCI and may fire at
+	 * once, and cemac_intr takes the locks cemac_attach_common makes.
+	 * mpsafe, as the line's other handlers are.
+	 */
+	ih = acpi_intr_establish(self, (uint64_t)(uintptr_t)handle, IPL_NET,
+	    true, cemac_intr, sc, device_xname(self));
+	if (ih == NULL)
+		aprint_error_dev(self, "couldn't establish interrupt\n");
+
+done:
+	acpi_resource_cleanup(&res);
+}
+
+MODULE(MODULE_CLASS_DRIVER, if_cemac_acpi, NULL);
+
+#ifdef _MODULE
+#include "ioconf.c"
+#endif
+
+static int
+if_cemac_acpi_modcmd(modcmd_t cmd, void *aux)
+{
+	int error = 0;
+
+	switch (cmd) {
+	case MODULE_CMD_INIT:
+#ifdef _MODULE
+		error = config_init_component(cfdriver_ioconf_if_cemac_acpi,
+		    cfattach_ioconf_if_cemac_acpi, cfdata_ioconf_if_cemac_acpi);
+#endif
+		break;
+	case MODULE_CMD_FINI:
+#ifdef _MODULE
+		error = config_fini_component(cfdriver_ioconf_if_cemac_acpi,
+		    cfattach_ioconf_if_cemac_acpi, cfdata_ioconf_if_cemac_acpi);
+#endif
+		break;
+	default:
+		error = ENOTTY;
+	}
+
+	return error;
+}

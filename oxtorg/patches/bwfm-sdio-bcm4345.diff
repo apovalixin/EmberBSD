@@ -1,0 +1,18 @@
+Origin: NetBSD trunk, sys/dev/sdmmc/if_bwfm_sdio.c 1.34 (skrll, 2026-06-15),
+"Match another chip version found in RPI 5." The Pi 5 Wi-Fi module
+reports product 0x4345. Drop this diff once netbsd-11 has the change.
+
+--- sys/dev/sdmmc/if_bwfm_sdio.c.orig
++++ sys/dev/sdmmc/if_bwfm_sdio.c
+@@ -292,6 +292,11 @@
+ 	},
+ 	{
+ 		SDMMC_VENDOR_BROADCOM,
++		SDMMC_PRODUCT_BROADCOM_BCM4345,
++		SDMMC_CIS_BROADCOM_BCM4345
++	},
++	{
++		SDMMC_VENDOR_BROADCOM,
+ 		SDMMC_PRODUCT_BROADCOM_BCM43143,
+ 		SDMMC_CIS_BROADCOM_BCM43143
+ 	},

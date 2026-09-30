@@ -72,6 +72,9 @@ struct vcprop_tag {
 #define	VCPROPTAG_GET_CLOCK_MEASURED	0x00030047
 #define	VCPROPTAG_NOTIFY_REBOOT		0x00030048
 
+#define	VCPROPTAG_GET_RTC_REG		0x00030087
+#define	VCPROPTAG_SET_RTC_REG		0x00038087
+
 #define VCPROPTAG_GET_VOLTAGE		0x00030003
 #define VCPROPTAG_SET_VOLTAGE		0x00038003
 #define VCPROPTAG_GET_MIN_VOLTAGE	0x00030008
@@ -339,6 +342,21 @@ struct vcprop_tag_voltage {
 struct vcprop_tag_temperature {
 	struct vcprop_tag tag;
 	uint32_t id;
+	uint32_t value;
+};
+
+struct vcprop_tag_throttled {
+	struct vcprop_tag tag;
+	uint32_t value;
+#define	VCPROP_THROTTLED_UNDERVOLT	__BIT(0)
+#define	VCPROP_THROTTLED_THROTTLED	__BIT(2)
+#define	VCPROP_THROTTLED_SINCE(b)	((b) << 16)
+};
+
+struct vcprop_tag_rtcreg {
+	struct vcprop_tag tag;
+	uint32_t reg;
+#define	VCPROP_RTC_TIME		0	/* seconds since 1970 */
 	uint32_t value;
 };
 

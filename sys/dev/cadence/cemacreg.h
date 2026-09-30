@@ -90,6 +90,7 @@
  */
 
 #define GEM_USER_IO	0x000C
+#define  GEM_USER_IO_RGMII	__BIT(0)	/* RGMII to the PHY */
 #define GEM_DMA_CFG	0x0010	/* DMA Configuration */
 #define  GEM_DMA_CFG_DISC_WHEN_NO_AHB		__BIT(24)
 #define  GEM_DMA_CFG_RX_BUF_SIZE		__BITS(23, 16)
@@ -107,14 +108,20 @@
 #define	GEM_SA2H	0x0094
 #define	GEM_SA3L	0x0098
 #define	GEM_SA3H	0x009C
-#define	GEM_SA4L	0x0090
-#define	GEM_SA4H	0x0094
+#define	GEM_SA4L	0x00A0
+#define	GEM_SA4H	0x00A4
 #define	GEM_SCOL	0x0138
 #define	GEM_MCOL	0x013C
+#define	GEM_DCFG1	0x0280
+#define  GEM_DCFG1_DBWDEF	__BITS(27, 25)	/* 1: 32, 2: 64, 4: 128 bits */
 #define	GEM_DCFG2	0x0284
 #define	GEM_DCFG3	0x0288
 #define	GEM_DCFG4	0x028C
 #define	GEM_DCFG5	0x0290
+#define	GEM_DCFG6	0x0294
+#define  GEM_DCFG6_DAW64	__BIT(23)	/* 64-bit DMA addressing */
+#define	GEM_TBQPH	0x04C8	/* upper 32 bits of the TX queue */
+#define	GEM_RBQPH	0x04D4	/* upper 32 bits of the RX queue */
 
 #define ETH_SIZE	0x1000
 

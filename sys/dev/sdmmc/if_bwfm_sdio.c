@@ -231,6 +231,9 @@ static const struct bwfm_firmware_selector bwfm_sdio_fwtab[] = {
 	BWFM_FW_ENTRY(BRCM_CC_43430_CHIP_ID,
 		      BWFM_FWSEL_REV_EQ(0), "brcmfmac43430a0-sdio"),
 	BWFM_FW_ENTRY(BRCM_CC_43430_CHIP_ID,
+		      BWFM_FWSEL_REV_EQ(2), "brcmfmac43436-sdio"),
+
+	BWFM_FW_ENTRY(BRCM_CC_43430_CHIP_ID,
 		      BWFM_FWSEL_REV_GE(1), "brcmfmac43430-sdio"),
 
 	BWFM_FW_ENTRY(BRCM_CC_4345_CHIP_ID,
@@ -289,6 +292,11 @@ static const struct bwfm_sdio_product {
 		SDMMC_VENDOR_BROADCOM,
 		SDMMC_PRODUCT_BROADCOM_BCM4334,
 		SDMMC_CIS_BROADCOM_BCM4334
+	},
+	{
+		SDMMC_VENDOR_BROADCOM,
+		SDMMC_PRODUCT_BROADCOM_BCM4345,
+		SDMMC_CIS_BROADCOM_BCM4345
 	},
 	{
 		SDMMC_VENDOR_BROADCOM,
@@ -1898,7 +1906,7 @@ bwfm_sdio_rx_glom(struct bwfm_sdio_softc *sc, uint16_t *sublen, int nsub,
 	struct bwfm_sdio_swhdr swhdr;
 	struct bwfm_proto_bcdc_hdr *bcdc;
 	struct mbuf *m, *m0;
-	size_t flen, off, hoff;
+	size_t flen, off, hoff, slen;
 	int i;
 	const size_t hdrlen = sizeof(hwhdr) + sizeof(swhdr);
 
@@ -1916,18 +1924,19 @@ bwfm_sdio_rx_glom(struct bwfm_sdio_softc *sc, uint16_t *sublen, int nsub,
 			return;
 		}
 		bwfm_qput(&m0, m);
-		if (le16toh(sublen[i]) > m->m_len) {
+		slen = le16toh(sublen[i]);
+		if (roundup(slen,4) > m->m_len) {
 			m_freem(m0);
 			printf("%s: header larger than mbuf\n", DEVNAME(sc));
 			return;
 		}
 		if (bwfm_sdio_frame_read_write(sc, mtod(m, char *),
-		    le16toh(sublen[i]), 0)) {
+		    roundup(slen,4), 0)) {
 			m_freem(m0);
 			printf("%s: frame I/O error\n", DEVNAME(sc));
 			return;
 		}
-		m->m_len = m->m_pkthdr.len = le16toh(sublen[i]);
+		m->m_len = m->m_pkthdr.len = slen;
 	}
 
 	if (m0->m_len >= hdrlen) {

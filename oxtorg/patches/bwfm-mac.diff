@@ -1,0 +1,81 @@
+Origin:
+Each Raspberry Pi 5 gets its
+own Wi-Fi MAC address, from OTP as under Raspberry Pi OS, instead of the
+one in the chip's NVRAM file, which is the same for every board: two
+boards on one network got in each other's way. Our firmware hands the
+address over as \_SB.WMAC (netbsd/firmware/wifi-mac.diff); the ACPI
+platform code sets it as bwfm's "mac-address" property, the way the Pi
+platform code gives other network devices theirs; bwfm takes that
+property and sets cur_etheraddr, as Linux does after loading the firmware.
+
+--- sys/arch/arm/acpi/acpi_platform.c.orig
++++ sys/arch/arm/acpi/acpi_platform.c
+@@ -44,6 +44,8 @@ __KERNEL_RCSID(0, "$NetBSD: acpi_platform.c,v 1.38 2024/12/08 20:55:18 jmcneill
+ #include <sys/termios.h>
+ #include <sys/kprintf.h>
+ 
++#include <net/if_ether.h>
++
+ #include <dev/fdt/fdtvar.h>
+ 
+ #include <uvm/uvm_extern.h>
+@@ -323,6 +325,27 @@ acpi_platform_init_attach_args(struct fdt_attach_args *faa)
+ static void
+ acpi_platform_device_register(device_t self, void *aux)
+ {
++	ACPI_INTEGER mac;
++
++	/*
++	 * The Raspberry Pi 5 firmware (our build) hands the on-board
++	 * Wi-Fi's own address from OTP to the OS as \_SB.WMAC: a board
++	 * address for bwfm, as the Pi platform code gives other network
++	 * devices theirs.  Only 48-bit unicast values count.
++	 */
++	if (device_is_a(self, "bwfm") &&
++	    ACPI_SUCCESS(acpi_eval_integer(NULL, "\\_SB.WMAC", &mac)) &&
++	    mac != 0 && (mac >> 48) == 0 && (mac & __BIT(40)) == 0) {
++		const uint8_t enaddr[ETHER_ADDR_LEN] = {
++			(mac >> 40) & 0xff, (mac >> 32) & 0xff,
++			(mac >> 24) & 0xff, (mac >> 16) & 0xff,
++			(mac >> 8) & 0xff, mac & 0xff
++		};
++
++		prop_dictionary_set_data(device_properties(self),
++		    "mac-address", enaddr, ETHER_ADDR_LEN);
++	}
++
+ #if NCOM > 0
+ 	prop_dictionary_t prop = device_properties(self);
+ 	ACPI_STATUS rv;
+--- sys/dev/ic/bwfm.c.orig
++++ sys/dev/ic/bwfm.c
+@@ -332,6 +332,7 @@ bwfm_attach(struct bwfm_softc *sc)
+ 	uint32_t bandlist[3];
+ 	int nmode, vhtmode;
+ 	uint32_t tmp;
++	prop_data_t eaprop;
+ 	int i, j, error;
+ 
+ 	error = workqueue_create(&sc->sc_taskq, DEVNAME(sc),
+@@ -359,6 +360,21 @@ bwfm_attach(struct bwfm_softc *sc)
+ 		return;
+ 	}
+ 
++	/*
++	 * An address of this very board from the platform, the way other
++	 * network drivers take it: the chip's NVRAM file may carry one
++	 * address for every board of a kind.  Linux sets cur_etheraddr
++	 * the same way right after loading the firmware.
++	 */
++	eaprop = prop_dictionary_get(device_properties(sc->sc_dev),
++	    "mac-address");
++	if (eaprop != NULL && prop_data_size(eaprop) == ETHER_ADDR_LEN) {
++		memcpy(ic->ic_myaddr, prop_data_value(eaprop), ETHER_ADDR_LEN);
++		if (bwfm_fwvar_var_set_data(sc, "cur_etheraddr", ic->ic_myaddr,
++		    sizeof(ic->ic_myaddr)))
++			printf("%s: could not set mac address\n", DEVNAME(sc));
++	}
++
+ 	printf("%s: address %s\n", DEVNAME(sc), ether_sprintf(ic->ic_myaddr));
+ 
+ 	bwfm_process_blob(sc, "clmload", &sc->sc_clm, &sc->sc_clmsize);

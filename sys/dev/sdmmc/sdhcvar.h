@@ -86,6 +86,7 @@ struct sdhc_softc {
 	int (*sc_vendor_transfer_data_dma)(struct sdhc_softc *, struct sdmmc_command *);
 	void (*sc_vendor_hw_reset)(struct sdhc_softc *, struct sdhc_host *);
 	int (*sc_vendor_signal_voltage)(struct sdhc_softc *, int);
+	void (*sc_vendor_led)(struct sdhc_softc *, int);
 };
 
 /* Host controller functions called by the attachment driver. */

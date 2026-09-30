@@ -75,6 +75,14 @@ ACPI_MODULE_NAME		("acpi_tz")
 #define ATZ_ZONE_EXPIRE		9000
 
 /*
+ * An active cooling level that is on stays on until the zone has
+ * cooled this much (0.1 K) below its threshold, so that a fan does
+ * not start and stop on every poll around the threshold.  Raspberry
+ * Pi OS uses 5 C on the Raspberry Pi 5, whose zone gives none.
+ */
+#define ATZ_HYSTERESIS		50
+
+/*
  * All temperatures are reported in 0.1 Kelvin.
  * The ACPI specification assumes that K = C + 273.2
  * rather than the nominal 273.15 used by envsys(4).
@@ -169,6 +177,7 @@ acpitz_attach(device_t parent, device_t self, void *aux)
 
 	sc->sc_first = true;
 	sc->sc_have_fan = false;
+	sc->sc_active = ATZ_ACTIVE_NONE;
 	sc->sc_node = aa->aa_node;
 	sc->sc_zone.tzp = ATZ_TZP_RATE;
 
@@ -327,11 +336,17 @@ acpitz_get_status(void *opaque)
 	active = ATZ_ACTIVE_NONE;
 
 	for (i = ATZ_NLEVELS - 1; i >= 0; i--) {
+		uint32_t ac;
 
 		if (sc->sc_zone.ac[i] == ATZ_TMP_INVALID)
 			continue;
 
-		if (sc->sc_zone.ac[i] <= tmp)
+		ac = sc->sc_zone.ac[i];
+		if (sc->sc_active != ATZ_ACTIVE_NONE && i >= sc->sc_active &&
+		    ac > ATZ_HYSTERESIS)
+			ac -= ATZ_HYSTERESIS;
+
+		if (ac <= tmp)
 			active = i;
 	}
 

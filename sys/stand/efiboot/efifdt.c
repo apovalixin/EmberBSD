@@ -38,6 +38,7 @@
 #endif
 
 #include <libfdt.h>
+#include "cm5trace.h"
 
 #define FDT_TABLE_GUID	\
 	{ 0xb1b621d5, 0xf19c, 0x41a5, { 0x83, 0x0b, 0xd9, 0x15, 0x2c, 0x69, 0xaa, 0xe0 } }
@@ -644,9 +645,11 @@ efi_fdt_prepare_boot(const char *fname, const char *args, u_long *marks)
 	}
 
 	efi_cleanup();
+	efi_cm5_trace("[CM5 EFI] cleanup done\r\n");
 
 	if (efi_fdt_size() > 0) {
 		efi_fdt_fini();
+		efi_cm5_trace("[CM5 EFI] FDT ready\r\n");
 	}
 
 	return 0;

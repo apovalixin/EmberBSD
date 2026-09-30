@@ -1,0 +1,41 @@
+Origin:
+The Raspberry Pi 5 UEFI
+(eotics-com rpi5-uefi) switches the microSD rail off at start and leaves it
+to the OS through the SDVD power resource of SDC0; NetBSD 11.0 never turns
+it on. Devices without power resources are not affected.
+
+--- sys/dev/acpi/sdhc_acpi.c.orig
++++ sys/dev/acpi/sdhc_acpi.c
+@@ -36,6 +36,7 @@
+ #include <dev/acpi/acpireg.h>
+ #include <dev/acpi/acpivar.h>
+ #include <dev/acpi/acpi_intr.h>
++#include <dev/acpi/acpi_power.h>
+ 
+ #include <dev/sdmmc/sdhcreg.h>
+ #include <dev/sdmmc/sdhcvar.h>
+@@ -182,6 +183,7 @@
+ 	ACPI_INTEGER caps, caps_mask;
+ 	ACPI_INTEGER funcs;
+ 	bool non_removable;
++	int pstate;
+ 
+ 	sc->sc.sc_dev = self;
+ 	sc->sc.sc_dmat = aa->aa_dmat;
+@@ -189,6 +191,16 @@
+ 	sc->sc_memt = aa->aa_memt;
+ 	sc->sc_handle = aa->aa_node->ad_handle;
+ 
++	/*
++	 * A slot's power can be an ACPI power resource that the firmware
++	 * leaves off for the OS: the Raspberry Pi 5 UEFI (eotics-com)
++	 * switches the microSD rail off and describes it this way. Bring
++	 * the device to D0 before the host is probed.
++	 */
++	if (acpi_power_get(sc->sc_handle, &pstate) &&
++	    pstate != ACPI_STATE_D0)
++		(void)acpi_power_set(sc->sc_handle, ACPI_STATE_D0);
++
+ 	slot = sdhc_acpi_find_slot(aa->aa_node->ad_devinfo);
+ 	if (slot->type == SLOT_TYPE_EMMC)
+ 		sc->sc.sc_vendor_hw_reset = sdhc_acpi_intel_emmc_hw_reset;

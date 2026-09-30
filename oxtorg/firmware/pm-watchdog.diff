@@ -1,0 +1,58 @@
+Origin:
+Describe the BCM2712 power management, reset and watchdog block (PM,
+0x107d200000, as Raspberry Pi OS's device tree has it) to the OS as
+PRP0001 "brcm,bcm2712-pm", so that NetBSD's bcmpmwdog, attached through
+ACPI in our kernel, can arm the hardware watchdog. The firmware itself
+does not use the block; TF-A resets and powers off through it.
+
+diff --git a/Platform/RaspberryPi/RPi5/AcpiTables/Dsdt.asl b/Platform/RaspberryPi/RPi5/AcpiTables/Dsdt.asl
+index 3536c40..0d28e71 100644
+--- a/Platform/RaspberryPi/RPi5/AcpiTables/Dsdt.asl
++++ b/Platform/RaspberryPi/RPi5/AcpiTables/Dsdt.asl
+@@ -114,6 +114,32 @@ DefinitionBlock ("Dsdt.aml", "DSDT", 2, "RPIFDN", "RPI5    ", 2)
+           }
+         })
+       }
++
++      //
++      // Power management, reset and watchdog block. The OS arms its
++      // watchdog (NetBSD bcmpmwdog, Linux bcm2835-wdt); TF-A resets and
++      // powers off through the same registers.
++      //
++      Device (PM00) {
++        Name (_HID, "PRP0001")
++        Name (_UID, 0x0)
++        Name (_CCA, 0x0)
++
++        Method (_CRS, 0x0, Serialized) {
++          Name (RBUF, ResourceTemplate () {
++            QWORDMEMORY_BUF (00, ResourceConsumer)
++          })
++          QWORD_SET (00, BCM2712_PM_BASE, BCM2712_PM_LENGTH, 0)
++          Return (RBUF)
++        }
++
++        Name (_DSD, Package () {
++          ToUUID ("daffd814-6eba-4d8c-8a91-bc9bbf4aa301"),
++          Package () {
++            Package () { "compatible", "brcm,bcm2712-pm" }
++          }
++        })
++      }
+     } // Device (SOCB)
+ 
+     //
+diff --git a/Silicon/Broadcom/Bcm27xx/Include/IndustryStandard/Bcm2712.h b/Silicon/Broadcom/Bcm27xx/Include/IndustryStandard/Bcm2712.h
+index 2c2ba8c..186df70 100644
+--- a/Silicon/Broadcom/Bcm27xx/Include/IndustryStandard/Bcm2712.h
++++ b/Silicon/Broadcom/Bcm27xx/Include/IndustryStandard/Bcm2712.h
+@@ -18,6 +18,9 @@
+ #define BCM2712_PL011_UART0_BASE                          0x107d001000
+ #define BCM2712_PL011_LENGTH                              0x200
+ 
++#define BCM2712_PM_BASE                                   0x107d200000
++#define BCM2712_PM_LENGTH                                 0x308
++
+ #define BCM2712_BRCMSTB_GIO_BASE                          0x107d508500
+ #define BCM2712_BRCMSTB_GIO_LENGTH                        0x40
+ #define BCM2712_BRCMSTB_GIO_AON_BASE                      0x107d517c00

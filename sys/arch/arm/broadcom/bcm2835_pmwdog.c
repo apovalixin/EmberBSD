@@ -70,15 +70,6 @@ __KERNEL_RCSID(0, "$NetBSD: bcm2835_pmwdog.c,v 1.3 2024/06/10 06:03:48 mlelstv E
 #define	BCM2835_PM_WDOG		0x24
 #define	 BCM2835_PM_WDOG_TIMEMASK	0x000fffff
 
-struct bcm2835pmwdog_softc {
-	device_t sc_dev;
-
-	bus_space_tag_t sc_iot;
-	bus_space_handle_t sc_ioh;
-
-	struct sysmon_wdog sc_smw;
-};
-
 static struct bcm2835pmwdog_softc *bcm2835pmwdog_sc;
 
 static int bcmpmwdog_match(device_t, cfdata_t, void *);
@@ -125,9 +116,6 @@ bcmpmwdog_attach(device_t parent, device_t self, void *aux)
 	aprint_naive("\n");
 	aprint_normal(": Power management, Reset and Watchdog controller\n");
 
-	if (bcm2835pmwdog_sc == NULL)
-		bcm2835pmwdog_sc = sc;
-
 	sc->sc_dev = self;
 	sc->sc_iot = faa->faa_bst;
 
@@ -144,6 +132,23 @@ bcmpmwdog_attach(device_t parent, device_t self, void *aux)
 		return;
 	}
 
+	bcmpmwdog_attach_common(sc);
+
+	fdtbus_register_power_controller(self, phandle,
+	    &bcmpmwdog_power_funcs);
+}
+
+/*
+ * What the FDT and ACPI attachments share, once the registers are
+ * mapped.
+ */
+void
+bcmpmwdog_attach_common(struct bcm2835pmwdog_softc *sc)
+{
+
+	if (bcm2835pmwdog_sc == NULL)
+		bcm2835pmwdog_sc = sc;
+
 	/* watchdog */
 	sc->sc_smw.smw_name = device_xname(sc->sc_dev);
 	sc->sc_smw.smw_cookie = sc;
@@ -151,10 +156,7 @@ bcmpmwdog_attach(device_t parent, device_t self, void *aux)
 	sc->sc_smw.smw_tickle = bcmpmwdog_tickle;
 	sc->sc_smw.smw_period = BCM2835_PM_DEFAULT_PERIOD;
 	if (sysmon_wdog_register(&sc->sc_smw) != 0)
-		aprint_error_dev(self, "couldn't register watchdog\n");
-
-	fdtbus_register_power_controller(self, phandle,
-	    &bcmpmwdog_power_funcs);
+		aprint_error_dev(sc->sc_dev, "couldn't register watchdog\n");
 }
 
 static void

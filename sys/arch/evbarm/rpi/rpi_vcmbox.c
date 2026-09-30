@@ -43,6 +43,7 @@ __KERNEL_RCSID(0, "$NetBSD: rpi_vcmbox.c,v 1.8 2021/03/08 13:53:08 mlelstv Exp $
 #include <sys/systm.h>
 #include <sys/sysctl.h>
 
+#include <dev/clock_subr.h>
 #include <dev/sysmon/sysmonvar.h>
 
 #include <arm/broadcom/bcm2835_mbox.h>
@@ -62,6 +63,18 @@ struct vcmbox_clockrate_request {
 	struct vcprop_tag end;
 } __packed;
 
+struct vcmbox_throttled_request {
+	struct vcprop_buffer_hdr	vb_hdr;
+	struct vcprop_tag_throttled	vbt_throttled;
+	struct vcprop_tag end;
+} __packed;
+
+struct vcmbox_rtc_request {
+	struct vcprop_buffer_hdr	vb_hdr;
+	struct vcprop_tag_rtcreg	vbt_rtc;
+	struct vcprop_tag end;
+} __packed;
+
 #define RATE2MHZ(rate)	((rate) / 1000000)
 #define MHZ2RATE(mhz)	((mhz) * 1000000)
 
@@ -71,11 +84,19 @@ struct vcmbox_clockrate_request {
 struct vcmbox_softc {
 	device_t		sc_dev;
 
-	/* temperature sensor */
+	/* temperature sensor, and the firmware's throttling flags */
 	struct sysmon_envsys	*sc_sme;
 #define VCMBOX_SENSOR_TEMP	0
-#define VCMBOX_NSENSORS		1
+#define VCMBOX_SENSOR_UV	1
+#define VCMBOX_SENSOR_UV_SINCE	2
+#define VCMBOX_SENSOR_THR	3
+#define VCMBOX_SENSOR_THR_SINCE	4
+#define VCMBOX_NSENSORS		5
 	envsys_data_t		sc_sensor[VCMBOX_NSENSORS];
+	bool			sc_uv_seen;
+
+	/* real-time clock, where the firmware keeps one (Pi 5) */
+	struct todr_chip_handle	sc_todr;
 
 	/* cpu frequency scaling */
 	struct sysctllog	*sc_log;
@@ -89,6 +110,20 @@ struct vcmbox_softc {
 
 static const char *vcmbox_sensor_name[VCMBOX_NSENSORS] = {
 	"temperature",
+	"under-voltage",
+	"under-voltage since boot",
+	"throttled",
+	"throttled since boot",
+};
+
+/* GET_THROTTLED bit of each indicator */
+static const uint32_t vcmbox_sensor_bit[VCMBOX_NSENSORS] = {
+	[VCMBOX_SENSOR_UV] = VCPROP_THROTTLED_UNDERVOLT,
+	[VCMBOX_SENSOR_UV_SINCE] =
+	    VCPROP_THROTTLED_SINCE(VCPROP_THROTTLED_UNDERVOLT),
+	[VCMBOX_SENSOR_THR] = VCPROP_THROTTLED_THROTTLED,
+	[VCMBOX_SENSOR_THR_SINCE] =
+	    VCPROP_THROTTLED_SINCE(VCPROP_THROTTLED_THROTTLED),
 };
 
 static int vcmbox_sensor_id[VCMBOX_NSENSORS] = {
@@ -104,6 +139,12 @@ static int	vcmbox_read_clockrate(struct vcmbox_softc *, uint32_t, int,
 				 uint32_t *);
 static int	vcmbox_write_clockrate(struct vcmbox_softc *, uint32_t, int,
 				 uint32_t);
+static int	vcmbox_read_throttled(struct vcmbox_softc *, uint32_t *);
+static int	vcmbox_rtc_reg(struct vcmbox_softc *, uint32_t, uint32_t,
+				uint32_t *);
+static int	vcmbox_rtc_gettime(todr_chip_handle_t, struct timeval *);
+static int	vcmbox_rtc_settime(todr_chip_handle_t, struct timeval *);
+static void	vcmbox_rtc_init(struct vcmbox_softc *);
 
 static int	vcmbox_cpufreq_init(struct vcmbox_softc *);
 static int	vcmbox_cpufreq_sysctl_helper(SYSCTLFN_PROTO);
@@ -135,6 +176,7 @@ vcmbox_attach(device_t parent, device_t self, void *aux)
 	aprint_normal("\n");
 
 	vcmbox_cpufreq_init(sc);
+	vcmbox_rtc_init(sc);
 
 	sc->sc_sme = sysmon_envsys_create();
 	sc->sc_sme->sme_cookie = sc;
@@ -215,6 +257,106 @@ vcmbox_write_clockrate(struct vcmbox_softc *sc, uint32_t tag, int id,
 	}
 
 	return 0;
+}
+
+/*
+ * The firmware's throttling flags: under-voltage, clock capped or
+ * throttled, now and since boot.  Asking with 0 clears nothing, so the
+ * "since boot" bits stay for everyone who reads them.
+ */
+static int
+vcmbox_read_throttled(struct vcmbox_softc *sc, uint32_t *val)
+{
+	struct vcmbox_throttled_request vb;
+	uint32_t res;
+	int error;
+
+	VCMBOX_INIT_REQUEST(vb);
+	VCMBOX_INIT_TAG(vb.vbt_throttled, VCPROPTAG_GET_THROTTLED);
+	error = bcmmbox_request(BCMMBOX_CHANARM2VC, &vb, sizeof(vb), &res);
+	if (error)
+		return error;
+	if (!vcprop_buffer_success_p(&vb.vb_hdr) ||
+	    !vcprop_tag_success_p(&vb.vbt_throttled.tag))
+		return EIO;
+	*val = le32toh(vb.vbt_throttled.value);
+
+	return 0;
+}
+
+/*
+ * A register of the real-time clock the Raspberry Pi 5 firmware keeps,
+ * read or written by tag.  Register 0 counts seconds since 1970.
+ */
+static int
+vcmbox_rtc_reg(struct vcmbox_softc *sc, uint32_t tag, uint32_t reg,
+    uint32_t *val)
+{
+	struct vcmbox_rtc_request vb;
+	uint32_t res;
+	int error;
+
+	VCMBOX_INIT_REQUEST(vb);
+	VCMBOX_INIT_TAG(vb.vbt_rtc, tag);
+	vb.vbt_rtc.reg = htole32(reg);
+	vb.vbt_rtc.value = htole32(*val);
+	error = bcmmbox_request(BCMMBOX_CHANARM2VC, &vb, sizeof(vb), &res);
+	if (error)
+		return error;
+	if (!vcprop_buffer_success_p(&vb.vb_hdr) ||
+	    !vcprop_tag_success_p(&vb.vbt_rtc.tag))
+		return EIO;
+	*val = le32toh(vb.vbt_rtc.value);
+
+	return 0;
+}
+
+static int
+vcmbox_rtc_gettime(todr_chip_handle_t tch, struct timeval *tv)
+{
+	struct vcmbox_softc *sc = tch->cookie;
+	uint32_t secs = 0;
+	int error;
+
+	error = vcmbox_rtc_reg(sc, VCPROPTAG_GET_RTC_REG, VCPROP_RTC_TIME,
+	    &secs);
+	if (error)
+		return error;
+	tv->tv_sec = secs;
+	tv->tv_usec = 0;
+
+	return 0;
+}
+
+static int
+vcmbox_rtc_settime(todr_chip_handle_t tch, struct timeval *tv)
+{
+	struct vcmbox_softc *sc = tch->cookie;
+	uint32_t secs = (uint32_t)tv->tv_sec;
+
+	return vcmbox_rtc_reg(sc, VCPROPTAG_SET_RTC_REG, VCPROP_RTC_TIME,
+	    &secs);
+}
+
+/*
+ * Only firmware with a real-time clock answers the tag.  Firmware that
+ * reads the same clock for EFI at runtime must stop doing so: then the
+ * kernel owns the mailbox alone (our Pi 5 firmware answers
+ * EFI_UNSUPPORTED at runtime, and no EFI clock is attached).
+ */
+static void
+vcmbox_rtc_init(struct vcmbox_softc *sc)
+{
+	uint32_t secs = 0;
+
+	if (vcmbox_rtc_reg(sc, VCPROPTAG_GET_RTC_REG, VCPROP_RTC_TIME,
+	    &secs) != 0)
+		return;
+	sc->sc_todr.cookie = sc;
+	sc->sc_todr.todr_gettime = vcmbox_rtc_gettime;
+	sc->sc_todr.todr_settime = vcmbox_rtc_settime;
+	todr_attach(&sc->sc_todr);
+	aprint_normal_dev(sc->sc_dev, "real-time clock\n");
 }
 
 
@@ -356,6 +498,7 @@ static void
 vcmbox_create_sensors(struct vcmbox_softc *sc)
 {
 	uint32_t val;
+	int i;
 
 	sc->sc_sensor[VCMBOX_SENSOR_TEMP].sensor = VCMBOX_SENSOR_TEMP;
 	sc->sc_sensor[VCMBOX_SENSOR_TEMP].units = ENVSYS_STEMP;
@@ -373,6 +516,26 @@ vcmbox_create_sensors(struct vcmbox_softc *sc)
 	}
 	sysmon_envsys_sensor_attach(sc->sc_sme,
 	    &sc->sc_sensor[VCMBOX_SENSOR_TEMP]);
+
+	/* The throttling flags, where the firmware reports them. */
+	if (vcmbox_read_throttled(sc, &val) != 0)
+		return;
+	aprint_normal_dev(sc->sc_dev, "throttling flags %#x\n", val);
+	if (ISSET(val, vcmbox_sensor_bit[VCMBOX_SENSOR_UV_SINCE])) {
+		sc->sc_uv_seen = true;
+		aprint_normal_dev(sc->sc_dev, "under-voltage since boot\n");
+	}
+	for (i = VCMBOX_SENSOR_UV; i < VCMBOX_NSENSORS; i++) {
+		sc->sc_sensor[i].sensor = i;
+		sc->sc_sensor[i].units = ENVSYS_INDICATOR;
+		sc->sc_sensor[i].state = ENVSYS_SINVALID;
+		strlcpy(sc->sc_sensor[i].desc, vcmbox_sensor_name[i],
+		    sizeof(sc->sc_sensor[i].desc));
+		/* Watched, so that an under-voltage shows in the log. */
+		if (i == VCMBOX_SENSOR_UV_SINCE)
+			sc->sc_sensor[i].flags = ENVSYS_FMONSTCHANGED;
+		sysmon_envsys_sensor_attach(sc->sc_sme, &sc->sc_sensor[i]);
+	}
 }
 
 static void
@@ -408,5 +571,19 @@ vcmbox_sensor_refresh(struct sysmon_envsys *sme, envsys_data_t *edata)
 
 		edata->value_cur = val * 1000 + 273150000;
 		edata->state = ENVSYS_SVALID;
+	} else if (edata->units == ENVSYS_INDICATOR) {
+		if (vcmbox_read_throttled(sc, &val))
+			return;
+		edata->value_cur =
+		    ISSET(val, vcmbox_sensor_bit[edata->sensor]) ? 1 : 0;
+		edata->state = ENVSYS_SVALID;
+		if (edata->sensor == VCMBOX_SENSOR_UV && edata->value_cur)
+			edata->state = ENVSYS_SCRITICAL;
+		if (edata->sensor == VCMBOX_SENSOR_UV_SINCE &&
+		    edata->value_cur && !sc->sc_uv_seen) {
+			sc->sc_uv_seen = true;
+			device_printf(sc->sc_dev,
+			    "under-voltage: the power supply sagged\n");
+		}
 	}
 }

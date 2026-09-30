@@ -20,6 +20,11 @@ CFLAGS+=	-DEFIBOOT_RUNTIME_ADDRESS=0	# 1:1 PA to VA mappings
 CFLAGS+=	-DEFIBOOT_MODULE_MACHINE=\"evbarm\"
 LDFLAGS+=	-EL
 
+# Optional trace for the CM5 using the memory-mapped UART from SPCR.
+.if ${CM5_UART_TRACE:Uno} == "yes"
+CPPFLAGS+= -DEFIBOOT_DIAGNOSTIC_UART
+.endif
+
 .include "${.CURDIR}/../Makefile.efiboot"
 
 release: check_RELEASEDIR

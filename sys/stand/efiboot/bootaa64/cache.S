@@ -106,6 +106,23 @@ END(aarch64_icache_inv_all)
 ENTRY(aarch64_exec_kernel)
 	mov	x20, x0	/* kernel entry point */
 	mov	x21, x1	/* dtb address */
+#ifdef EFIBOOT_DIAGNOSTIC_UART
+	adrp	x22, :got:efi_cm5_uart_base
+	ldr	x22, [x22, :got_lo12:efi_cm5_uart_base]
+	ldr	x22, [x22]
+	cbz	x22, 4f
+	mov	w8, #10000
+5:
+	ldr	w9, [x22, #0x18]
+	tbz	w9, #5, 6f
+	subs	w8, w8, #1
+	b.ne	5b
+6:
+	mov	w9, #0x4d	/* M: before disabling address translation */
+	str	w9, [x22]
+	dsb	sy
+4:
+#endif
 
 	mrs	x0, CurrentEL
 	lsr	x0, x0, #2
@@ -127,6 +144,21 @@ ENTRY(aarch64_exec_kernel)
 	msr	sctlr_el2, x0
 	isb
 2:
+#ifdef EFIBOOT_DIAGNOSTIC_UART
+	/* UART is still reachable with address translation disabled. */
+	cbz	x22, 3f
+	mov	w8, #10000
+7:
+	ldr	w9, [x22, #0x18]
+	tbz	w9, #5, 8f
+	subs	w8, w8, #1
+	b.ne	7b
+8:
+	mov	w9, #0x4a	/* J: immediately before the kernel branch */
+	str	w9, [x22]
+	dsb	sy
+3:
+#endif
 
 	/* Jump to kernel */
 	mov	x0, x21

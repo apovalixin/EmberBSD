@@ -1,0 +1,135 @@
+Origin:
+Preserve RSNX information elements in firmware and net80211 scan results.
+Mixed WPA2/WPA3 access points supply RSNXE during the four-way handshake;
+wpa_supplicant must receive the same element from the scan cache.
+
+--- sys/dev/ic/bwfm.c.orig
++++ sys/dev/ic/bwfm.c
+@@ -2346,7 +2346,11 @@
+ 	scan.sp_rates   = rates;
+ 	scan.sp_ssid    = ssid;
+ 
+-	for (frm = sfrm; frm < efrm; frm += frm[1] + 2) {
++	for (frm = sfrm; frm + 1 < efrm; frm += frm[1] + 2) {
++		if (frm[1] + 2 > efrm - frm) {
++			ic->ic_stats.is_rx_elem_toosmall++;
++			return;
++		}
+ 		switch (frm[0]) {
+ 		case IEEE80211_ELEMID_COUNTRY:
+ 			scan.sp_country = frm;
+@@ -2386,6 +2390,11 @@
+ 		case IEEE80211_ELEMID_RSN:
+ 			scan.sp_wpa = frm;
+ 			break;
++		case IEEE80211_ELEMID_RSNX:
++			if (frm[1] >= 1 && frm[1] <= 16 &&
++			    (frm[2] & 0x0f) + 1 == frm[1])
++				scan.sp_rsnx = frm;
++			break;
+ 		case IEEE80211_ELEMID_VENDOR:
+ 			if (frm + 1 >= efrm)
+ 				break;
+--- sys/net80211/ieee80211.h.orig
++++ sys/net80211/ieee80211.h
+@@ -515,7 +515,8 @@
+ 	IEEE80211_ELEMID_MMIE		= 76,	/* 11w */
+ 	IEEE80211_ELEMID_TPC		= 150,
+ 	IEEE80211_ELEMID_CCKM		= 156,
+-	IEEE80211_ELEMID_VENDOR		= 221	/* vendor private */
++	IEEE80211_ELEMID_VENDOR		= 221,	/* vendor private */
++	IEEE80211_ELEMID_RSNX		= 244	/* RSN extension */
+ };
+ 
+ struct ieee80211_tim_ie {
+--- sys/net80211/ieee80211_input.c.orig
++++ sys/net80211/ieee80211_input.c
+@@ -2163,6 +2163,11 @@
+ 			/* no length check needed */
+ 			scan.sp_wpa = frm;
+ 			break;
++		case IEEE80211_ELEMID_RSNX:
++			if (frm[1] >= 1 && frm[1] <= 16 &&
++			    (frm[2] & 0x0f) + 1 == frm[1])
++				scan.sp_rsnx = frm;
++			break;
+ 		case IEEE80211_ELEMID_VENDOR:
+ 			/* no length check needed */
+ 			if (iswpaoui(frm))
+--- sys/net80211/ieee80211_ioctl.c.orig
++++ sys/net80211/ieee80211_ioctl.c
+@@ -1037,6 +1037,8 @@
+ 		ielen += 2+ni->ni_wpa_ie[1];
+ 	if (ni->ni_wme_ie != NULL)
+ 		ielen += 2+ni->ni_wme_ie[1];
++	if (ni->ni_rsnx_ie != NULL)
++		ielen += 2+ni->ni_rsnx_ie[1];
+ 
+ 	/*
+ 	 * The value sr->isr_ie_len is defined as a uint8_t, so we
+@@ -1103,6 +1105,10 @@
+ 		if (sr->isr_ie_len > 0 && ni->ni_wme_ie != NULL) {
+ 			memcpy(cp, ni->ni_wme_ie, 2+ni->ni_wme_ie[1]);
+ 			cp += 2+ni->ni_wme_ie[1];
++		}
++		if (sr->isr_ie_len > 0 && ni->ni_rsnx_ie != NULL) {
++			memcpy(cp, ni->ni_rsnx_ie, 2+ni->ni_rsnx_ie[1]);
++			cp += 2+ni->ni_rsnx_ie[1];
+ 		}
+ 		error = copyout(sr, p, sr->isr_len);
+ 		if (error)
+--- sys/net80211/ieee80211_node.c.orig
++++ sys/net80211/ieee80211_node.c
+@@ -1021,6 +1021,8 @@
+ 		free(ni->ni_wpa_ie, M_DEVBUF);
+ 	if (ni->ni_wme_ie != NULL)
+ 		free(ni->ni_wme_ie, M_DEVBUF);
++	if (ni->ni_rsnx_ie != NULL)
++		free(ni->ni_rsnx_ie, M_DEVBUF);
+ 	IEEE80211_NODE_SAVEQ_DESTROY(ni);
+ 	free(ni, M_80211_NODE);
+ }
+@@ -1337,6 +1339,12 @@
+ 	 */
+ 	saveie(&ni->ni_wme_ie, sp->sp_wme);
+ 	saveie(&ni->ni_wpa_ie, sp->sp_wpa);
++	if (sp->sp_rsnx != NULL)
++		ieee80211_saveie(&ni->ni_rsnx_ie, sp->sp_rsnx);
++	else if (ni->ni_rsnx_ie != NULL) {
++		free(ni->ni_rsnx_ie, M_DEVBUF);
++		ni->ni_rsnx_ie = NULL;
++	}
+ 
+ 	/* NB: must be after ni_chan is setup */
+ 	ieee80211_setup_rates(ni, sp->sp_rates, sp->sp_xrates,
+@@ -1367,6 +1375,12 @@
+ 		ieee80211_saveie(&ni->ni_wme_ie, sp->sp_wme);
+ 	if (sp->sp_wpa != NULL)
+ 		ieee80211_saveie(&ni->ni_wpa_ie, sp->sp_wpa);
++	if (sp->sp_rsnx != NULL)
++		ieee80211_saveie(&ni->ni_rsnx_ie, sp->sp_rsnx);
++	else if (ni->ni_rsnx_ie != NULL) {
++		free(ni->ni_rsnx_ie, M_DEVBUF);
++		ni->ni_rsnx_ie = NULL;
++	}
+ 
+ 	/* NB: must be after ni_chan is setup */
+ 	ieee80211_setup_rates(ni, sp->sp_rates, sp->sp_xrates,
+--- sys/net80211/ieee80211_node.h.orig
++++ sys/net80211/ieee80211_node.h
+@@ -110,6 +110,7 @@
+ 	u_int16_t		ni_vlan;	/* vlan tag */
+ 	u_int32_t		*ni_challenge;	/* shared-key challenge */
+ 	u_int8_t		*ni_wpa_ie;	/* captured WPA/RSN ie */
++	u_int8_t		*ni_rsnx_ie;	/* captured RSNX ie */
+ 	u_int8_t		*ni_wme_ie;	/* captured WME ie */
+ 	u_int16_t		ni_txseqs[17];	/* tx seq per-tid */
+ 	u_int16_t		ni_rxseqs[17];	/* rx seq previous per-tid*/
+@@ -312,6 +313,7 @@
+ 	u_int8_t	*sp_rates;
+ 	u_int8_t	*sp_xrates;
+ 	u_int8_t	*sp_wpa;
++	u_int8_t	*sp_rsnx;
+ 	u_int8_t	*sp_wme;
+ };
+ 

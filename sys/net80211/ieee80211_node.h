@@ -110,6 +110,7 @@ struct ieee80211_node {
 	u_int16_t		ni_vlan;	/* vlan tag */
 	u_int32_t		*ni_challenge;	/* shared-key challenge */
 	u_int8_t		*ni_wpa_ie;	/* captured WPA/RSN ie */
+	u_int8_t		*ni_rsnx_ie;	/* captured RSNX ie */
 	u_int8_t		*ni_wme_ie;	/* captured WME ie */
 	u_int16_t		ni_txseqs[17];	/* tx seq per-tid */
 	u_int16_t		ni_rxseqs[17];	/* rx seq previous per-tid*/
@@ -312,6 +313,7 @@ struct ieee80211_scanparams {
 	u_int8_t	*sp_rates;
 	u_int8_t	*sp_xrates;
 	u_int8_t	*sp_wpa;
+	u_int8_t	*sp_rsnx;
 	u_int8_t	*sp_wme;
 };
 

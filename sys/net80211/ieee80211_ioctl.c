@@ -1037,6 +1037,8 @@ get_scan_result(struct ieee80211req_scan_result *sr,
 		ielen += 2+ni->ni_wpa_ie[1];
 	if (ni->ni_wme_ie != NULL)
 		ielen += 2+ni->ni_wme_ie[1];
+	if (ni->ni_rsnx_ie != NULL)
+		ielen += 2+ni->ni_rsnx_ie[1];
 
 	/*
 	 * The value sr->isr_ie_len is defined as a uint8_t, so we
@@ -1103,6 +1105,10 @@ ieee80211_ioctl_getscanresults(struct ieee80211com *ic, struct ieee80211req *ire
 		if (sr->isr_ie_len > 0 && ni->ni_wme_ie != NULL) {
 			memcpy(cp, ni->ni_wme_ie, 2+ni->ni_wme_ie[1]);
 			cp += 2+ni->ni_wme_ie[1];
+		}
+		if (sr->isr_ie_len > 0 && ni->ni_rsnx_ie != NULL) {
+			memcpy(cp, ni->ni_rsnx_ie, 2+ni->ni_rsnx_ie[1]);
+			cp += 2+ni->ni_rsnx_ie[1];
 		}
 		error = copyout(sr, p, sr->isr_len);
 		if (error)

@@ -1,0 +1,31 @@
+Origin:
+
+Do not advertise eMMC HS400 while HS200 clock tuning is disabled.
+EDK2 enters HS200 and runs tuning before switching to HS400. Keep
+High Speed and the existing voltage capability bits unchanged.
+The optional RP1 trace also reports the selected bus timing.
+
+--- a/Silicon/Broadcom/Drivers/BrcmStbSdhciDxe/BrcmStbSdhciDxe.c
++++ b/Silicon/Broadcom/Drivers/BrcmStbSdhciDxe/BrcmStbSdhciDxe.c
+@@ -76,6 +76,9 @@
+   Capability->Sdr50  = 0;
+   Capability->Sdr104 = 0;
+   Capability->Ddr50  = 0;
++
++  // HS400 enters HS200 first, which requires unsupported clock tuning.
++  Capability->Hs400 = 0;
+ #ifdef RP1_UART_CONSOLE
+   {
+     UINT64  RawCapability;
+@@ -120,6 +123,11 @@
+   SdhciDiagnosticHex ("[CM5 SDHCI] phase=", PhaseType);
+   SdhciDiagnosticHex ("[CM5 SDHCI] present=", MmioRead32 (Device->HostAddress + 0x24));
+   SdhciDiagnosticHex ("[CM5 SDHCI] clock=", MmioRead32 (Device->HostAddress + 0x2c));
++  if ((PhaseData != NULL) &&
++      ((PhaseType == EdkiiSdMmcUhsSignaling) ||
++       (PhaseType == EdkiiSdMmcSwitchClockFreqPost))) {
++    SdhciDiagnosticHex ("[CM5 SDHCI] bus timing=", *(SD_MMC_BUS_MODE *)PhaseData);
++  }
+ #endif
+ 
+   switch (PhaseType) {

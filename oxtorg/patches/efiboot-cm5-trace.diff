@@ -1,0 +1,296 @@
+Origin:
+
+Optional CM5 bootloader trace, built with make CM5_UART_TRACE=yes
+in sys/stand/efiboot/bootaa64. Use the UART from firmware SPCR and
+report pending exceptions at handoff boundaries without clearing them.
+The normal loader is unchanged.
+
+--- sys/stand/efiboot/bootaa64/Makefile.orig
++++ sys/stand/efiboot/bootaa64/Makefile
+@@ -20,6 +20,11 @@
+ CFLAGS+=	-DEFIBOOT_MODULE_MACHINE=\"evbarm\"
+ LDFLAGS+=	-EL
+ 
++# Optional trace for the CM5 using the memory-mapped UART from SPCR.
++.if ${CM5_UART_TRACE:Uno} == "yes"
++CPPFLAGS+= -DEFIBOOT_DIAGNOSTIC_UART
++.endif
++
+ .include "${.CURDIR}/../Makefile.efiboot"
+ 
+ release: check_RELEASEDIR
+--- sys/stand/efiboot/bootaa64/cache.S.orig
++++ sys/stand/efiboot/bootaa64/cache.S
+@@ -106,6 +106,23 @@
+ ENTRY(aarch64_exec_kernel)
+ 	mov	x20, x0	/* kernel entry point */
+ 	mov	x21, x1	/* dtb address */
++#ifdef EFIBOOT_DIAGNOSTIC_UART
++	adrp	x22, :got:efi_cm5_uart_base
++	ldr	x22, [x22, :got_lo12:efi_cm5_uart_base]
++	ldr	x22, [x22]
++	cbz	x22, 4f
++	mov	w8, #10000
++5:
++	ldr	w9, [x22, #0x18]
++	tbz	w9, #5, 6f
++	subs	w8, w8, #1
++	b.ne	5b
++6:
++	mov	w9, #0x4d	/* M: before disabling address translation */
++	str	w9, [x22]
++	dsb	sy
++4:
++#endif
+ 
+ 	mrs	x0, CurrentEL
+ 	lsr	x0, x0, #2
+@@ -127,6 +144,21 @@
+ 	msr	sctlr_el2, x0
+ 	isb
+ 2:
++#ifdef EFIBOOT_DIAGNOSTIC_UART
++	/* UART is still reachable with address translation disabled. */
++	cbz	x22, 3f
++	mov	w8, #10000
++7:
++	ldr	w9, [x22, #0x18]
++	tbz	w9, #5, 8f
++	subs	w8, w8, #1
++	b.ne	7b
++8:
++	mov	w9, #0x4a	/* J: immediately before the kernel branch */
++	str	w9, [x22]
++	dsb	sy
++3:
++#endif
+ 
+ 	/* Jump to kernel */
+ 	mov	x0, x21
+--- sys/stand/efiboot/bootaa64/efibootaa64.c.orig
++++ sys/stand/efiboot/bootaa64/efibootaa64.c
+@@ -28,6 +28,7 @@
+ 
+ #include "../efiboot.h"
+ #include "../efifdt.h"
++#include "../cm5trace.h"
+ 
+ #include <sys/cdefs.h>
+ #include <sys/bootblock.h>
+@@ -57,11 +58,19 @@
+ 	fdt_start = (u_long)efi_fdt_data();
+ 	fdt_size = efi_fdt_size();
+ 
++	efi_cm5_trace("[CM5 EFI] flush kernel cache\r\n");
++	efi_cm5_pending("before cache flush");
+ 	aarch64_dcache_wbinv_range(kernel_start, kernel_size);
++	efi_cm5_trace("[CM5 EFI] kernel cache done\r\n");
++	efi_cm5_pending("after kernel cache");
+ 	if (efi_fdt_size() > 0) {
+ 		aarch64_dcache_wbinv_range(fdt_start, fdt_size);
+ 	}
++	efi_cm5_trace("[CM5 EFI] FDT cache done\r\n");
++	efi_cm5_pending("after FDT cache");
+ 	aarch64_icache_inv_all();
++	efi_cm5_trace("[CM5 EFI] branch to kernel\r\n");
++	efi_cm5_pending("before kernel");
+ 
+ 	aarch64_exec_kernel((paddr_t)kernel_entry, (paddr_t)fdt_start);
+ }
+--- sys/stand/efiboot/efiboot.c.orig
++++ sys/stand/efiboot/efiboot.c
+@@ -40,6 +40,7 @@
+ #endif
+ 
+ #include <sys/reboot.h>
++#include "cm5trace.h"
+ 
+ EFI_HANDLE IH;
+ EFI_DEVICE_PATH *efi_bootdp;
+@@ -55,6 +56,52 @@
+ #define PRIxEFISIZE "X"
+ #endif
+ 
++#ifdef EFIBOOT_DIAGNOSTIC_UART
++uintptr_t efi_cm5_uart_base;
++
++/* Packed ACPI fields are copied to avoid unaligned table accesses. */
++static void
++efi_cm5_console_probe(void)
++{
++	const uint8_t *rsdp, *xsdt, *table;
++	uint64_t address, uart;
++	uint32_t length, table_length;
++	unsigned offset;
++	volatile uint32_t *regs;
++
++	rsdp = efi_acpi_root();
++	if (rsdp == NULL || rsdp[15] < 2)
++		return;
++	memcpy(&address, rsdp + 24, sizeof(address));
++	if (address == 0)
++		return;
++	xsdt = (const uint8_t *)(uintptr_t)address;
++	memcpy(&length, xsdt + 4, sizeof(length));
++	if (memcmp(xsdt, "XSDT", 4) != 0 || length < 36 || length > 65536)
++		return;
++	for (offset = 36; offset + 8 <= length; offset += 8) {
++		memcpy(&address, xsdt + offset, sizeof(address));
++		if (address == 0)
++			continue;
++		table = (const uint8_t *)(uintptr_t)address;
++		memcpy(&table_length, table + 4, sizeof(table_length));
++		if (memcmp(table, "SPCR", 4) != 0 || table_length < 52 ||
++		    table[40] != 0)
++			continue;
++		memcpy(&uart, table + 44, sizeof(uart));
++		if (uart == 0 || uart > UINTPTR_MAX - 0x30 || (uart & 3) != 0)
++			return;
++		efi_cm5_uart_base = (uintptr_t)uart;
++		regs = (volatile uint32_t *)efi_cm5_uart_base;
++		printf("[CM5 EFI] SPCR UART=0x%lx FR=0x%x CR=0x%x\n",
++		    (unsigned long)uart, regs[0x18 / 4], regs[0x30 / 4]);
++		efi_cm5_trace("[CM5 EFI] direct UART probe\r\n");
++		return;
++	}
++	printf("[CM5 EFI] No memory-mapped SPCR UART found\n");
++}
++#endif
++
+ static EFI_PHYSICAL_ADDRESS heap_start;
+ static UINTN heap_size = 8 * 1024 * 1024;
+ static EFI_EVENT delay_ev = 0;
+@@ -70,6 +117,14 @@
+ 	IH = imageHandle;
+ 
+ 	InitializeLib(imageHandle, systemTable);
++#ifdef EFIBOOT_DIAGNOSTIC_UART
++	{
++		uint64_t pending;
++		__asm volatile("dsb sy; isb; mrs %0, isr_el1" : "=r"(pending)
++		    :: "memory");
++		printf("[CM5 EFI] initial ISR=0x%lx\n", (unsigned long)pending);
++	}
++#endif
+ 
+ 	uefi_call_wrapper(ST->ConOut->Reset, 2, ST->ConOut, TRUE);
+ 	uefi_call_wrapper(ST->ConOut->SetMode, 2, ST->ConOut, 0);
+@@ -110,6 +165,11 @@
+ 	efi_rng_probe();
+ 	efi_gop_probe();
+ 
++#ifdef EFIBOOT_DIAGNOSTIC_UART
++	efi_cm5_console_probe();
++	efi_cm5_pending("before boot");
++#endif
++
+ 	boot();
+ 
+ 	return EFI_SUCCESS;
+@@ -123,16 +183,24 @@
+ 	UINTN nentries, mapkey, descsize;
+ 	UINT32 descver;
+ 
++	efi_cm5_pending("before memory map");
+ 	memmap = LibMemoryMap(&nentries, &mapkey, &descsize, &descver);
+ 
++	efi_cm5_trace("[CM5 EFI] calling ExitBootServices\r\n");
++	efi_cm5_pending("before EBS");
+ 	status = uefi_call_wrapper(BS->ExitBootServices, 2, IH, mapkey);
++	efi_cm5_trace("[CM5 EFI] ExitBootServices call returned\r\n");
++	efi_cm5_pending("after EBS");
+ 	if (EFI_ERROR(status)) {
+ 		printf("WARNING: ExitBootServices failed\n");
+ 		return;
+ 	}
+ 
+ #ifdef EFIBOOT_RUNTIME_ADDRESS
++	efi_cm5_trace("[CM5 EFI] SetVirtualAddressMap enter\r\n");
+ 	efi_fdt_set_virtual_address_map(memmap, nentries, mapkey, descsize, descver);
++	efi_cm5_trace("[CM5 EFI] SetVirtualAddressMap returned\r\n");
++	efi_cm5_pending("after VA map");
+ #endif
+ }
+ 
+--- sys/stand/efiboot/efifdt.c.orig
++++ sys/stand/efiboot/efifdt.c
+@@ -38,6 +38,7 @@
+ #endif
+ 
+ #include <libfdt.h>
++#include "cm5trace.h"
+ 
+ #define FDT_TABLE_GUID	\
+ 	{ 0xb1b621d5, 0xf19c, 0x41a5, { 0x83, 0x0b, 0xd9, 0x15, 0x2c, 0x69, 0xaa, 0xe0 } }
+@@ -644,9 +645,11 @@
+ 	}
+ 
+ 	efi_cleanup();
++	efi_cm5_trace("[CM5 EFI] cleanup done\r\n");
+ 
+ 	if (efi_fdt_size() > 0) {
+ 		efi_fdt_fini();
++		efi_cm5_trace("[CM5 EFI] FDT ready\r\n");
+ 	}
+ 
+ 	return 0;
+--- sys/stand/efiboot/cm5trace.h.orig
++++ sys/stand/efiboot/cm5trace.h
+@@ -0,0 +1,57 @@
++/* Optional diagnostics using the firmware SPCR UART address; no firmware calls. */
++#ifndef _CM5TRACE_H_
++#define _CM5TRACE_H_
++
++#ifdef EFIBOOT_DIAGNOSTIC_UART
++extern uintptr_t efi_cm5_uart_base;
++#endif
++
++static inline void
++efi_cm5_trace(const char *message)
++{
++#ifdef EFIBOOT_DIAGNOSTIC_UART
++	volatile uint32_t *uart = (volatile uint32_t *)efi_cm5_uart_base;
++	unsigned timeout;
++
++	if (efi_cm5_uart_base == 0)
++		return;
++
++	while (*message != '\0') {
++		timeout = 10000;
++		while ((uart[0x18 / 4] & 0x20) != 0) {
++			if (--timeout == 0)
++				return;
++		}
++		uart[0] = (unsigned char)*message++;
++		__asm volatile("dsb sy" ::: "memory");
++	}
++#else
++	(void)message;
++#endif
++}
++
++static inline void
++efi_cm5_pending(const char *stage)
++{
++#ifdef EFIBOOT_DIAGNOSTIC_UART
++	static const char digits[] = "0123456789abcdef";
++	uint64_t status;
++	char value[19];
++	unsigned i;
++
++	__asm volatile("dsb sy; isb; mrs %0, isr_el1" : "=r"(status)
++	    :: "memory");
++	for (i = 0; i < 16; i++)
++		value[i] = digits[(status >> ((15 - i) * 4)) & 15];
++	value[16] = '\r';
++	value[17] = '\n';
++	value[18] = '\0';
++	efi_cm5_trace("[CM5 EFI] ISR ");
++	efi_cm5_trace(stage);
++	efi_cm5_trace("=");
++	efi_cm5_trace(value);
++#else
++	(void)stage;
++#endif
++}
++#endif

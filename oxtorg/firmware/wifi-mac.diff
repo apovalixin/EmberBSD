@@ -1,0 +1,85 @@
+Origin:
+The on-board Wi-Fi's own MAC address for the OS. The boot loader fills it in
+from OTP as local-mac-address of the wifi@1 node, which is where Linux
+takes it; the OS never sees that tree under ACPI. The platform driver
+copies it into the DSDT as \_SB.WMAC (48 bits, 0 when the boot loader
+gave none). Without it NetBSD takes the address from the chip's NVRAM
+file, which carries one address for every board of a kind.
+
+diff --git a/Platform/RaspberryPi/RPi5/AcpiTables/Dsdt.asl b/Platform/RaspberryPi/RPi5/AcpiTables/Dsdt.asl
+index 7ba0914..a3bd899 100644
+--- a/Platform/RaspberryPi/RPi5/AcpiTables/Dsdt.asl
++++ b/Platform/RaspberryPi/RPi5/AcpiTables/Dsdt.asl
+@@ -28,6 +28,9 @@ DefinitionBlock ("Dsdt.aml", "DSDT", 2, "RPIFDN", "RPI5    ", 2)
+     Name (PSUH, ACPI_PATCH_DWORD_VALUE) // USB high-current mode
+     Name (PSOC, ACPI_PATCH_DWORD_VALUE) // USB over-current detected
+     Name (BLRS, ACPI_PATCH_DWORD_VALUE) // PM_RSTS at boot, /chosen/bootloader
++    // The on-board Wi-Fi's MAC address from the boot loader (OTP), 48 bits;
++    // 0 when it gave none. Patched by the platform driver.
++    Name (WMAC, ACPI_PATCH_QWORD_VALUE)
+ 
+     Device (CPU0) {
+       Name (_HID, "ACPI0007")
+diff --git a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
+index 5178db6..aed554b 100644
+--- a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
++++ b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
+@@ -589,6 +589,50 @@ DsdtFixupPowerSource (
+   }
+ }
+ 
++//
++// The on-board Wi-Fi's MAC address. The boot loader fills it in from OTP
++// as local-mac-address of the wifi@1 node, which is where Linux takes it;
++// the OS gets it as \_SB.WMAC, 48 bits, or 0 when the boot loader gave
++// none.
++//
++STATIC
++VOID
++EFIAPI
++DsdtFixupWifiMac (
++  IN EFI_ACPI_SDT_PROTOCOL    *AcpiSdtProtocol,
++  IN EFI_ACPI_HANDLE          TableHandle
++  )
++{
++  CONST UINT8  *Property;
++  EFI_STATUS   Status;
++  VOID         *Fdt;
++  INT32        Length;
++  INT32        Node;
++  UINTN        Index;
++  UINT64       Mac;
++
++  Mac = 0;
++  Fdt = FdtPlatformGetBase ();
++  if (Fdt != NULL) {
++    Node = FdtPathOffset (Fdt, "/axi/mmc@1100000/wifi@1");
++    if (Node >= 0) {
++      Property = FdtGetProp (Fdt, Node, "local-mac-address", &Length);
++      if ((Property != NULL) && (Length == 6)) {
++        for (Index = 0; Index < 6; Index++) {
++          Mac = (Mac << 8) | Property[Index];
++        }
++      }
++    }
++  }
++
++  Status = AcpiAmlObjectUpdateInteger (AcpiSdtProtocol, TableHandle,
++              "\\_SB.WMAC", Mac);
++  if (EFI_ERROR (Status)) {
++    DEBUG ((DEBUG_ERROR, "%a: Failed to patch \\_SB.WMAC. Status=%r\n",
++            __func__, Status));
++  }
++}
++
+ STATIC
+ EFI_STATUS
+ EFIAPI
+@@ -1110,6 +1154,7 @@ InstallAcpiTables (
+   DsdtFixupPcie (mAcpiSdtProtocol, TableHandle);
+   AcpiFixupDebugUartInterrupt (mAcpiSdtProtocol, TableHandle);
+   DsdtFixupPowerSource (mAcpiSdtProtocol, TableHandle);
++  DsdtFixupWifiMac (mAcpiSdtProtocol, TableHandle);
+ 
+   mAcpiSdtProtocol->Close (TableHandle);
+ 

@@ -31,6 +31,7 @@
 
 #include "com.h"
 #include "plcom.h"
+#include "opt_console.h"
 #include "opt_efi.h"
 #include "opt_multiprocessor.h"
 
@@ -43,6 +44,8 @@ __KERNEL_RCSID(0, "$NetBSD: acpi_platform.c,v 1.38 2024/12/08 20:55:18 jmcneill 
 #include <sys/device.h>
 #include <sys/termios.h>
 #include <sys/kprintf.h>
+
+#include <net/if_ether.h>
 
 #include <dev/fdt/fdtvar.h>
 
@@ -133,6 +136,11 @@ static const struct pmap_devmap *
 acpi_platform_devmap(void)
 {
 	static const struct pmap_devmap devmap[] = {
+#ifdef CONSADDR
+		/* Keep the explicit early console mapped after MMU bootstrap. */
+		DEVMAP_ENTRY(KERNEL_IO_VBASE, DEVMAP_ALIGN(CONSADDR),
+		    DEVMAP_SIZE(0x1000)),
+#endif
 		DEVMAP_ENTRY_END
 	};
 
@@ -323,6 +331,27 @@ acpi_platform_init_attach_args(struct fdt_attach_args *faa)
 static void
 acpi_platform_device_register(device_t self, void *aux)
 {
+	ACPI_INTEGER mac;
+
+	/*
+	 * The Raspberry Pi 5 firmware (our build) hands the on-board
+	 * Wi-Fi's own address from OTP to the OS as \_SB.WMAC: a board
+	 * address for bwfm, as the Pi platform code gives other network
+	 * devices theirs.  Only 48-bit unicast values count.
+	 */
+	if (device_is_a(self, "bwfm") &&
+	    ACPI_SUCCESS(acpi_eval_integer(NULL, "\\_SB.WMAC", &mac)) &&
+	    mac != 0 && (mac >> 48) == 0 && (mac & __BIT(40)) == 0) {
+		const uint8_t enaddr[ETHER_ADDR_LEN] = {
+			(mac >> 40) & 0xff, (mac >> 32) & 0xff,
+			(mac >> 24) & 0xff, (mac >> 16) & 0xff,
+			(mac >> 8) & 0xff, mac & 0xff
+		};
+
+		prop_dictionary_set_data(device_properties(self),
+		    "mac-address", enaddr, ETHER_ADDR_LEN);
+	}
+
 #if NCOM > 0
 	prop_dictionary_t prop = device_properties(self);
 	ACPI_STATUS rv;

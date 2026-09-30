@@ -1,0 +1,28 @@
+Origin:
+
+Map an explicitly configured CONSADDR for the ACPI platform so EARLYCONS
+can keep printing after pmap_devmap_bootstrap. No mapping is added to the
+normal kernel, which has no CONSADDR.
+
+--- sys/arch/arm/acpi/acpi_platform.c.orig
++++ sys/arch/arm/acpi/acpi_platform.c
+@@ -31,6 +31,7 @@
+ 
+ #include "com.h"
+ #include "plcom.h"
++#include "opt_console.h"
+ #include "opt_efi.h"
+ #include "opt_multiprocessor.h"
+ 
+@@ -133,6 +134,11 @@
+ acpi_platform_devmap(void)
+ {
+ 	static const struct pmap_devmap devmap[] = {
++#ifdef CONSADDR
++		/* Keep the explicit early console mapped after MMU bootstrap. */
++		DEVMAP_ENTRY(KERNEL_IO_VBASE, DEVMAP_ALIGN(CONSADDR),
++		    DEVMAP_SIZE(0x1000)),
++#endif
+ 		DEVMAP_ENTRY_END
+ 	};
+ 

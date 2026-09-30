@@ -1,0 +1,57 @@
+#!/bin/sh
+# PROVIDE: oxtorg_bluetooth
+# REQUIRE: DAEMON
+# BEFORE: oxtorg_agent oxtorg_voice LOGIN
+# Bootstrap the observed Pi 5 C1 UART. Restart preserves an attached controller.
+
+. /etc/rc.subr
+name=oxtorg_bluetooth
+rcvar=$name
+start_cmd=oxtorg_bluetooth_start
+stop_cmd=:
+
+oxtorg_bluetooth_start()
+{
+	[ "$(sysctl -n machdep.dmi.system-product 2>/dev/null)" = \
+	    "Raspberry Pi 5 Model B" ] || return 0
+	bluetooth_name='Asenta NetBSD'
+	bluetooth_address=
+	bluetooth_class=0x000104
+	[ ! -r /etc/oxtorg/bluetooth.conf ] || . /etc/oxtorg/bluetooth.conf
+	control=/opt/oxtorg/bin/bluetooth-control
+	[ -x "$control" ] || return 1
+	if ! btconfig -l | tr ' ' '\n' | grep -qx btuart0; then
+		modstat | awk '{print $1}' | grep -qx bcm2712btcom || \
+		    modload bcm2712btcom || return 1
+		btattach -f -i 115200 bcm43xx /dev/dty00 115200 || return 1
+	fi
+	btconfig btuart0 | grep -q '<UP,RUNNING>' || \
+	    btconfig btuart0 enable || return 1
+	if [ -n "$bluetooth_address" ]; then
+		result=$("$control" btuart0 address "$bluetooth_address") || return 1
+	else
+		result=$("$control" btuart0 address) || return 1
+	fi
+	# Refresh the kernel's address only when firmware had a placeholder.
+	# SSP/SC must be enabled after this reset, never before it.
+	case "$result" in
+	ADDRESS_CHANGED)
+		btconfig btuart0 disable && btconfig btuart0 enable || return 1 ;;
+	ADDRESS_UNCHANGED) ;;
+	*) return 1 ;;
+	esac
+	state=$("$control" btuart0 state) || return 1
+	if [ "$state" != 'SSP=1 SC=1' ]; then
+		# BCM4345C0 refuses SC enable while inquiry/page scanning is active.
+		btconfig btuart0 -pscan -iscan || return 1
+	fi
+	"$control" btuart0 init "$bluetooth_name" || return 1
+	btconfig btuart0 name "$bluetooth_name" class "$bluetooth_class" \
+	    pscan iscan -auth -encrypt switch sniff -master || return 1
+	[ -n "$(check_pidfile /var/run/bthcid.pid /usr/sbin/bthcid)" ] || \
+	    bthcid || return 1
+	[ -n "$(check_process /usr/sbin/sdpd)" ] || sdpd || return 1
+}
+
+load_rc_config "$name"
+run_rc_command "$1"

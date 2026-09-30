@@ -1,0 +1,31 @@
+Origin:
+Reject unsupported empty DesignWare transfers and report polling-mode
+transmit aborts instead of attaching absent I2C devices.
+
+--- sys/dev/ic/dwiic.c.orig
++++ sys/dev/ic/dwiic.c
+@@ -339,6 +339,10 @@
+ 	const uint8_t *bcmd;
+ 	uint8_t *bdata;
+ 
++	/* DesignWare cannot issue an address-only SMBus quick transfer. */
++	if (cmdlen == 0 && len == 0)
++		return EOPNOTSUPP;
++
+ 	if (sc->sc_poll)
+ 		flags |= I2C_F_POLL;
+ 
+@@ -551,7 +555,12 @@
+ 		}
+ 	}
+ 
+-	return 0;
++	/* In polling mode an abort is not reported by the interrupt handler. */
++	if (dwiic_read(sc, DW_IC_RAW_INTR_STAT) & DW_IC_INTR_TX_ABRT) {
++		dwiic_read(sc, DW_IC_CLR_TX_ABRT);
++		sc->sc_i2c_xfer.error = 1;
++	}
++	return sc->sc_i2c_xfer.error ? EIO : 0;
+ }
+ 
+ static uint32_t

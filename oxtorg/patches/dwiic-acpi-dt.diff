@@ -1,0 +1,17 @@
+Origin:
+The Raspberry Pi 5's header
+I2C (RP1 I2C1, a Synopsys DesignWare block) as our firmware describes it:
+a PRP0001 device with the device tree compatible "snps,designware-i2c",
+which acpi_compatible_match already follows through _DSD. The SCL counts
+come from the device's SSCN and FMCN, as for the other ACPI entries.
+
+--- sys/dev/acpi/dwiic_acpi.c.orig
++++ sys/dev/acpi/dwiic_acpi.c
+@@ -64,6 +64,7 @@ static const struct device_compatible_entry compat_data[] = {
+ 	{ .compat = "AMDI0010" },	/* AMD FCH */
+ 	{ .compat = "AMDI0510" },	/* AMD Seattle */
+ 	{ .compat = "APMC0D0F" },	/* Ampere eMAG */
++	{ .compat = "snps,designware-i2c" },	/* PRP0001, e.g. Raspberry Pi 5 RP1 */
+ 	DEVICE_COMPAT_EOL
+ };
+ 

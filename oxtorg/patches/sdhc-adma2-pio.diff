@@ -1,0 +1,22 @@
+Origin: NetBSD trunk, sys/dev/sdmmc/sdhc.c 1.125 (jmcneill, 2026-01-09,
+"Add support for the Nintendo Wii U"), the sdhc_start_command hunk only;
+not pulled up to netbsd-11. Their code, not ours. SDIO extended I/O
+(CMD53) runs without a DMA map, and on an ADMA2 host 11.0 set up ADMA2
+descriptors from cmd->c_dmamap regardless: a NULL dereference on the
+first bwfm read (Raspberry Pi 5 Wi-Fi, 24.09.2026). With the hunk such
+commands go by PIO. Remove this diff once it is in the 11 branch.
+
+--- sys/dev/sdmmc/sdhc.c.orig
++++ sys/dev/sdmmc/sdhc.c
+@@ -1809,7 +1809,10 @@
+ 	}
+ 
+ 	/* Set DMA start address. */
+-	if (ISSET(hp->flags, SHF_USE_ADMA2_MASK) && cmd->c_data != NULL) {
++	if (ISSET(mode, SDHC_DMA_ENABLE) &&
++	    ISSET(hp->flags, SHF_USE_ADMA2_MASK) &&
++	    cmd->c_data != NULL) {
++		KASSERT(cmd->c_dmamap != NULL);
+ 		for (int seg = 0; seg < cmd->c_dmamap->dm_nsegs; seg++) {
+ 			bus_addr_t paddr =
+ 			    cmd->c_dmamap->dm_segs[seg].ds_addr;

@@ -1,0 +1,18 @@
+Origin:
+The Raspberry Pi 4's
+hardware random number generator: the device tree NetBSD ships calls it
+"brcm,bcm2711-rng200", and bcm2838rng knew only "brcm,bcm2838-rng200",
+so it never attached (NetBSD PR 59612 asks for it to attach at all).
+Goes with "bcm2838rng* at fdt?" in netbsd/conf/OXTORG64. Not yet tried
+on a Pi 4.
+
+--- sys/arch/arm/broadcom/bcm2838_rng.c.orig
++++ sys/arch/arm/broadcom/bcm2838_rng.c
+@@ -51,6 +51,7 @@ CFATTACH_DECL_NEW(bcm2838rng_fdt, sizeof(struct bcm2838rng_softc),
+ 
+ static const struct device_compatible_entry compat_data[] = {
+ 	{ .compat = "brcm,bcm2838-rng200" },
++	{ .compat = "brcm,bcm2711-rng200" },	/* the Pi 4 device tree */
+ 	DEVICE_COMPAT_EOL
+ };
+ 

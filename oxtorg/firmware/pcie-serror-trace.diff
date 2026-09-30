@@ -1,0 +1,392 @@
+Origin:
+
+Optional PCIe SError tracing with RP1_UART_CONSOLE. Store initialization
+stages and the first PCI configuration access which changes ISR_EL1
+in boot-service memory; print them after the GPIO console becomes ready.
+No pending error is masked or cleared. The default build has no probes.
+
+--- a/Silicon/Broadcom/Bcm27xx/Include/Guid/Cm5PcieTrace.h
++++ b/Silicon/Broadcom/Bcm27xx/Include/Guid/Cm5PcieTrace.h
+@@ -0,0 +1,85 @@
++/** @file
++  Optional CM5 PCIe SError trace. No error state is acknowledged or cleared.
++
++  SPDX-License-Identifier: BSD-2-Clause-Patent
++**/
++#ifndef CM5_PCIE_TRACE_H
++#define CM5_PCIE_TRACE_H
++
++#ifdef RP1_UART_CONSOLE
++#include <Library/BaseMemoryLib.h>
++#include <Library/UefiBootServicesTableLib.h>
++
++#define CM5_PCIE_TRACE_GUID \
++  { 0x8fe2a74d, 0x2196, 0x4a6e, { 0xb4, 0x41, 0xea, 0x93, 0x23, 0xe8, 0x3b, 0x0c } }
++#define CM5_PCIE_TRACE_CAPACITY  64
++
++// Stages: 1 entry, 2 reset, 3 PHY, 4 MISC_CTRL, 5 UBUS error policy,
++// 6 timeouts/QoS, 7 inbound, 8 outbound, 9 interrupts/class/endian,
++// 10 speed/ASPM, 11 deassert reset, 12 link wait.
++// 90 first PCI config access; 100 index, 101 read, 102 write first SError.
++typedef struct {
++  UINT64  Stage;
++  UINT64  Address;
++  UINT64  Auxiliary;
++  UINT64  Before;
++  UINT64  After;
++  UINT64  Data;
++} CM5_PCIE_TRACE_RECORD;
++
++typedef struct {
++  UINT32                 Version;
++  UINT32                 Count;
++  CM5_PCIE_TRACE_RECORD  Records[CM5_PCIE_TRACE_CAPACITY];
++} CM5_PCIE_TRACE;
++
++STATIC inline UINT64
++Cm5PcieReadIsr (VOID)
++{
++  UINT64  Value;
++
++  __asm__ volatile ("dsb sy; isb; mrs %0, isr_el1" : "=r" (Value)
++                    : : "memory");
++  return Value;
++}
++
++STATIC inline CM5_PCIE_TRACE *
++Cm5PcieFindTrace (VOID)
++{
++  STATIC EFI_GUID  Guid = CM5_PCIE_TRACE_GUID;
++  UINTN            Index;
++
++  for (Index = 0; Index < gST->NumberOfTableEntries; Index++) {
++    if (CompareGuid (&gST->ConfigurationTable[Index].VendorGuid, &Guid)) {
++      return gST->ConfigurationTable[Index].VendorTable;
++    }
++  }
++
++  return NULL;
++}
++
++STATIC inline VOID
++Cm5PcieRecord (
++  UINT64 Stage, UINT64 Address, UINT64 Auxiliary,
++  UINT64 Before, UINT64 After, UINT64 Data
++  )
++{
++  CM5_PCIE_TRACE         *Trace;
++  CM5_PCIE_TRACE_RECORD  *Record;
++
++  Trace = Cm5PcieFindTrace ();
++  if ((Trace == NULL) || (Trace->Version != 1) ||
++      (Trace->Count >= CM5_PCIE_TRACE_CAPACITY)) {
++    return;
++  }
++
++  Record = &Trace->Records[Trace->Count++];
++  Record->Stage = Stage;
++  Record->Address = Address;
++  Record->Auxiliary = Auxiliary;
++  Record->Before = Before;
++  Record->After = After;
++  Record->Data = Data;
++}
++#endif
++#endif
+--- a/Silicon/Broadcom/Bcm27xx/Library/Bcm2712PciHostBridgeLib/Bcm2712PciHostBridge.c
++++ b/Silicon/Broadcom/Bcm27xx/Library/Bcm2712PciHostBridgeLib/Bcm2712PciHostBridge.c
+@@ -7,6 +7,8 @@
+  **/
+ 
+ #include <Uefi.h>
++#include <Guid/Cm5PcieTrace.h>
++#include <Library/MemoryAllocationLib.h>
+ #include <IndustryStandard/Bcm2712.h>
+ #include <IndustryStandard/Bcm2712Pcie.h>
+ #include <IndustryStandard/Pci.h>
+@@ -16,6 +18,18 @@
+ #include <Library/UefiBootServicesTableLib.h>
+ 
+ #include "Bcm2712PciHostBridge.h"
++
++#ifdef RP1_UART_CONSOLE
++STATIC
++VOID
++PcieTraceStage (BCM2712_PCIE_RC *Pcie, UINT64 Stage)
++{
++  Cm5PcieRecord (Stage, Pcie->Base, 0, 0, Cm5PcieReadIsr (), 0);
++}
++#define PCIE_TRACE(Stage)  PcieTraceStage (Pcie, Stage)
++#else
++#define PCIE_TRACE(Stage)  do { } while (0)
++#endif
+ 
+ EFI_STATUS
+ PciePhyRead (
+@@ -365,6 +379,29 @@
+   IN BCM2712_PCIE_RC  *Pcie
+   )
+ {
++#ifdef RP1_UART_CONSOLE
++  {
++    STATIC EFI_GUID  Guid = CM5_PCIE_TRACE_GUID;
++    CM5_PCIE_TRACE   *Trace;
++    UINT64          EntryIsr;
++    EFI_STATUS      TraceStatus;
++
++    EntryIsr = Cm5PcieReadIsr ();
++    Trace = Cm5PcieFindTrace ();
++    if (Trace == NULL) {
++      Trace = AllocateZeroPool (sizeof (*Trace));
++      if (Trace != NULL) {
++        Trace->Version = 1;
++        TraceStatus = gBS->InstallConfigurationTable (&Guid, Trace);
++        if (EFI_ERROR (TraceStatus)) {
++          FreePool (Trace);
++        }
++      }
++    }
++
++    Cm5PcieRecord (1, Pcie->Base, 0, EntryIsr, Cm5PcieReadIsr (), 0);
++  }
++#endif
+   DEBUG ((DEBUG_INIT, "PCIe: Base: 0x%lx\n", Pcie->Base));
+   DEBUG ((DEBUG_INIT, "PCIe: Settings->MaxLinkSpeed: %d\n", Pcie->Settings->MaxLinkSpeed));
+   DEBUG ((DEBUG_INIT, "PCIe: Settings->AspmSupportL0s: %d\n", Pcie->Settings->AspmSupportL0s));
+@@ -379,7 +416,10 @@
+   PcieAssertPerst (Pcie, TRUE);
+   gBS->Stall (100);
+ 
++  PCIE_TRACE (2);
++
+   PcieSetupPhy (Pcie);
++  PCIE_TRACE (3);
+ 
+   MmioAndThenOr32 (
+     Pcie->Base + PCIE_MISC_MISC_CTRL,
+@@ -390,6 +430,8 @@
+     (Pcie->Settings->RcbMatchMps ? PCIE_MISC_MISC_CTRL_PCIE_RCB_MPS_MODE_MASK : 0)
+     );
+ 
++  PCIE_TRACE (4);
++
+   //
+   // Disable AXI bus errors to avoid Arm SError exceptions
+   // when the link is down.
+@@ -401,6 +443,8 @@
+     );
+   MmioWrite32 (Pcie->Base + PCIE_MISC_AXI_READ_ERROR_DATA, PCI_INVALID_ADDRESS);
+ 
++  PCIE_TRACE (5);
++
+   //
+   // Set UBUS timeout to ~250ms and CRS timeout to ~240ms.
+   //
+@@ -414,6 +458,8 @@
+   //
+   MmioAnd32 (Pcie->Base + PCIE_MISC_RC_BAR1_CONFIG_LO, ~PCIE_MISC_RC_BAR_CONFIG_LO_SIZE_MASK);
+   MmioAnd32 (Pcie->Base + PCIE_MISC_RC_BAR3_CONFIG_LO, ~PCIE_MISC_RC_BAR_CONFIG_LO_SIZE_MASK);
++
++  PCIE_TRACE (6);
+ 
+   //
+   // Map inbound windows
+@@ -426,6 +472,8 @@
+     Pcie->Inbound.Size
+     );
+ 
++  PCIE_TRACE (7);
++
+   //
+   // Map outbound windows
+   //
+@@ -445,6 +493,8 @@
+     Pcie->Mem64.Size
+     );
+ 
++  PCIE_TRACE (8);
++
+   // Clear and mask interrupts
+   MmioWrite32 (Pcie->Base + PCIE_INTR2_CPU_BASE + PCIE_INTR2_CPU_MASK_CLR, 0xffffffff);
+   MmioWrite32 (Pcie->Base + PCIE_INTR2_CPU_BASE + PCIE_INTR2_CPU_MASK_SET, 0xffffffff);
+@@ -464,15 +514,22 @@
+     << PCIE_RC_CFG_VENDOR_VENDOR_SPECIFIC_REG1_ENDIAN_MODE_BAR2_SHIFT
+     );
+ 
++  PCIE_TRACE (9);
++
+   PcieSetupLinkSpeed (Pcie, Pcie->Settings->MaxLinkSpeed);
+ 
+   PcieSetupAspm (Pcie);
++
++  PCIE_TRACE (10);
+ 
+   // Start link-up
+   PcieAssertPerst (Pcie, FALSE);
+   gBS->Stall (100000);
+ 
++  PCIE_TRACE (11);
++
+   PcieWaitForLinkUp (Pcie);
++  PCIE_TRACE (12);
+ 
+   return EFI_SUCCESS;
+ }
+--- a/Silicon/Broadcom/Bcm27xx/Library/Bcm2712PciSegmentLib/PciSegmentLib.c
++++ b/Silicon/Broadcom/Bcm27xx/Library/Bcm2712PciSegmentLib/PciSegmentLib.c
+@@ -11,6 +11,7 @@
+ 
+ #include <Base.h>
+ #include <Uefi.h>
++#include <Guid/Cm5PcieTrace.h>
+ #include <IndustryStandard/Pci.h>
+ #include <IndustryStandard/Bcm2712.h>
+ #include <IndustryStandard/Bcm2712Pcie.h>
+@@ -27,6 +28,27 @@
+   PciCfgWidthMax
+ } PCI_CFG_WIDTH;
+ 
++#ifdef RP1_UART_CONSOLE
++STATIC BOOLEAN  mCm5FirstConfigAccess = TRUE;
++
++STATIC
++VOID
++PciTraceFirstError (
++  UINT64 Stage, UINT64 Address, UINT64 Base,
++  UINT64 Before, UINT64 After, UINT64 Data
++  )
++{
++  if (mCm5FirstConfigAccess && (Cm5PcieFindTrace () != NULL)) {
++    Cm5PcieRecord (90, Address, Base, Before, After, Data);
++    mCm5FirstConfigAccess = FALSE;
++  }
++
++  if (((Before & BIT8) == 0) && ((After & BIT8) != 0)) {
++    Cm5PcieRecord (Stage, Address, Base, Before, After, Data);
++  }
++}
++#endif
++
+ /**
+   Assert the validity of a PCI Segment address.
+   A valid PCI Segment address should not contain 1's in bits 28..31 and 48..63
+@@ -133,10 +155,21 @@
+   )
+ {
+   UINT64  Base;
++#ifdef RP1_UART_CONSOLE
++  UINT64  BeforeIsr;
++  UINT64  DataIsr;
++#endif
+   UINT64  Ret;
+ 
+   EfiAcquireLock (&mPciSegmentReadWriteLock);
++#ifdef RP1_UART_CONSOLE
++  BeforeIsr = Cm5PcieReadIsr ();
++#endif
+   Base = PciSegmentLibGetConfigBase (Address);
++#ifdef RP1_UART_CONSOLE
++  DataIsr = Cm5PcieReadIsr ();
++  PciTraceFirstError (100, Address, Base, BeforeIsr, DataIsr, 0);
++#endif
+ 
+   if (Base == PCI_INVALID_ADDRESS) {
+     EfiReleaseLock (&mPciSegmentReadWriteLock);
+@@ -158,6 +191,9 @@
+       Ret = 0;
+   }
+ 
++#ifdef RP1_UART_CONSOLE
++  PciTraceFirstError (101, Address, Base, DataIsr, Cm5PcieReadIsr (), Ret);
++#endif
+   EfiReleaseLock (&mPciSegmentReadWriteLock);
+   return Ret;
+ }
+@@ -182,9 +218,20 @@
+   )
+ {
+   UINT64  Base;
++#ifdef RP1_UART_CONSOLE
++  UINT64  BeforeIsr;
++  UINT64  DataIsr;
++#endif
+ 
+   EfiAcquireLock (&mPciSegmentReadWriteLock);
++#ifdef RP1_UART_CONSOLE
++  BeforeIsr = Cm5PcieReadIsr ();
++#endif
+   Base = PciSegmentLibGetConfigBase (Address);
++#ifdef RP1_UART_CONSOLE
++  DataIsr = Cm5PcieReadIsr ();
++  PciTraceFirstError (100, Address, Base, BeforeIsr, DataIsr, 0);
++#endif
+ 
+   switch (Width) {
+     case PciCfgWidthUint8:
+@@ -200,6 +247,9 @@
+       ASSERT (FALSE);
+   }
+ 
++#ifdef RP1_UART_CONSOLE
++  PciTraceFirstError (102, Address, Base, DataIsr, Cm5PcieReadIsr (), Data);
++#endif
+   EfiReleaseLock (&mPciSegmentReadWriteLock);
+   return Data;
+ }
+--- a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
++++ b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
+@@ -7,6 +7,7 @@
+  **/
+ 
+ #include <Guid/RpiPlatformFormSetGuid.h>
++#include <Guid/Cm5PcieTrace.h>
+ #include <IndustryStandard/Acpi.h>
+ #include <IndustryStandard/Pci.h>
+ #include <IndustryStandard/PeImage.h>
+@@ -1461,6 +1462,25 @@
+     ConsoleDiagnosticIsr ("platform init entry", mDiagnosticInitIsr);
+     ConsoleDiagnosticIsr ("platform init variable", mDiagnosticInitPostIsr);
+     ConsoleDiagnosticIsr ("ReadyToBoot entry", EntryIsr);
++    {
++      CM5_PCIE_TRACE         *Trace;
++      CM5_PCIE_TRACE_RECORD  *Record;
++      UINTN                  Index;
++
++      Trace = Cm5PcieFindTrace ();
++      if ((Trace != NULL) && (Trace->Version == 1)) {
++        for (Index = 0; (Index < Trace->Count) &&
++                        (Index < CM5_PCIE_TRACE_CAPACITY); Index++) {
++          Record = &Trace->Records[Index];
++          ConsoleDiagnosticIsr ("PCI trace stage", Record->Stage);
++          ConsoleDiagnosticIsr ("PCI trace address", Record->Address);
++          ConsoleDiagnosticIsr ("PCI trace aux", Record->Auxiliary);
++          ConsoleDiagnosticIsr ("PCI trace before", Record->Before);
++          ConsoleDiagnosticIsr ("PCI trace after", Record->After);
++          ConsoleDiagnosticIsr ("PCI trace data", Record->Data);
++        }
++      }
++    }
+   }
+   RecordConsoleDiagnosticStage (3);
+ #endif
+--- a/Silicon/Broadcom/Bcm27xx/Library/Bcm2712PciHostBridgeLib/Bcm2712PciHostBridgeLib.inf
++++ b/Silicon/Broadcom/Bcm27xx/Library/Bcm2712PciHostBridgeLib/Bcm2712PciHostBridgeLib.inf
+@@ -25,6 +25,7 @@
+ 
+ [LibraryClasses]
+   BaseLib
++  BaseMemoryLib
+   DebugLib
+   DevicePathLib
+   IoLib
+--- a/Silicon/Broadcom/Bcm27xx/Library/Bcm2712PciSegmentLib/PciSegmentLib.inf
++++ b/Silicon/Broadcom/Bcm27xx/Library/Bcm2712PciSegmentLib/PciSegmentLib.inf
+@@ -26,6 +26,8 @@
+ 
+ [LibraryClasses]
+   BaseLib
++  BaseMemoryLib
+   DebugLib
+   IoLib
+   UefiLib
++  UefiBootServicesTableLib

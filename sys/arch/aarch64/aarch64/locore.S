@@ -47,6 +47,11 @@ RCSID("$NetBSD: locore.S,v 1.96 2025/07/21 16:57:10 skrll Exp $")
 #endif
 #define	MAIR_DEVICE_MEM_NP	MAIR_DEVICE_nGnRnE
 
+#if defined(EARLYCONS) && defined(CONSADDR) && CONSADDR == 0x1f00030000
+#define CM5_LOCORE_TRACE
+#define DEBUG_LOCORE
+#endif
+
 /*#define DEBUG_LOCORE			// debug print */
 /*#define DEBUG_LOCORE_PRINT_LOCK	// avoid mixing AP's output */
 
@@ -101,6 +106,7 @@ ASENTRY_NP(aarch64_start)
 	mrs	x20, CurrentEL
 	lsr	x20, x20, #2
 	DPRINTREG("CurrentEL        = ", x20)
+	DPRINTSREG("ISR_EL1          = ", isr_el1)
 	cmp	x20, #2
 	bcc	1f
 	/* EL2 registers can be accessed in EL2 or higher */
@@ -126,11 +132,26 @@ ASENTRY_NP(aarch64_start)
 	mrs	x20, CurrentEL
 	lsr	x20, x20, #2
 	DPRINTREG("CurrentEL        = ", x20)
+	DPRINTSREG("ISR_EL1          = ", isr_el1)
 #endif /* LOCORE_EL2 */
 
 
+#ifdef CM5_LOCORE_TRACE
+	/* Catch faults before the normal virtual exception vectors exist. */
+	adr	x0, .Lcm5_early_vectors
+	msr	vbar_el1, x0
+	isb
+	VPRINT("[CM5 kernel] mmu_disable\n")
+#endif
 	bl	mmu_disable
+#ifdef CM5_LOCORE_TRACE
+	VPRINT("[CM5 kernel] init_sysregs\n")
+	DPRINTSREG("ISR before init  = ", isr_el1)
+#endif
 	bl	init_sysregs
+#ifdef CM5_LOCORE_TRACE
+	VPRINT("[CM5 kernel] init_mmutable\n")
+#endif
 	bl	init_mmutable
 	cbnz	x0, aarch64_fatal
 	bl	save_ttbrs
@@ -230,6 +251,77 @@ vstart:
 	b	_C_LABEL(panic)
 	/* NOTREACHED */
 ASEND(aarch64_start)
+
+#ifdef CM5_LOCORE_TRACE
+/* Each 128-byte slot records its architectural vector number. */
+	.align 11
+.Lcm5_early_vectors:
+	.align 7
+	mov	x20, #0
+	b	.Lcm5_early_exception
+	.align 7
+	mov	x20, #1
+	b	.Lcm5_early_exception
+	.align 7
+	mov	x20, #2
+	b	.Lcm5_early_exception
+	.align 7
+	mov	x20, #3
+	b	.Lcm5_early_exception
+	.align 7
+	mov	x20, #4
+	b	.Lcm5_early_exception
+	.align 7
+	mov	x20, #5
+	b	.Lcm5_early_exception
+	.align 7
+	mov	x20, #6
+	b	.Lcm5_early_exception
+	.align 7
+	mov	x20, #7
+	b	.Lcm5_early_exception
+	.align 7
+	mov	x20, #8
+	b	.Lcm5_early_exception
+	.align 7
+	mov	x20, #9
+	b	.Lcm5_early_exception
+	.align 7
+	mov	x20, #10
+	b	.Lcm5_early_exception
+	.align 7
+	mov	x20, #11
+	b	.Lcm5_early_exception
+	.align 7
+	mov	x20, #12
+	b	.Lcm5_early_exception
+	.align 7
+	mov	x20, #13
+	b	.Lcm5_early_exception
+	.align 7
+	mov	x20, #14
+	b	.Lcm5_early_exception
+	.align 7
+	mov	x20, #15
+	b	.Lcm5_early_exception
+
+.Lcm5_early_exception:
+	msr	daifset, #0xf
+	PRINT("[CM5 kernel] early exception vector=")
+	mov	x0, x20
+	bl	print_x0
+	PRINT("ESR_EL1=")
+	mrs	x0, esr_el1
+	bl	print_x0
+	PRINT("ELR_EL1=")
+	mrs	x0, elr_el1
+	bl	print_x0
+	PRINT("FAR_EL1=")
+	mrs	x0, far_el1
+	bl	print_x0
+1:	wfe
+	b	1b
+#endif
 
 .Lmainreturned:
 	.asciz	"main() returned"

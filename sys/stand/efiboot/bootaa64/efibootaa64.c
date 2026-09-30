@@ -28,6 +28,7 @@
 
 #include "../efiboot.h"
 #include "../efifdt.h"
+#include "../cm5trace.h"
 
 #include <sys/cdefs.h>
 #include <sys/bootblock.h>
@@ -57,11 +58,19 @@ efi_boot_kernel(u_long marks[MARK_MAX])
 	fdt_start = (u_long)efi_fdt_data();
 	fdt_size = efi_fdt_size();
 
+	efi_cm5_trace("[CM5 EFI] flush kernel cache\r\n");
+	efi_cm5_pending("before cache flush");
 	aarch64_dcache_wbinv_range(kernel_start, kernel_size);
+	efi_cm5_trace("[CM5 EFI] kernel cache done\r\n");
+	efi_cm5_pending("after kernel cache");
 	if (efi_fdt_size() > 0) {
 		aarch64_dcache_wbinv_range(fdt_start, fdt_size);
 	}
+	efi_cm5_trace("[CM5 EFI] FDT cache done\r\n");
+	efi_cm5_pending("after FDT cache");
 	aarch64_icache_inv_all();
+	efi_cm5_trace("[CM5 EFI] branch to kernel\r\n");
+	efi_cm5_pending("before kernel");
 
 	aarch64_exec_kernel((paddr_t)kernel_entry, (paddr_t)fdt_start);
 }

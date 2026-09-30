@@ -1,0 +1,511 @@
+Origin:
+
+Separate GPIO UART console support from temporary CM5 boot tracing.
+CM5_BOOT_TRACE defaults to FALSE: normal GPIO console builds do not
+interpose LoadImage/StartImage, record NV variables, wrap GPIO MMIO
+or print ISR and SDHCI traces. Explicitly initialize RP1 serial after
+publishing its bus protocol so console operation needs no trace writes.
+
+--- a/Silicon/Broadcom/Bcm27xx/Library/Bcm2712PciHostBridgeLib/Bcm2712PciHostBridge.c
++++ b/Silicon/Broadcom/Bcm27xx/Library/Bcm2712PciHostBridgeLib/Bcm2712PciHostBridge.c
+@@ -19,7 +19,7 @@
+ 
+ #include "Bcm2712PciHostBridge.h"
+ 
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+ STATIC
+ VOID
+ PcieTraceStage (BCM2712_PCIE_RC *Pcie, UINT64 Stage)
+@@ -379,7 +379,7 @@
+   IN BCM2712_PCIE_RC  *Pcie
+   )
+ {
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   {
+     STATIC EFI_GUID  Guid = CM5_PCIE_TRACE_GUID;
+     CM5_PCIE_TRACE   *Trace;
+--- a/Silicon/Broadcom/Bcm27xx/Library/Bcm2712GpioLib/Bcm2712GpioLib.c
++++ b/Silicon/Broadcom/Bcm27xx/Library/Bcm2712GpioLib/Bcm2712GpioLib.c
+@@ -13,7 +13,7 @@
+ #include <Library/DebugLib.h>
+ #include <Library/IoLib.h>
+ 
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+ #define MmioRead32       Cm5MmioRead32
+ #define MmioWrite32      Cm5MmioWrite32
+ #define MmioAnd32        Cm5MmioAnd32
+--- a/Silicon/Broadcom/Bcm27xx/Library/Bcm2712PciSegmentLib/PciSegmentLib.c
++++ b/Silicon/Broadcom/Bcm27xx/Library/Bcm2712PciSegmentLib/PciSegmentLib.c
+@@ -28,7 +28,7 @@
+   PciCfgWidthMax
+ } PCI_CFG_WIDTH;
+ 
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+ STATIC BOOLEAN  mCm5FirstConfigAccess = TRUE;
+ 
+ STATIC
+@@ -155,18 +155,18 @@
+   )
+ {
+   UINT64  Base;
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   UINT64  BeforeIsr;
+   UINT64  DataIsr;
+ #endif
+   UINT64  Ret;
+ 
+   EfiAcquireLock (&mPciSegmentReadWriteLock);
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   BeforeIsr = Cm5PcieReadIsr ();
+ #endif
+   Base = PciSegmentLibGetConfigBase (Address);
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   DataIsr = Cm5PcieReadIsr ();
+   PciTraceFirstError (100, Address, Base, BeforeIsr, DataIsr, 0);
+ #endif
+@@ -191,7 +191,7 @@
+       Ret = 0;
+   }
+ 
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   PciTraceFirstError (101, Address, Base, DataIsr, Cm5PcieReadIsr (), Ret);
+ #endif
+   EfiReleaseLock (&mPciSegmentReadWriteLock);
+@@ -218,17 +218,17 @@
+   )
+ {
+   UINT64  Base;
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   UINT64  BeforeIsr;
+   UINT64  DataIsr;
+ #endif
+ 
+   EfiAcquireLock (&mPciSegmentReadWriteLock);
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   BeforeIsr = Cm5PcieReadIsr ();
+ #endif
+   Base = PciSegmentLibGetConfigBase (Address);
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   DataIsr = Cm5PcieReadIsr ();
+   PciTraceFirstError (100, Address, Base, BeforeIsr, DataIsr, 0);
+ #endif
+@@ -247,7 +247,7 @@
+       ASSERT (FALSE);
+   }
+ 
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   PciTraceFirstError (102, Address, Base, DataIsr, Cm5PcieReadIsr (), Data);
+ #endif
+   EfiReleaseLock (&mPciSegmentReadWriteLock);
+--- a/Silicon/Broadcom/Bcm27xx/Include/Guid/Cm5PcieTrace.h
++++ b/Silicon/Broadcom/Bcm27xx/Include/Guid/Cm5PcieTrace.h
+@@ -6,7 +6,7 @@
+ #ifndef CM5_PCIE_TRACE_H
+ #define CM5_PCIE_TRACE_H
+ 
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+ #include <Library/BaseMemoryLib.h>
+ #include <Library/IoLib.h>
+ #include <Library/MemoryAllocationLib.h>
+--- a/Silicon/Broadcom/Drivers/BrcmStbSdhciDxe/BrcmStbSdhciDxe.c
++++ b/Silicon/Broadcom/Drivers/BrcmStbSdhciDxe/BrcmStbSdhciDxe.c
+@@ -17,12 +17,12 @@
+ #include <Protocol/SdMmcOverride.h>
+ 
+ #include "BrcmStbSdhciDxe.h"
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+ #include <Library/SerialPortLib.h>
+ #include <Library/BaseMemoryLib.h>
+ #endif
+ 
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+ STATIC
+ VOID
+ SdhciDiagnosticHex (CONST CHAR8 *Label, UINT64 Value)
+@@ -79,7 +79,7 @@
+ 
+   // HS400 enters HS200 first, which requires unsupported clock tuning.
+   Capability->Hs400 = 0;
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   {
+     UINT64  RawCapability;
+ 
+@@ -119,7 +119,7 @@
+     return EFI_UNSUPPORTED;
+   }
+ 
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   SdhciDiagnosticHex ("[CM5 SDHCI] phase=", PhaseType);
+   SdhciDiagnosticHex ("[CM5 SDHCI] present=", MmioRead32 (Device->HostAddress + 0x24));
+   SdhciDiagnosticHex ("[CM5 SDHCI] clock=", MmioRead32 (Device->HostAddress + 0x2c));
+@@ -182,7 +182,7 @@
+                      SDIO_CFG_CTRL_SDCD_N_TEST_EN);
+   }
+ 
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   SdhciDiagnosticHex ("[CM5 SDHCI] host=", This->HostAddress);
+   SdhciDiagnosticHex ("[CM5 SDHCI] removable=", This->IsSlotRemovable);
+   SdhciDiagnosticHex ("[CM5 SDHCI] config=", MmioRead32 (This->CfgAddress));
+--- a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/Peripherals.c
++++ b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/Peripherals.c
+@@ -23,7 +23,7 @@
+ #include "ConfigTable.h"
+ #include "RpiPlatformDxe.h"
+ 
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+ #define MmioRead32       Cm5MmioRead32
+ #define MmioWrite32      Cm5MmioWrite32
+ #define MmioAnd32        Cm5MmioAnd32
+@@ -149,7 +149,7 @@
+ 
+   IsD0 = Bcm2712IsD0 ();
+   GpioInitialize (IsD0);
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   Cm5PcieRecord (70, mBoardRevisionCode, IsD0, 0, Cm5PcieReadIsr (), 0);
+ #endif
+ 
+@@ -300,24 +300,24 @@
+   VOID
+   )
+ {
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   Cm5PcieRecord (60, 0, 0, 0, Cm5PcieReadIsr (), 0);
+ #endif
+   InitGpioPinctrls ();
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   Cm5PcieRecord (61, 0, 0, 0, Cm5PcieReadIsr (), 0);
+ #endif
+   InitWifiSdioHost ();
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   Cm5PcieRecord (62, 0, 0, 0, Cm5PcieReadIsr (), 0);
+ #endif
+ 
+   RegisterSdControllers ();
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   Cm5PcieRecord (63, 0, 0, 0, Cm5PcieReadIsr (), 0);
+ #endif
+   RegisterPciePlatform ();
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   Cm5PcieRecord (64, 0, 0, 0, Cm5PcieReadIsr (), 0);
+ #endif
+ 
+--- a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/RpiPlatformDxe.c
++++ b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/RpiPlatformDxe.c
+@@ -119,7 +119,7 @@
+ {
+   EFI_STATUS Status;
+ 
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   Cm5PlatformTraceInit ();
+ #endif
+ 
+@@ -131,26 +131,26 @@
+   }
+ 
+   mSystemMemorySize = BoardRevisionGetMemorySize (mBoardRevisionCode);
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   Cm5PcieRecord (51, 0, 0, 0, Cm5PcieReadIsr (), 0);
+ #endif
+ 
+   SetupVariables ();
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   Cm5PcieRecord (52, 0, 0, 0, Cm5PcieReadIsr (), 0);
+ #endif
+   ApplyVariables ();
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   Cm5PcieRecord (53, 0, 0, 0, Cm5PcieReadIsr (), 0);
+ #endif
+ 
+   SetupPeripherals ();
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   Cm5PcieRecord (54, 0, 0, 0, Cm5PcieReadIsr (), 0);
+ #endif
+ 
+   Status = InstallHiiPages ();
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   Cm5PcieRecord (55, 0, 0, 0, Cm5PcieReadIsr (), Status);
+ #endif
+   if (EFI_ERROR (Status)) {
+--- a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
++++ b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
+@@ -37,7 +37,7 @@
+ #include "RpiPlatformDxe.h"
+ #include "Peripherals.h"
+ 
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+ STATIC UINTN   mDiagnosticUartBase;
+ STATIC UINT64  mDiagnosticInitIsr;
+ STATIC UINT64  mDiagnosticInitPostIsr;
+@@ -784,8 +784,10 @@
+     return;
+   }
+ 
+-  mDiagnosticUartBase = (UINTN)PeripheralBase + 0x30000;
+-  Spcr->BaseAddress.Address = mDiagnosticUartBase;
++  Spcr->BaseAddress.Address = (UINTN)PeripheralBase + 0x30000;
++#ifdef CM5_BOOT_TRACE
++  mDiagnosticUartBase = (UINTN)Spcr->BaseAddress.Address;
++#endif
+   // Route UART0 onto the shared RP1 interrupt, just as USB and Ethernet.
+   MmioWrite32 (
+     PeripheralBase + RP1_PCIE_REG_SET + RP1_PCIE_MSIX_CFG (RP1_INT_UART0),
+@@ -795,7 +797,9 @@
+   Spcr->Irq = 0;
+   Spcr->GlobalSystemInterrupt = 261;
+   AcpiUpdateChecksum ((UINT8 *)Spcr, Spcr->Header.Length);
++#ifdef CM5_BOOT_TRACE
+   ConsoleDiagnosticWrite ("\r\n[CM5] SPCR uses RP1 UART0 (shared RP1 IRQ)\r\n");
++#endif
+ }
+ #endif
+ 
+@@ -1157,7 +1161,7 @@
+   UINTN               ReturnAddress;
+   UINTN               OsLoaderAddress;
+   ACPI_OS_BOOT_TYPE   OsType;
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   EFI_STATUS          Status;
+ 
+   ConsoleDiagnosticWrite ("\r\n[CM5] ExitBootServices enter\r\n");
+@@ -1179,7 +1183,7 @@
+ 
+   AcpiOsBootHandler (OsType);
+ 
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   ConsoleDiagnosticWrite ("[CM5] ACPI handoff prepared\r\n");
+   Status = gBS->ExitBootServices (ImageHandle, MapKey);
+   ConsoleDiagnosticWrite (EFI_ERROR (Status)
+@@ -1458,19 +1462,19 @@
+   }
+ 
+   DsdtFixupStatus (mAcpiSdtProtocol, TableHandle);
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   ConsoleDiagnosticIsr ("ACPI status", DiagnosticReadIsr ());
+ #endif
+   DsdtFixupSd (mAcpiSdtProtocol, TableHandle);
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   ConsoleDiagnosticIsr ("ACPI SD", DiagnosticReadIsr ());
+ #endif
+   DsdtFixupRp1 (mAcpiSdtProtocol, TableHandle);
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   ConsoleDiagnosticIsr ("ACPI RP1", DiagnosticReadIsr ());
+ #endif
+   DsdtFixupPcie (mAcpiSdtProtocol, TableHandle);
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   ConsoleDiagnosticIsr ("ACPI PCIe", DiagnosticReadIsr ());
+ #endif
+   AcpiFixupDebugUartInterrupt (mAcpiSdtProtocol, TableHandle);
+@@ -1478,11 +1482,11 @@
+   AcpiFixupRp1Console (mAcpiSdtProtocol);
+ #endif
+   DsdtFixupPowerSource (mAcpiSdtProtocol, TableHandle);
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   ConsoleDiagnosticIsr ("ACPI power", DiagnosticReadIsr ());
+ #endif
+   DsdtFixupWifiMac (mAcpiSdtProtocol, TableHandle);
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   ConsoleDiagnosticIsr ("ACPI Wi-Fi", DiagnosticReadIsr ());
+ #endif
+ 
+@@ -1500,7 +1504,7 @@
+   )
+ {
+   gBS->CloseEvent (Event);
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   {
+     RP1_BUS_PROTOCOL  *Rp1Bus;
+     UINT64            EntryIsr;
+@@ -1542,7 +1546,7 @@
+ #endif
+ 
+   AdjustPciReservedMemory ();
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   ConsoleDiagnosticIsr ("PCI reserved memory", DiagnosticReadIsr ());
+ #endif
+ 
+@@ -1551,7 +1555,7 @@
+   } else {
+     // FDT installation is done by FdtDxe.
+   }
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   RecordConsoleDiagnosticStage (4);
+   ConsoleDiagnosticIsr ("ReadyToBoot completed", DiagnosticReadIsr ());
+   ConsoleDiagnosticIsr ("SDIO1 present state", MmioRead32 (0x1000fff024));
+@@ -1569,7 +1573,7 @@
+   EFI_STATUS  Status;
+   EFI_EVENT   Event;
+ 
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   mDiagnosticInitIsr = DiagnosticReadIsr ();
+   RecordConsoleDiagnosticStage (1);
+   mDiagnosticInitPostIsr = DiagnosticReadIsr ();
+--- a/Silicon/RaspberryPi/RpiSiliconPkg/Drivers/Rp1BusDxe/Rp1BusDxe.c
++++ b/Silicon/RaspberryPi/RpiSiliconPkg/Drivers/Rp1BusDxe/Rp1BusDxe.c
+@@ -19,7 +19,7 @@
+ 
+ #include "Rp1BusDxe.h"
+ 
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+ STATIC
+ UINT64
+ DiagnosticReadIsr (
+@@ -404,7 +404,7 @@
+   UINT64                             Supports;
+   RP1_BUS_DATA                       *Rp1Data;
+   EFI_ACPI_ADDRESS_SPACE_DESCRIPTOR  *PeripheralDesc;
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   UINT64                             EntryIsr;
+   UINT64                             PciIsr;
+ 
+@@ -473,7 +473,7 @@
+   Rp1Data->PeripheralBase = PeripheralDesc->AddrRangeMin;
+   FreePool (PeripheralDesc);
+ 
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   PciIsr = DiagnosticReadIsr ();
+ #endif
+ 
+@@ -498,6 +498,9 @@
+     ));
+ 
+ #ifdef RP1_UART_CONSOLE
++  SerialPortInitialize ();
++#endif
++#ifdef CM5_BOOT_TRACE
+   {
+     STATIC UINT8  Message[] = "\r\n[CM5] RP1 PCI driver ready; GPIO14/15 console enabled\r\n";
+     UINT64  BeforeConsole;
+@@ -512,19 +515,19 @@
+ #endif
+ 
+   Rp1BusRegisterDevices (Rp1Data);
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   Rp1DiagnosticIsr ("RP1 child devices", DiagnosticReadIsr ());
+ #endif
+   Rp1BusEthernetBringUp (Rp1Data);
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   Rp1DiagnosticIsr ("RP1 Ethernet", DiagnosticReadIsr ());
+ #endif
+   Rp1BusUsbHostBringUp (Rp1Data);
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   Rp1DiagnosticIsr ("RP1 USB host", DiagnosticReadIsr ());
+ #endif
+   Rp1BusEnableInterrupts (Rp1Data);
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   Rp1DiagnosticIsr ("RP1 interrupts", DiagnosticReadIsr ());
+ #endif
+ 
+--- a/Platform/RaspberryPi/Library/PlatformBootManagerLib/PlatformBm.c
++++ b/Platform/RaspberryPi/Library/PlatformBootManagerLib/PlatformBm.c
+@@ -822,22 +822,22 @@
+     Print (BOOT_PROMPT);
+   }
+ 
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   SerialConPrint (L"\r\n[CM5 UEFI] boot discovery enter\r\n");
+ #endif
+   Status = BootDiscoveryPolicyHandler ();
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   SerialConPrint (L"[CM5 UEFI] boot discovery returned\r\n");
+ #endif
+   if (EFI_ERROR(Status)) {
+     DEBUG ((DEBUG_INFO, "Error applying Boot Discovery Policy:%r\n", Status));
+   }
+ 
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   SerialConPrint (L"\r\n[CM5 UEFI] boot discovery enter\r\n");
+ #endif
+   Status = BootDiscoveryPolicyHandler ();
+-#ifdef RP1_UART_CONSOLE
++#ifdef CM5_BOOT_TRACE
+   SerialConPrint (L"[CM5 UEFI] boot discovery returned\r\n");
+ #endif
+   if (EFI_ERROR(Status)) {
+--- a/Platform/RaspberryPi/RPi5/RPi5.dsc
++++ b/Platform/RaspberryPi/RPi5/RPi5.dsc
+@@ -33,6 +33,7 @@
+   DEFINE SECURE_BOOT_ENABLE      = FALSE
+   DEFINE INCLUDE_TFTP_COMMAND    = FALSE
+   DEFINE RP1_UART_CONSOLE        = FALSE
++  DEFINE CM5_BOOT_TRACE          = FALSE
+   DEFINE DEBUG_PRINT_ERROR_LEVEL = 0x8000004F
+ 
+ !ifndef TFA_BUILD_ARTIFACTS
+@@ -254,7 +255,11 @@
+ 
+ [BuildOptions]
+ !if $(RP1_UART_CONSOLE) == TRUE
++!if $(CM5_BOOT_TRACE) == TRUE
++  GCC:*_*_*_CC_FLAGS          = -DRPI_MODEL=5 -DRP1_UART_CONSOLE -DCM5_BOOT_TRACE
++!else
+   GCC:*_*_*_CC_FLAGS          = -DRPI_MODEL=5 -DRP1_UART_CONSOLE
++!endif
+ !else
+   GCC:*_*_*_CC_FLAGS          = -DRPI_MODEL=5
+ !endif
+@@ -703,7 +708,11 @@
+     <LibraryClasses>
+       SerialPortLib|Platform/RaspberryPi/Library/Rp1SerialPortLib/Rp1SerialPortLib.inf
+     <BuildOptions>
++!if $(CM5_BOOT_TRACE) == TRUE
++      GCC:*_*_*_CC_FLAGS = -D RP1_UART_CONSOLE -D CM5_BOOT_TRACE
++!else
+       GCC:*_*_*_CC_FLAGS = -D RP1_UART_CONSOLE
++!endif
+   }
+ !else
+   Silicon/RaspberryPi/RpiSiliconPkg/Drivers/Rp1BusDxe/Rp1BusDxe.inf

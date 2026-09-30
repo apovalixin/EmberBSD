@@ -1,0 +1,71 @@
+Origin:
+
+Treat CM5 eMMC as non-removable, force card presence through the existing
+SDHCI device driver and preserve firmware signaling-voltage selection.
+Do not configure AON5 as SD card detect: it selects the CM5 antenna.
+Raspberry Pi Linux bcm2712-rpi-cm5.dtsi describes fixed 1.8 V I/O,
+broken-cd and AON5/AON6 antenna selection. Pi 5 behavior is unchanged.
+
+--- a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/Peripherals.c
++++ b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/Peripherals.c
+@@ -32,6 +32,15 @@
+ #endif
+ 
+ 
++// The board type is supplied by firmware, independently of config.txt's DTB.
++STATIC
++BOOLEAN
++Cm5HasEmmc (VOID)
++{
++  return ((mBoardRevisionCode & BIT23) != 0) &&
++         (((mBoardRevisionCode >> 4) & 0xff) == 0x18);
++}
++
+ STATIC
+ EFI_STATUS
+ EFIAPI
+@@ -63,6 +72,13 @@
+ {
+   EFI_STATUS  Status;
+   EFI_HANDLE  Handle = NULL;
++
++  if (Cm5HasEmmc ()) {
++    // CM5's eMMC has no card-detect input and fixed 1.8 V I/O.
++    // Preserve the voltage selection established by the VPU firmware.
++    mSdController.IsSlotRemovable = FALSE;
++    mSdController.SetSignalingVoltage = NULL;
++  }
+ 
+   Status = gBS->InstallMultipleProtocolInterfaces (
+                   &Handle,
+@@ -137,19 +153,23 @@
+   Cm5PcieRecord (70, mBoardRevisionCode, IsD0, 0, Cm5PcieReadIsr (), 0);
+ #endif
+ 
+-  // SD card detect
+-  GpioSetFunction (BCM2712_GIO_AON, 5,
+-    IsD0 ? GIO_AON_PIN5_ALT_SD_CARD_G : C1_GIO_AON_PIN5_ALT_SD_CARD_G);
+-  GpioSetPull (BCM2712_GIO_AON, 5, BCM2712_GPIO_PIN_PULL_UP);
++  // AON5 is antenna selection on CM5, not a card-detect input.
++  if (!Cm5HasEmmc ()) {
++    GpioSetFunction (BCM2712_GIO_AON, 5,
++      IsD0 ? GIO_AON_PIN5_ALT_SD_CARD_G : C1_GIO_AON_PIN5_ALT_SD_CARD_G);
++    GpioSetPull (BCM2712_GIO_AON, 5, BCM2712_GPIO_PIN_PULL_UP);
++  }
+ 
+   // The slot stays powered: UEFI boots from the card. ACPI's power
+   // resource takes the rail over from here and finds it on.
+   GpioWrite (BCM2712_GIO_AON, 4, TRUE);
+   GpioSetDirection (BCM2712_GIO_AON, 4, BCM2712_GPIO_PIN_OUTPUT);
+ 
+-  // Default the microSD signaling voltage to 3.3 V.
+-  GpioWrite (BCM2712_GIO_AON, 3, FALSE);
+-  GpioSetDirection (BCM2712_GIO_AON, 3, BCM2712_GPIO_PIN_OUTPUT);
++  if (!Cm5HasEmmc ()) {
++    // Default microSD signaling to 3.3 V; CM5 eMMC uses fixed 1.8 V.
++    GpioWrite (BCM2712_GIO_AON, 3, FALSE);
++    GpioSetDirection (BCM2712_GIO_AON, 3, BCM2712_GPIO_PIN_OUTPUT);
++  }
+ 
+   // Route SDIO to Wi-Fi
+   GpioSetFunction (BCM2712_GIO, 30, IsD0 ? GIO_PIN30_ALT_SD2 : C1_GIO_PIN30_ALT_SD2);

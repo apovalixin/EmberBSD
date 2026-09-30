@@ -1,0 +1,4 @@
+ioconf rp1wmcodec
+include "conf/files"
+pseudo-root iic*
+rp1wmcodec* at iic? addr 0x1a

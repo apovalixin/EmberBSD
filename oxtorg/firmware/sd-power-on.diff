@@ -1,0 +1,23 @@
+Origin:
+Keep the microSD slot powered from the start, as before eotics
+1784c8fc1d: with the rail off UEFI cannot read the card it boots from,
+and the release hangs before the boot loader. The DSDT's power resource
+stays and finds the rail on. farjanatech/rpi5-uefi made the same change
+independently (temporary-patches/0002, a62ee0bd37).
+
+diff --git a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/Peripherals.c b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/Peripherals.c
+index 21ed8b9..e3cf8f2 100644
+--- a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/Peripherals.c
++++ b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/Peripherals.c
+@@ -73,8 +73,9 @@ InitGpioPinctrls (
+   GpioSetFunction (BCM2712_GIO_AON, 5, GIO_AON_PIN5_ALT_SD_CARD_G);
+   GpioSetPull (BCM2712_GIO_AON, 5, BCM2712_GPIO_PIN_PULL_UP);
+ 
+-  // ACPI owns the microSD power rail and starts with it off.
+-  GpioWrite (BCM2712_GIO_AON, 4, FALSE);
++  // The slot stays powered: UEFI boots from the card. ACPI's power
++  // resource takes the rail over from here and finds it on.
++  GpioWrite (BCM2712_GIO_AON, 4, TRUE);
+   GpioSetDirection (BCM2712_GIO_AON, 4, BCM2712_GPIO_PIN_OUTPUT);
+ 
+   // Default the microSD signaling voltage to 3.3 V.

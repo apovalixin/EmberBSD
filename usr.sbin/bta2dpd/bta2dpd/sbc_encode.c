@@ -983,8 +983,7 @@ send_again:
 	}
 
 	seqnumber++;
-	ts += (1000000 * (size_t)(global_blocks * global_bands)
-	    / frequency) * (size_t)numpkts;
+	ts += (size_t)(global_blocks * global_bands) * (size_t)numpkts;
 
 	free(whole);
 

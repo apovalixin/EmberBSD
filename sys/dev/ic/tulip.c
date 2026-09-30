@@ -1,4 +1,4 @@
-/*	$NetBSD: tulip.c,v 1.213.2.1 2026/08/02 13:35:20 martin Exp $	*/
+/*	$NetBSD: tulip.c,v 1.213 2024/07/05 04:31:51 rin Exp $	*/
 
 /*-
  * Copyright (c) 1998, 1999, 2000, 2002 The NetBSD Foundation, Inc.
@@ -36,7 +36,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: tulip.c,v 1.213.2.1 2026/08/02 13:35:20 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: tulip.c,v 1.213 2024/07/05 04:31:51 rin Exp $");
 
 
 #include <sys/param.h>
@@ -51,8 +51,6 @@ __KERNEL_RCSID(0, "$NetBSD: tulip.c,v 1.213.2.1 2026/08/02 13:35:20 martin Exp $
 #include <sys/device.h>
 
 #include <machine/endian.h>
-
-#define	__IFMEDIA_PRIVATE	/* XXX for 2114x NWay handling */
 
 #include <net/if.h>
 #include <net/if_dl.h>
@@ -5168,31 +5166,17 @@ tlp_2114x_isv_tmsw_init(struct tulip_softc *sc)
 static void
 tlp_2114x_nway_get(struct tulip_softc *sc, struct ifmediareq *ifmr)
 {
-	struct mii_data * const mii = &sc->sc_mii;
-
-	IFMEDIA_LOCK_FOR_LEGACY(&mii->mii_media);
-	KASSERT(mii_locked(mii));
 
 	(void) tlp_2114x_nway_service(sc, MII_POLLSTAT);
-	ifmr->ifm_status = mii->mii_media_status;
-	ifmr->ifm_active = mii->mii_media_active;
-
-	IFMEDIA_UNLOCK_FOR_LEGACY(&mii->mii_media);
+	ifmr->ifm_status = sc->sc_mii.mii_media_status;
+	ifmr->ifm_active = sc->sc_mii.mii_media_active;
 }
 
 static int
 tlp_2114x_nway_set(struct tulip_softc *sc)
 {
-	struct mii_data * const mii = &sc->sc_mii;
-	int rv;
 
-	IFMEDIA_LOCK_FOR_LEGACY(&mii->mii_media);
-	KASSERT(mii_locked(mii));
-
-	rv = tlp_2114x_nway_service(sc, MII_MEDIACHG);
-
-	IFMEDIA_UNLOCK_FOR_LEGACY(&mii->mii_media);
-	return rv;
+	return tlp_2114x_nway_service(sc, MII_MEDIACHG);
 }
 
 static void
@@ -5202,12 +5186,10 @@ tlp_2114x_nway_statchg(struct ifnet *ifp)
 	struct mii_data *mii = &sc->sc_mii;
 	struct ifmedia_entry *ife;
 
-	KASSERT(mii_locked(mii));
-
 	if (IFM_SUBTYPE(mii->mii_media_active) == IFM_NONE)
 		return;
 
-	if ((ife = ifmedia_match_locked(&mii->mii_media, mii->mii_media_active,
+	if ((ife = ifmedia_match(&mii->mii_media, mii->mii_media_active,
 	    mii->mii_media.ifm_mask)) == NULL) {
 		printf("tlp_2114x_nway_statchg: no match for media 0x%x/0x%x\n",
 		    mii->mii_media_active, ~mii->mii_media.ifm_mask);
@@ -5222,39 +5204,29 @@ tlp_2114x_nway_tick(void *arg)
 {
 	struct tulip_softc *sc = arg;
 	struct mii_data *mii = &sc->sc_mii;
-	int ticks;
-	bool do_start = false;
+	int s, ticks;
 
 	if (!device_is_active(sc->sc_dev))
 		return;
 
-	/* N.B. acquiring the media lock will take us to splnet(). */
-	IFMEDIA_LOCK_FOR_LEGACY(&mii->mii_media);
-	KASSERT(mii_locked(mii));
-
+	s = splnet();
 	tlp_2114x_nway_service(sc, MII_TICK);
 	if ((sc->sc_flags & TULIPF_LINK_UP) == 0 &&
 	    (mii->mii_media_status & IFM_ACTIVE) != 0 &&
 	    IFM_SUBTYPE(mii->mii_media_active) != IFM_NONE) {
 		sc->sc_flags |= TULIPF_LINK_UP;
-		do_start = true;
+		tlp_start(&sc->sc_ethercom.ec_if);
 	} else if ((sc->sc_flags & TULIPF_LINK_UP) != 0 &&
 	    (mii->mii_media_status & IFM_ACTIVE) == 0) {
 		sc->sc_flags &= ~TULIPF_LINK_UP;
 	}
+	splx(s);
 
 	if ((sc->sc_flags & TULIPF_LINK_UP) == 0)
 		ticks = hz >> 3;
 	else
 		ticks = hz;
-
-	IFMEDIA_UNLOCK_FOR_LEGACY(&mii->mii_media);
-
 	callout_reset(&sc->sc_tick_callout, ticks, tlp_2114x_nway_tick, sc);
-
-	if (do_start) {
-		tlp_start(&sc->sc_ethercom.ec_if);
-	}
 }
 
 /*
@@ -5267,8 +5239,6 @@ tlp_2114x_nway_service(struct tulip_softc *sc, int cmd)
 {
 	struct mii_data *mii = &sc->sc_mii;
 	struct ifmedia_entry *ife = mii->mii_media.ifm_cur;
-
-	KASSERT(mii_locked(mii));
 
 	if ((mii->mii_ifp->if_flags & IFF_UP) == 0)
 		return 0;
@@ -5377,8 +5347,6 @@ tlp_2114x_nway_status(struct tulip_softc *sc)
 {
 	struct mii_data *mii = &sc->sc_mii;
 	uint32_t siatxrx, siastat, anlpar;
-
-	KASSERT(mii_locked(mii));
 
 	mii->mii_media_status = IFM_AVALID;
 	mii->mii_media_active = IFM_ETHER;

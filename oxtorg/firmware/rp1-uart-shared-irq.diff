@@ -1,0 +1,17 @@
+Origin:
+
+Mark the RP1 UART interrupt as shared with other RP1 peripherals.
+NetBSD must establish it at the same priority as USB and Ethernet.
+
+--- a/Silicon/RaspberryPi/RpiSiliconPkg/Include/Rp1.asi
++++ b/Silicon/RaspberryPi/RpiSiliconPkg/Include/Rp1.asi
+@@ -53,7 +53,8 @@
+   Name (_DSD, Package () {
+     ToUUID ("daffd814-6eba-4d8c-8a91-bc9bbf4aa301"),
+     Package () {
+-      Package () { "clock-frequency", 50000000 }
++      Package () { "clock-frequency", 50000000 },
++      Package () { "raspberrypi,shared-rp1-irq", 1 }
+     }
+   })
+ }

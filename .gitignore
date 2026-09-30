@@ -1,0 +1,13 @@
+# Outputs and installation secrets never belong to the source fork.
+__pycache__/
+.env
+*.img
+*.kmod
+*.o
+sys/arch/evbarm/compile/OXTORG*/
+oxtorg/tools/bluetooth-control
+oxtorg/tools/bluetooth-pair
+oxtorg/tools/bluetooth-a2dp
+oxtorg/tools/a2dp-source/
+build-output/
+private/

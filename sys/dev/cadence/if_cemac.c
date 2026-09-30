@@ -152,6 +152,33 @@ cemac_handle_reset_work(struct work *work, void *arg)
 	atomic_store_relaxed(&sc->sc_reset_pending, 0);
 }
 
+/*
+ * The configuration bits of a GEM that do not follow the link: the MDC
+ * divider and the data bus width. The width must be the one the core
+ * was built with, which DCFG1 reports (Linux's macb_dbw() does the
+ * same); a zero written over it breaks the DMA of a wider core such as
+ * the one in the Raspberry Pi 5's RP1. A 32-bit Zynq GEM reads 1 there
+ * and keeps the width it always had.
+ */
+static uint32_t
+cemac_gem_cfg(struct cemac_softc *sc)
+{
+	uint32_t cfg;
+
+	cfg = sc->sc_mdc_clk != 0 ? sc->sc_mdc_clk : GEM_CFG_CLK_64;
+	switch (__SHIFTOUT(CEMAC_READ(GEM_DCFG1), GEM_DCFG1_DBWDEF)) {
+	case 4:
+		cfg |= GEM_CFG_DBW_128;
+		break;
+	case 2:
+		cfg |= GEM_CFG_DBW_64;
+		break;
+	default:
+		cfg |= GEM_CFG_DBW_32;
+		break;
+	}
+	return cfg;
+}
 
 void
 cemac_attach_common(struct cemac_softc *sc)
@@ -171,7 +198,7 @@ cemac_attach_common(struct cemac_softc *sc)
 	CEMAC_WRITE(ETH_TBQP, 0);		// clear transmit
 	if (ISSET(sc->cemac_flags, CEMAC_FLAG_GEM))
 		CEMAC_WRITE(ETH_CFG,
-		    GEM_CFG_CLK_64 | GEM_CFG_GEN | ETH_CFG_SPD | ETH_CFG_FD);
+		    cemac_gem_cfg(sc) | GEM_CFG_GEN | ETH_CFG_SPD | ETH_CFG_FD);
 	else
 		CEMAC_WRITE(ETH_CFG,
 		    ETH_CFG_CLK_32 | ETH_CFG_SPD | ETH_CFG_FD | ETH_CFG_BIG);
@@ -239,6 +266,8 @@ cemac_gctx(struct cemac_softc *sc)
 		sc->txqi = (bi + 1) % TX_QLEN;
 		sc->txqc--;
 	}
+	if (sc->txqc == 0)
+		sc->sc_tx_sending = false;
 
 	// mark we're free
 	if (sc->sc_txbusy) {
@@ -321,6 +350,8 @@ cemac_intr(void *arg)
 		uint32_t nfo;
 		DPRINTFN(2,("#2 RDSC[%i].INFO=0x%08X\n", sc->rxqi % RX_QLEN,
 		    sc->RDSC[sc->rxqi % RX_QLEN].Info));
+		bus_dmamap_sync(sc->sc_dmat, sc->rbqpage_dmamap, 0,
+		    sc->rbqlen, BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
 		while (sc->RDSC[(bi = sc->rxqi % RX_QLEN)].Addr & ETH_RDSC_F_USED) {
 			int fl, csum;
 			struct mbuf *m;
@@ -383,6 +414,8 @@ cemac_intr(void *arg)
 			}
 			sc->rxqi++;
 		}
+		bus_dmamap_sync(sc->sc_dmat, sc->rbqpage_dmamap, 0,
+		    sc->rbqlen, BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
 	}
 
 	IF_STAT_PUTREF(ifp);
@@ -447,7 +480,7 @@ cemac_init(struct cemac_softc *sc)
 	CEMAC_WRITE(ETH_TBQP, 0);		// clear transmit
 	if (ISSET(sc->cemac_flags, CEMAC_FLAG_GEM))
 		CEMAC_WRITE(ETH_CFG,
-		    GEM_CFG_CLK_64 | ETH_CFG_SPD | ETH_CFG_FD | ETH_CFG_BIG);
+		    cemac_gem_cfg(sc) | ETH_CFG_SPD | ETH_CFG_FD | ETH_CFG_BIG);
 	else
 		CEMAC_WRITE(ETH_CFG,
 		    ETH_CFG_CLK_32 | ETH_CFG_SPD | ETH_CFG_FD | ETH_CFG_BIG);
@@ -458,6 +491,16 @@ cemac_init(struct cemac_softc *sc)
 		    GEM_DMA_CFG_TX_PKTBUF_MEMSZ_SEL |
 		    __SHIFTIN(16, GEM_DMA_CFG_AHB_FIXED_BURST_LEN) |
 		    GEM_DMA_CFG_DISC_WHEN_NO_AHB);
+		if (ISSET(sc->cemac_flags, CEMAC_FLAG_RGMII))
+			CEMAC_WRITE(GEM_USER_IO, GEM_USER_IO_RGMII);
+		/*
+		 * The descriptors are 32-bit. A core that can address 64
+		 * bits takes the upper half of the queue bases from these.
+		 */
+		if (ISSET(CEMAC_READ(GEM_DCFG6), GEM_DCFG6_DAW64)) {
+			CEMAC_WRITE(GEM_TBQPH, 0);
+			CEMAC_WRITE(GEM_RBQPH, 0);
+		}
 	}
 //	CEMAC_WRITE(ETH_TCR, 0);			// send nothing
 //	(void)CEMAC_READ(ETH_ISR);
@@ -624,7 +667,8 @@ cemac_init(struct cemac_softc *sc)
 	mii->mii_statchg = cemac_statchg;
 	ifmedia_init(&mii->mii_media, IFM_IMASK, cemac_mediachange,
 	    cemac_mediastatus);
-	mii_attach(sc->sc_dev, mii, 0xffffffff, sc->sc_phyno, MII_OFFSET_ANY, 0);
+	mii_attach(sc->sc_dev, mii, 0xffffffff, sc->sc_phyno, MII_OFFSET_ANY,
+	    sc->sc_mii_flags);
 	ifmedia_set(&mii->mii_media, IFM_ETHER | IFM_AUTO);
 
 #if 0
@@ -688,6 +732,23 @@ cemac_mediastatus(struct ifnet *ifp, struct ifmediareq *ifmr)
 }
 
 
+/*
+ * The management frame takes about 16 us at 2.5 MHz; waiting without a
+ * bound would hang the boot on a controller whose MDIO is not clocked.
+ */
+static int
+cemac_mii_wait(struct cemac_softc *sc)
+{
+	int i;
+
+	for (i = 0; i < 1000; i++) {
+		if (CEMAC_READ(ETH_SR) & ETH_SR_IDLE)
+			return 0;
+		delay(10);
+	}
+	return ETIMEDOUT;
+}
+
 static int
 cemac_mii_readreg(device_t self, int phy, int reg, uint16_t *val)
 {
@@ -697,8 +758,8 @@ cemac_mii_readreg(device_t self, int phy, int reg, uint16_t *val)
 			     | ((phy << ETH_MAN_PHYA_SHIFT) & ETH_MAN_PHYA)
 			     | ((reg << ETH_MAN_REGA_SHIFT) & ETH_MAN_REGA)
 			     | ETH_MAN_CODE_IEEE802_3));
-	while (!(CEMAC_READ(ETH_SR) & ETH_SR_IDLE))
-		;
+	if (cemac_mii_wait(sc) != 0)
+		return ETIMEDOUT;
 
 	*val = CEMAC_READ(ETH_MAN) & ETH_MAN_DATA;
 	return 0;
@@ -714,10 +775,7 @@ cemac_mii_writereg(device_t self, int phy, int reg, uint16_t val)
 			     | ((reg << ETH_MAN_REGA_SHIFT) & ETH_MAN_REGA)
 			     | ETH_MAN_CODE_IEEE802_3
 			     | (val & ETH_MAN_DATA)));
-	while (!(CEMAC_READ(ETH_SR) & ETH_SR_IDLE))
-		;
-
-	return 0;
+	return cemac_mii_wait(sc);
 }
 
 
@@ -959,6 +1017,9 @@ start:
 		DPRINTFN(3,("%s: TDSC[%i].Info 0x%08x\n",
 			__FUNCTION__, bi, sc->TDSC[bi].Info));
 
+		/* The descriptor must reach memory before the doorbell. */
+		bus_dmamap_sync(sc->sc_dmat, sc->tbqpage_dmamap, 0,
+		    sc->tbqlen, BUS_DMASYNC_PREWRITE);
 		uint32_t ctl = CEMAC_READ(ETH_CTL) | GEM_CTL_STARTTX;
 		CEMAC_WRITE(ETH_CTL, ctl);
 		DPRINTFN(3,("%s: ETH_CTL 0x%08x\n", __FUNCTION__,
@@ -968,6 +1029,7 @@ start:
 		CEMAC_WRITE(ETH_TCR, m->m_pkthdr.len);
 	}
 	sc->sc_tx_lastsent = time_uptime;
+	sc->sc_tx_sending = true;
 
 	if (IFQ_IS_EMPTY(&ifp->if_snd) == 0)
 		goto start;
@@ -1159,6 +1221,18 @@ cemac_setaddr(struct ifnet *ifp)
 		nma++;
 	}
 	ETHER_UNLOCK(ec);
+
+	if (ISSET(sc->cemac_flags, CEMAC_FLAG_GEM) && nma > 0) {
+		/*
+		 * The perfect filters below are written at the EMAC's
+		 * offsets, which on a GEM are other registers. Take every
+		 * multicast frame through the hash instead.
+		 */
+		cfg |= ETH_CFG_MTI;
+		hashes[0] = 0xffffffffUL;
+		hashes[1] = 0xffffffffUL;
+		nma = 0;
+	}
 
 	// program...
 	DPRINTFN(1,("%s: en0 %02x:%02x:%02x:%02x:%02x:%02x\n", __FUNCTION__,

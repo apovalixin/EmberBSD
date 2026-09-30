@@ -65,7 +65,7 @@ void bcm2835_mbox_write(bus_space_tag_t, bus_space_handle_t, uint8_t,
 
 void bcmmbox_attach(struct bcm2835mbox_softc *);
 int bcmmbox_intr(void *);
-void bcmmbox_read(uint8_t, uint32_t *);
+int bcmmbox_read(uint8_t, uint32_t *);
 void bcmmbox_write(uint8_t, uint32_t);
 
 int bcmmbox_request(uint8_t, void *, size_t, uint32_t *);

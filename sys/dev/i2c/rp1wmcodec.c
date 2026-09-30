@@ -1,0 +1,677 @@
+/*
+ * WM8960 Audio HAT on the Raspberry Pi 5 RP1 I2S clock producer.
+ * The codec is on the header I2C bus. The RP1 window and shared IRQ
+ * are taken from that bus's ACPI resources; no interrupt number is fixed.
+ * Both 16-frame hardware FIFOs are serviced in bounded half-FIFO batches.
+ */
+#include <sys/param.h>
+#include <sys/bus.h>
+#include <sys/device.h>
+#include <sys/evcnt.h>
+#include <sys/kmem.h>
+#include <sys/module.h>
+#include <sys/mutex.h>
+#include <sys/systm.h>
+
+#include <dev/acpi/acpivar.h>
+#include <dev/acpi/acpi_intr.h>
+#include <dev/audio/audio_if.h>
+#include <dev/i2c/i2cvar.h>
+#include <dev/ic/dwiic_var.h>
+
+#define RP1_I2C1       0x74000
+#define RP1_CLOCK      0x18000
+#define RP1_PLL        0x24000
+#define RP1_I2S        0xa0000
+#define RP1_GPIO       0xd0000
+#define RP1_PADS       0xf0000
+#define RP1_PCIE       0x108000
+#define I2S_MSIX       (0x008 + 14 * 4)
+#define I2S_ENABLE     __BIT(0)
+#define CLK_I2S_CTRL   0x0b4
+#define CLK_I2S_DIV    0x0b8
+#define CLK_ENABLE     __BIT(11)
+#define PLL_LOCK       __BIT(31)
+
+#define IER            0x000
+#define IRER           0x004
+#define ITER           0x008
+#define CER            0x00c
+#define CCR            0x010
+#define RXFFR          0x014
+#define TXFFR          0x018
+#define LRBR           0x020
+#define RRBR           0x024
+#define RER            0x028
+#define TER            0x02c
+#define RCR            0x030
+#define TCR            0x034
+#define ISR            0x038
+#define IMR            0x03c
+#define ROR            0x040
+#define TOR            0x044
+#define RFCR           0x048
+#define TFCR           0x04c
+#define RX_DATA        __BIT(0)
+#define RX_OVERFLOW    __BIT(1)
+#define RX_BATCH       8
+#define TX_EMPTY       __BIT(4)
+#define TX_OVERFLOW    __BIT(5)
+#define WM_MIXER_OUTPUTS 0
+#define WM_MIXER_MASTER 1
+
+struct rp1wmcodec_stream {
+	bool running;
+	int16_t *start, *end, *cur;
+	u_int block, remain;
+	void (*callback)(void *);
+	void *arg;
+};
+
+struct rp1wmcodec_softc {
+	device_t sc_dev;
+	device_t sc_audio;
+	i2c_tag_t sc_tag;
+	i2c_addr_t sc_addr;
+	bus_space_tag_t sc_bst;
+	bus_space_handle_t sc_map[6];
+	u_int sc_nmap;
+	void *sc_ih;
+	kmutex_t sc_lock, sc_intr_lock;
+	bool sc_ready;
+	uint32_t sc_clk[2], sc_pll[6], sc_gpio[4], sc_pads[4];
+	uint32_t sc_msix;
+	struct rp1wmcodec_stream sc_record, sc_play;
+	uint8_t sc_volume[2];
+	struct evcnt sc_interrupts, sc_frames, sc_overflows;
+	struct evcnt sc_play_frames, sc_tx_overflows;
+};
+
+enum { MAP_CLOCK, MAP_PLL, MAP_I2S, MAP_GPIO, MAP_PADS, MAP_PCIE };
+static const bus_addr_t rp1_offsets[] = {
+	RP1_CLOCK, RP1_PLL, RP1_I2S, RP1_GPIO, RP1_PADS, RP1_PCIE
+};
+static const struct audio_format rp1wmcodec_format = {
+	.mode = AUMODE_RECORD | AUMODE_PLAY,
+	.encoding = AUDIO_ENCODING_SLINEAR_LE,
+	.validbits = 16, .precision = 16, .channels = 2,
+	.channel_mask = AUFMT_STEREO,
+	.frequency_type = 1, .frequency = {48000},
+};
+
+static int rp1wmcodec_match(device_t, cfdata_t, void *);
+static void rp1wmcodec_attach(device_t, device_t, void *);
+static int rp1wmcodec_detach(device_t, int);
+static int rp1wmcodec_intr(void *);
+static int rp1wmcodec_halt(void *);
+static int rp1wmcodec_halt_output(void *);
+static void rp1wmcodec_restore(struct rp1wmcodec_softc *);
+
+CFATTACH_DECL_NEW(rp1wmcodec, sizeof(struct rp1wmcodec_softc),
+    rp1wmcodec_match, rp1wmcodec_attach, rp1wmcodec_detach, NULL);
+
+static uint32_t
+rp1_read(struct rp1wmcodec_softc *sc, u_int map, bus_size_t reg)
+{
+	return bus_space_read_4(sc->sc_bst, sc->sc_map[map], reg);
+}
+static void
+rp1_write(struct rp1wmcodec_softc *sc, u_int map, bus_size_t reg, uint32_t v)
+{
+	bus_space_write_4(sc->sc_bst, sc->sc_map[map], reg, v);
+	bus_space_barrier(sc->sc_bst, sc->sc_map[map], reg, 4,
+	    BUS_SPACE_BARRIER_WRITE);
+}
+static int
+wm_write(i2c_tag_t tag, i2c_addr_t addr, u_int reg, u_int v)
+{
+	uint8_t data[] = {(reg << 1) | ((v >> 8) & 1), v};
+	int error;
+	error = iic_acquire_bus(tag, 0);
+	if (error)
+		return error;
+	error = iic_exec(tag, I2C_OP_WRITE_WITH_STOP, addr,
+	    NULL, 0, data, sizeof(data), I2C_F_POLL);
+	iic_release_bus(tag, 0);
+	return error;
+}
+
+/* Only the explicitly configured RP1 header bus is a supported transport. */
+static bool
+rp1_resources(device_t parent, i2c_tag_t tag, ACPI_HANDLE *handle,
+    bus_addr_t *base)
+{
+	struct dwiic_softc *dc;
+	struct acpi_resources res;
+	struct acpi_devnode *node;
+	struct acpi_mem *mem;
+	device_t controller = device_parent(parent);
+	bool found = false;
+
+	if (controller == NULL || !device_is_a(controller, "dwiic"))
+		return false;
+	dc = device_private(controller);
+	if (tag != &dc->sc_i2c_tag || !acpi_active)
+		return false;
+	if (ACPI_FAILURE(AcpiGetHandle(NULL, "\\_SB.RP1B.I2C1", handle)))
+		return false;
+	node = acpi_match_node(*handle);
+	if (node == NULL || node->ad_device != controller)
+		return false;
+	if (ACPI_FAILURE(acpi_resource_parse(parent, *handle, "_CRS", &res,
+	    &acpi_resource_parse_ops_quiet)))
+		return false;
+	mem = acpi_res_mem(&res, 0);
+	if (mem != NULL && mem->ar_base >= RP1_I2C1 && mem->ar_length >= 0x1000) {
+		*base = mem->ar_base - RP1_I2C1;
+		found = true;
+	}
+	acpi_resource_cleanup(&res);
+	return found;
+}
+
+static int
+rp1wmcodec_match(device_t parent, cfdata_t cf, void *aux)
+{
+	struct i2c_attach_args *ia = aux;
+	ACPI_HANDLE handle;
+	bus_addr_t base;
+
+	if (ia->ia_addr != 0x1a ||
+	    !rp1_resources(parent, ia->ia_tag, &handle, &base))
+		return 0;
+	/* The WM8960 has write-only registers and no readable device ID. */
+	if (wm_write(ia->ia_tag, ia->ia_addr, 0x0f, 0) != 0)
+		return 0;
+	return I2C_MATCH_ADDRESS_AND_PROBE;
+}
+
+static int
+rp1wmcodec_query(void *priv, audio_format_query_t *afp)
+{
+	return audio_query_format(&rp1wmcodec_format, 1, afp);
+}
+static int
+rp1wmcodec_format_set(void *priv, int mode,
+    const audio_params_t *play, const audio_params_t *rec,
+    audio_filter_reg_t *pfil, audio_filter_reg_t *rfil)
+{
+	if (mode == 0 || (mode & ~(AUMODE_RECORD | AUMODE_PLAY)))
+		return EINVAL;
+	if ((mode & AUMODE_RECORD) && (rec->sample_rate != 48000 ||
+	    rec->channels != 2 || rec->precision != 16 ||
+	    rec->encoding != AUDIO_ENCODING_SLINEAR_LE))
+		return EINVAL;
+	if ((mode & AUMODE_PLAY) && (play->sample_rate != 48000 ||
+	    play->channels != 2 || play->precision != 16 ||
+	    play->encoding != AUDIO_ENCODING_SLINEAR_LE))
+		return EINVAL;
+	return 0;
+}
+static int
+rp1wmcodec_blocksize(void *priv, int size, int mode, const audio_params_t *p)
+{
+	return MAX(32, roundup(size, RX_BATCH * 4));
+}
+static int
+rp1wmcodec_getdev(void *priv, struct audio_device *dev)
+{
+	strlcpy(dev->name, "WM8960", sizeof(dev->name));
+	strlcpy(dev->version, "1", sizeof(dev->version));
+	strlcpy(dev->config, "RP1 I2S", sizeof(dev->config));
+	return 0;
+}
+static int
+rp1wmcodec_set_port(void *priv, mixer_ctrl_t *mc)
+{
+	struct rp1wmcodec_softc *sc = priv;
+	u_int level[2], gain[2];
+	int error;
+
+	if (mc->dev != WM_MIXER_MASTER)
+		return ENXIO;
+	if (mc->type != AUDIO_MIXER_VALUE ||
+	    (mc->un.value.num_channels != 1 && mc->un.value.num_channels != 2))
+		return EINVAL;
+	for (u_int n = 0; n < 2; n++) {
+		level[n] = mc->un.value.level[mc->un.value.num_channels == 1 ? 0 : n];
+		/* 0 mutes; the nonzero range is -73 to +6 dB, without boost. */
+		gain[n] = level[n] == 0 ? 0 : 48 + (level[n] * 79 + 127) / 255;
+	}
+	/* Stage left, then commit both channels with the right VU bit. */
+	error = wm_write(sc->sc_tag, sc->sc_addr, 0x28, gain[0]);
+	if (!error)
+		error = wm_write(sc->sc_tag, sc->sc_addr, 0x29, gain[1] | 0x100);
+	if (error)
+		return error;
+	sc->sc_volume[0] = level[0];
+	sc->sc_volume[1] = level[1];
+	return 0;
+}
+static int
+rp1wmcodec_get_port(void *priv, mixer_ctrl_t *mc)
+{
+	struct rp1wmcodec_softc *sc = priv;
+
+	if (mc->dev != WM_MIXER_MASTER)
+		return ENXIO;
+	if (mc->type != AUDIO_MIXER_VALUE ||
+	    (mc->un.value.num_channels != 1 && mc->un.value.num_channels != 2))
+		return EINVAL;
+	mc->un.value.level[0] = sc->sc_volume[0];
+	if (mc->un.value.num_channels == 2)
+		mc->un.value.level[1] = sc->sc_volume[1];
+	return 0;
+}
+static int
+rp1wmcodec_devinfo(void *priv, mixer_devinfo_t *mi)
+{
+	mi->mixer_class = WM_MIXER_OUTPUTS;
+	mi->next = mi->prev = AUDIO_MIXER_LAST;
+	switch (mi->index) {
+	case WM_MIXER_OUTPUTS:
+		mi->type = AUDIO_MIXER_CLASS;
+		strlcpy(mi->label.name, AudioCoutputs, sizeof(mi->label.name));
+		return 0;
+	case WM_MIXER_MASTER:
+		mi->type = AUDIO_MIXER_VALUE;
+		mi->un.v.num_channels = 2;
+		mi->un.v.delta = 4;
+		strlcpy(mi->label.name, AudioNmaster, sizeof(mi->label.name));
+		strlcpy(mi->un.v.units.name, AudioNvolume, sizeof(mi->un.v.units.name));
+		return 0;
+	default:
+		return ENXIO;
+	}
+}
+static int
+rp1wmcodec_props(void *priv)
+{
+	return AUDIO_PROP_CAPTURE | AUDIO_PROP_PLAYBACK | AUDIO_PROP_FULLDUPLEX;
+}
+static void
+rp1wmcodec_locks(void *priv, kmutex_t **intr, kmutex_t **thread)
+{
+	struct rp1wmcodec_softc *sc = priv;
+	*intr = &sc->sc_intr_lock;
+	*thread = &sc->sc_lock;
+}
+static int
+rp1wmcodec_trigger(void *priv, void *start, void *end, int block,
+    void (*callback)(void *), void *arg, const audio_params_t *params)
+{
+	struct rp1wmcodec_softc *sc = priv;
+	struct rp1wmcodec_stream *r = &sc->sc_record;
+	if (!sc->sc_ready || r->running)
+		return EBUSY;
+	r->start = start; r->end = end; r->cur = start;
+	r->block = block; r->remain = block;
+	r->callback = callback; r->arg = arg;
+	rp1_write(sc, MAP_I2S, IRER, 0);
+	rp1_write(sc, MAP_I2S, RXFFR, 1);
+	(void)rp1_read(sc, MAP_I2S, ROR);
+	rp1_write(sc, MAP_I2S, CCR, 0x10); /* 64 bit clocks per frame */
+	rp1_write(sc, MAP_I2S, RCR, 2); /* signed 16 bit samples */
+	rp1_write(sc, MAP_I2S, RFCR, RX_BATCH - 1);
+	rp1_write(sc, MAP_I2S, RER, 1);
+	r->running = true;
+	rp1_write(sc, MAP_I2S, IMR,
+	    rp1_read(sc, MAP_I2S, IMR) & ~0x03);
+	rp1_write(sc, MAP_I2S, IER, 1);
+	rp1_write(sc, MAP_I2S, IRER, 1);
+	rp1_write(sc, MAP_I2S, CER, 1);
+	return 0;
+}
+
+static void
+rp1wmcodec_advance(struct rp1wmcodec_stream *stream)
+{
+	if (stream->cur == stream->end)
+		stream->cur = stream->start;
+	stream->remain -= 4;
+	if (stream->remain == 0) {
+		stream->remain = stream->block;
+		stream->callback(stream->arg);
+	}
+}
+
+static void
+rp1wmcodec_transmit(struct rp1wmcodec_softc *sc)
+{
+	struct rp1wmcodec_stream *p = &sc->sc_play;
+	for (u_int n = 0; n < RX_BATCH; n++) {
+		rp1_write(sc, MAP_I2S, LRBR, (uint16_t)*p->cur++);
+		rp1_write(sc, MAP_I2S, RRBR, (uint16_t)*p->cur++);
+		sc->sc_play_frames.ev_count++;
+		rp1wmcodec_advance(p);
+	}
+}
+
+static int
+rp1wmcodec_trigger_output(void *priv, void *start, void *end, int block,
+    void (*callback)(void *), void *arg, const audio_params_t *params)
+{
+	struct rp1wmcodec_softc *sc = priv;
+	struct rp1wmcodec_stream *p = &sc->sc_play;
+	if (!sc->sc_ready || p->running)
+		return EBUSY;
+	p->start = start; p->end = end; p->cur = start;
+	p->block = block; p->remain = block;
+	p->callback = callback; p->arg = arg;
+	rp1_write(sc, MAP_I2S, ITER, 0);
+	rp1_write(sc, MAP_I2S, TXFFR, 1);
+	(void)rp1_read(sc, MAP_I2S, TOR);
+	rp1_write(sc, MAP_I2S, TCR, 2);
+	rp1_write(sc, MAP_I2S, TFCR, RX_BATCH - 1);
+	rp1_write(sc, MAP_I2S, TER, 1);
+	rp1_write(sc, MAP_I2S, CCR, 0x10);
+	p->running = true;
+	rp1wmcodec_transmit(sc);
+	rp1_write(sc, MAP_I2S, IMR,
+	    rp1_read(sc, MAP_I2S, IMR) & ~0x30);
+	rp1_write(sc, MAP_I2S, IER, 1);
+	rp1_write(sc, MAP_I2S, ITER, 1);
+	rp1_write(sc, MAP_I2S, CER, 1);
+	return 0;
+}
+
+static int
+rp1wmcodec_halt(void *priv)
+{
+	struct rp1wmcodec_softc *sc = priv;
+	rp1_write(sc, MAP_I2S, IMR,
+	    rp1_read(sc, MAP_I2S, IMR) | 0x03);
+	rp1_write(sc, MAP_I2S, IRER, 0);
+	sc->sc_record.running = false;
+	sc->sc_record.callback = NULL;
+	if (!sc->sc_play.running) {
+		rp1_write(sc, MAP_I2S, CER, 0);
+		rp1_write(sc, MAP_I2S, IER, 0);
+	}
+	return 0;
+}
+
+static int
+rp1wmcodec_halt_output(void *priv)
+{
+	struct rp1wmcodec_softc *sc = priv;
+	rp1_write(sc, MAP_I2S, IMR,
+	    rp1_read(sc, MAP_I2S, IMR) | 0x30);
+	rp1_write(sc, MAP_I2S, ITER, 0);
+	rp1_write(sc, MAP_I2S, TXFFR, 1);
+	sc->sc_play.running = false;
+	sc->sc_play.callback = NULL;
+	if (!sc->sc_record.running) {
+		rp1_write(sc, MAP_I2S, CER, 0);
+		rp1_write(sc, MAP_I2S, IER, 0);
+	}
+	return 0;
+}
+static const struct audio_hw_if rp1wmcodec_hw = {
+	.query_format = rp1wmcodec_query,
+	.set_format = rp1wmcodec_format_set,
+	.round_blocksize = rp1wmcodec_blocksize,
+	.getdev = rp1wmcodec_getdev,
+	.set_port = rp1wmcodec_set_port, .get_port = rp1wmcodec_get_port,
+	.query_devinfo = rp1wmcodec_devinfo,
+	.get_props = rp1wmcodec_props, .get_locks = rp1wmcodec_locks,
+	.trigger_input = rp1wmcodec_trigger, .halt_input = rp1wmcodec_halt,
+	.trigger_output = rp1wmcodec_trigger_output,
+	.halt_output = rp1wmcodec_halt_output,
+};
+
+static int
+rp1wmcodec_intr(void *priv)
+{
+	struct rp1wmcodec_softc *sc = priv;
+	uint32_t status;
+	int handled = 0;
+	mutex_enter(&sc->sc_intr_lock);
+	if (!sc->sc_record.running && !sc->sc_play.running)
+		goto out;
+	/* A bounded drain keeps the shared RP1 interrupt available to USB/UART. */
+	for (u_int batch = 0; batch < 4; batch++) {
+		status = rp1_read(sc, MAP_I2S, ISR);
+		if (sc->sc_record.running && (status & RX_OVERFLOW)) {
+			sc->sc_overflows.ev_count++;
+			(void)rp1_read(sc, MAP_I2S, ROR);
+			handled = 1;
+		}
+		if (sc->sc_play.running && (status & TX_OVERFLOW)) {
+			sc->sc_tx_overflows.ev_count++;
+			(void)rp1_read(sc, MAP_I2S, TOR);
+			handled = 1;
+		}
+		if (sc->sc_play.running && (status & TX_EMPTY)) {
+			rp1wmcodec_transmit(sc);
+			handled = 1;
+		}
+		if (!sc->sc_record.running || !(status & RX_DATA))
+			break;
+		handled = 1;
+		for (u_int n = 0; n < RX_BATCH; n++) {
+			*sc->sc_record.cur++ = rp1_read(sc, MAP_I2S, LRBR);
+			*sc->sc_record.cur++ = rp1_read(sc, MAP_I2S, RRBR);
+			sc->sc_frames.ev_count++;
+			rp1wmcodec_advance(&sc->sc_record);
+		}
+	}
+	if (handled)
+		sc->sc_interrupts.ev_count++;
+out:
+	mutex_exit(&sc->sc_intr_lock);
+	return handled;
+}
+
+static int
+rp1wmcodec_setup(struct rp1wmcodec_softc *sc)
+{
+	/* The HAT's 24 MHz oscillator feeds the codec PLL: SYSCLK 12.288 MHz. */
+	static const uint16_t codec[][2] = {
+		{0x19, 0x0fe}, {0x2f, 0x03c}, {0x20, 0x108}, {0x21, 0x108},
+		{0x00, 0x137}, {0x01, 0x137}, {0x15, 0x1c3}, {0x16, 0x1c3},
+		{0x34, 0x038}, {0x35, 0x031}, {0x36, 0x026}, {0x37, 0x0e8},
+		{0x1a, 0x001}, {0x04, 0x005}, {0x07, 0x002},
+		/* DACs to both speaker mixers; no microphone-to-speaker bypass. */
+		{0x08, 0x1c0}, {0x22, 0x100}, {0x25, 0x100},
+		{0x0a, 0x0ff}, {0x0b, 0x1ff},
+		/* Start at +6 dB, with speaker boost disabled. */
+		{0x28, 0x07f}, {0x29, 0x17f}, {0x33, 0x080},
+		{0x1a, 0x199}, {0x31, 0x0f7}, {0x05, 0x000},
+	};
+	int error;
+
+	if (rp1_read(sc, MAP_CLOCK, CLK_I2S_CTRL) & CLK_ENABLE)
+		return EBUSY;
+	sc->sc_clk[0] = rp1_read(sc, MAP_CLOCK, CLK_I2S_CTRL);
+	sc->sc_clk[1] = rp1_read(sc, MAP_CLOCK, CLK_I2S_DIV);
+	for (u_int n = 0; n < 6; n++)
+		sc->sc_pll[n] = rp1_read(sc, MAP_PLL, n * 4);
+	for (u_int n = 0; n < 4; n++) {
+		sc->sc_gpio[n] = rp1_read(sc, MAP_GPIO, 4 + (18 + n) * 8);
+		sc->sc_pads[n] = rp1_read(sc, MAP_PADS, 4 + (18 + n) * 4);
+	}
+	sc->sc_msix = rp1_read(sc, MAP_PCIE, I2S_MSIX);
+	sc->sc_ready = true;
+
+	/* RP1 has a 50 MHz reference. 1536 MHz / (5 * 5 * 20) = 3.072 MHz. */
+	rp1_write(sc, MAP_PLL, 0x004, 0x3f);
+	rp1_write(sc, MAP_PLL, 0x008, 30);
+	rp1_write(sc, MAP_PLL, 0x00c, 0xb851ec);
+	rp1_write(sc, MAP_PLL, 0x010,
+	    (sc->sc_pll[4] & ~0x77000) | 0x55000);
+	rp1_write(sc, MAP_PLL, 0x000, 1);
+	rp1_write(sc, MAP_PLL, 0x004, 0);
+	for (u_int n = 0; n < 1000; n++) {
+		if (rp1_read(sc, MAP_PLL, 0) & PLL_LOCK)
+			break;
+		delay(1000);
+	}
+	if (!(rp1_read(sc, MAP_PLL, 0) & PLL_LOCK))
+		return ETIMEDOUT;
+	rp1_write(sc, MAP_CLOCK, CLK_I2S_DIV, 20);
+	rp1_write(sc, MAP_CLOCK, CLK_I2S_CTRL, 0x820);
+	for (u_int n = 0; n < 4; n++) {
+		/* a2 = I2S0, normal peripheral control, input enabled, no pulls. */
+		rp1_write(sc, MAP_PADS, 4 + (18 + n) * 4,
+		    (sc->sc_pads[n] & ~0x8c) | 0x40);
+		rp1_write(sc, MAP_GPIO, 4 + (18 + n) * 8,
+		    (sc->sc_gpio[n] & ~(0x1f | 0x3f000)) | 2);
+	}
+	error = wm_write(sc->sc_tag, sc->sc_addr, 0x0f, 0);
+	if (!error)
+		error = wm_write(sc->sc_tag, sc->sc_addr, 0x19, 0x0c0);
+	if (error)
+		return error;
+	delay(100000);
+	for (u_int n = 0; n < __arraycount(codec); n++) {
+		error = wm_write(sc->sc_tag, sc->sc_addr, codec[n][0], codec[n][1]);
+		if (error)
+			return error;
+	}
+	delay(100000);
+	return 0;
+}
+
+static void
+rp1wmcodec_restore(struct rp1wmcodec_softc *sc)
+{
+	if (sc->sc_ready) {
+		mutex_enter(&sc->sc_intr_lock);
+		rp1wmcodec_halt_output(sc);
+		rp1wmcodec_halt(sc);
+		mutex_exit(&sc->sc_intr_lock);
+		rp1_write(sc, MAP_PCIE, I2S_MSIX, sc->sc_msix);
+		for (u_int n = 0; n < 4; n++) {
+			rp1_write(sc, MAP_GPIO, 4 + (18 + n) * 8, sc->sc_gpio[n]);
+			rp1_write(sc, MAP_PADS, 4 + (18 + n) * 4, sc->sc_pads[n]);
+		}
+		rp1_write(sc, MAP_CLOCK, CLK_I2S_CTRL, sc->sc_clk[0]);
+		rp1_write(sc, MAP_CLOCK, CLK_I2S_DIV, sc->sc_clk[1]);
+		rp1_write(sc, MAP_PLL, 0x004, 0x3f);
+		for (u_int n = 2; n < 6; n++)
+			rp1_write(sc, MAP_PLL, n * 4, sc->sc_pll[n]);
+		rp1_write(sc, MAP_PLL, 0x000, sc->sc_pll[0]);
+		rp1_write(sc, MAP_PLL, 0x004, sc->sc_pll[1]);
+		(void)wm_write(sc->sc_tag, sc->sc_addr, 0x0f, 0);
+		sc->sc_ready = false;
+	}
+	if (sc->sc_ih != NULL) {
+		acpi_intr_disestablish(sc->sc_ih);
+		sc->sc_ih = NULL;
+	}
+	while (sc->sc_nmap > 0) {
+		sc->sc_nmap--;
+		bus_space_unmap(sc->sc_bst, sc->sc_map[sc->sc_nmap], 0x1000);
+	}
+}
+
+static void
+rp1wmcodec_attach(device_t parent, device_t self, void *aux)
+{
+	struct rp1wmcodec_softc *sc = device_private(self);
+	struct i2c_attach_args *ia = aux;
+	struct dwiic_softc *dc = device_private(device_parent(parent));
+	ACPI_HANDLE handle;
+	bus_addr_t base;
+	int error;
+
+	sc->sc_dev = self; sc->sc_tag = ia->ia_tag; sc->sc_addr = ia->ia_addr;
+	sc->sc_volume[0] = sc->sc_volume[1] = 255;
+	sc->sc_bst = dc->sc_iot;
+	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_NONE);
+	mutex_init(&sc->sc_intr_lock, MUTEX_DEFAULT, IPL_VM);
+	aprint_naive("\n");
+	aprint_normal(": WM8960 Audio HAT, RP1 I2S\n");
+	if (!rp1_resources(parent, ia->ia_tag, &handle, &base))
+		return;
+	for (u_int n = 0; n < __arraycount(rp1_offsets); n++) {
+		error = bus_space_map(sc->sc_bst, base + rp1_offsets[n], 0x1000, 0,
+		    &sc->sc_map[n]);
+		if (error)
+			goto fail;
+		sc->sc_nmap++;
+	}
+	error = rp1wmcodec_setup(sc);
+	if (error)
+		goto fail;
+	sc->sc_ih = acpi_intr_establish(self, (uint64_t)(uintptr_t)handle,
+	    IPL_VM, true, rp1wmcodec_intr, sc, device_xname(self));
+	if (sc->sc_ih == NULL) {
+		error = ENXIO;
+		goto fail;
+	}
+	evcnt_attach_dynamic(&sc->sc_interrupts, EVCNT_TYPE_INTR, NULL,
+	    device_xname(self), "interrupts");
+	evcnt_attach_dynamic(&sc->sc_frames, EVCNT_TYPE_MISC, NULL,
+	    device_xname(self), "frames");
+	evcnt_attach_dynamic(&sc->sc_overflows, EVCNT_TYPE_MISC, NULL,
+	    device_xname(self), "overflows");
+	evcnt_attach_dynamic(&sc->sc_play_frames, EVCNT_TYPE_MISC, NULL,
+	    device_xname(self), "play frames");
+	evcnt_attach_dynamic(&sc->sc_tx_overflows, EVCNT_TYPE_MISC, NULL,
+	    device_xname(self), "TX overflows");
+	rp1_write(sc, MAP_I2S, IMR, 0x33);
+	rp1_write(sc, MAP_PCIE, I2S_MSIX, sc->sc_msix | I2S_ENABLE);
+	sc->sc_audio = audio_attach_mi(&rp1wmcodec_hw, sc, self);
+	return;
+fail:
+	aprint_error_dev(self, "initialization failed: %d\n", error);
+	rp1wmcodec_restore(sc);
+}
+static int
+rp1wmcodec_detach(device_t self, int flags)
+{
+	struct rp1wmcodec_softc *sc = device_private(self);
+	int error;
+
+	/* ARM ACPI cannot remove an individual handler from a shared IRQ. */
+	if (sc->sc_ih != NULL)
+		return EBUSY;
+	error = config_detach_children(self, flags);
+	if (error)
+		return error;
+	if (sc->sc_audio != NULL) {
+		evcnt_detach(&sc->sc_interrupts);
+		evcnt_detach(&sc->sc_frames);
+		evcnt_detach(&sc->sc_overflows);
+		evcnt_detach(&sc->sc_play_frames);
+		evcnt_detach(&sc->sc_tx_overflows);
+	}
+	rp1wmcodec_restore(sc);
+	mutex_destroy(&sc->sc_intr_lock);
+	mutex_destroy(&sc->sc_lock);
+	return 0;
+}
+
+MODULE(MODULE_CLASS_DRIVER, rp1wmcodec, "audio,iic");
+#ifdef _MODULE
+#include "ioconf.c"
+#endif
+static int
+rp1wmcodec_modcmd(modcmd_t cmd, void *arg)
+{
+	switch (cmd) {
+	case MODULE_CMD_INIT: {
+		ACPI_HANDLE handle;
+		if (!acpi_active || ACPI_FAILURE(AcpiGetHandle(NULL,
+		    "\\_SB.RP1B.I2C1", &handle)))
+			return ENXIO;
+#ifdef _MODULE
+		return config_init_component(cfdriver_ioconf_rp1wmcodec,
+		    cfattach_ioconf_rp1wmcodec, cfdata_ioconf_rp1wmcodec);
+#else
+		return 0;
+#endif
+	}
+	case MODULE_CMD_FINI:
+#ifdef _MODULE
+		return config_fini_component(cfdriver_ioconf_rp1wmcodec,
+		    cfattach_ioconf_rp1wmcodec, cfdata_ioconf_rp1wmcodec);
+#else
+		return 0;
+#endif
+	default:
+		return ENOTTY;
+	}
+}

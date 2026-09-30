@@ -1,0 +1,82 @@
+Origin:
+
+Optional RP1 GPIO console trace around EFI LoadImage and StartImage,
+including the SDIO1 present-state and configuration registers.
+No image parameters or returned status are changed.
+
+--- a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
++++ b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
+@@ -41,6 +41,8 @@
+ STATIC UINTN   mDiagnosticUartBase;
+ STATIC UINT64  mDiagnosticInitIsr;
+ STATIC UINT64  mDiagnosticInitPostIsr;
++STATIC EFI_IMAGE_LOAD   mDiagnosticLoadImage;
++STATIC EFI_IMAGE_START  mDiagnosticStartImage;
+ 
+ STATIC
+ UINT64
+@@ -102,6 +104,41 @@
+   ConsoleDiagnosticWrite (Stage);
+   ConsoleDiagnosticWrite ("=");
+   ConsoleDiagnosticWrite (Buffer);
++}
++
++STATIC
++EFI_STATUS
++EFIAPI
++ConsoleDiagnosticLoadImage (
++  BOOLEAN BootPolicy, EFI_HANDLE ParentImageHandle,
++  EFI_DEVICE_PATH_PROTOCOL *DevicePath, VOID *SourceBuffer,
++  UINTN SourceSize, EFI_HANDLE *ImageHandle
++  )
++{
++  EFI_STATUS  Status;
++
++  ConsoleDiagnosticWrite ("[CM5 UEFI] LoadImage enter\r\n");
++  ConsoleDiagnosticIsr ("LoadImage bytes", SourceSize);
++  Status = mDiagnosticLoadImage (BootPolicy, ParentImageHandle, DevicePath,
++                                SourceBuffer, SourceSize, ImageHandle);
++  ConsoleDiagnosticIsr ("LoadImage status", Status);
++  return Status;
++}
++
++STATIC
++EFI_STATUS
++EFIAPI
++ConsoleDiagnosticStartImage (
++  EFI_HANDLE ImageHandle, UINTN *ExitDataSize, CHAR16 **ExitData
++  )
++{
++  EFI_STATUS  Status;
++
++  ConsoleDiagnosticWrite ("[CM5 UEFI] StartImage enter\r\n");
++  ConsoleDiagnosticIsr ("StartImage pending", DiagnosticReadIsr ());
++  Status = mDiagnosticStartImage (ImageHandle, ExitDataSize, ExitData);
++  ConsoleDiagnosticIsr ("StartImage status", Status);
++  return Status;
+ }
+ 
+ STATIC
+@@ -1498,6 +1535,9 @@
+ #ifdef RP1_UART_CONSOLE
+   RecordConsoleDiagnosticStage (4);
+   ConsoleDiagnosticIsr ("ReadyToBoot completed", DiagnosticReadIsr ());
++  ConsoleDiagnosticIsr ("SDIO1 present state", MmioRead32 (0x1000fff024));
++  ConsoleDiagnosticIsr ("SDIO1 config", MmioRead32 (0x1000fff400));
++  ConsoleDiagnosticIsr ("SDIO1 pin selection", MmioRead32 (0x1000fff444));
+ #endif
+ }
+ 
+@@ -1514,6 +1554,12 @@
+   mDiagnosticInitIsr = DiagnosticReadIsr ();
+   RecordConsoleDiagnosticStage (1);
+   mDiagnosticInitPostIsr = DiagnosticReadIsr ();
++  mDiagnosticLoadImage = gBS->LoadImage;
++  mDiagnosticStartImage = gBS->StartImage;
++  gBS->LoadImage = ConsoleDiagnosticLoadImage;
++  gBS->StartImage = ConsoleDiagnosticStartImage;
++  gBS->Hdr.CRC32 = 0;
++  gBS->CalculateCrc32 (gBS, gBS->Hdr.HeaderSize, &gBS->Hdr.CRC32);
+ #endif
+   mIsAcpiEnabled = PcdGet32 (PcdSystemTableMode) == SYSTEM_TABLE_MODE_ACPI ||
+                    PcdGet32 (PcdSystemTableMode) == SYSTEM_TABLE_MODE_BOTH;

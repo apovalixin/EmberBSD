@@ -1021,6 +1021,8 @@ node_free(struct ieee80211_node *ni)
 		free(ni->ni_wpa_ie, M_DEVBUF);
 	if (ni->ni_wme_ie != NULL)
 		free(ni->ni_wme_ie, M_DEVBUF);
+	if (ni->ni_rsnx_ie != NULL)
+		free(ni->ni_rsnx_ie, M_DEVBUF);
 	IEEE80211_NODE_SAVEQ_DESTROY(ni);
 	free(ni, M_80211_NODE);
 }
@@ -1337,6 +1339,12 @@ ieee80211_add_scan(struct ieee80211com *ic,
 	 */
 	saveie(&ni->ni_wme_ie, sp->sp_wme);
 	saveie(&ni->ni_wpa_ie, sp->sp_wpa);
+	if (sp->sp_rsnx != NULL)
+		ieee80211_saveie(&ni->ni_rsnx_ie, sp->sp_rsnx);
+	else if (ni->ni_rsnx_ie != NULL) {
+		free(ni->ni_rsnx_ie, M_DEVBUF);
+		ni->ni_rsnx_ie = NULL;
+	}
 
 	/* NB: must be after ni_chan is setup */
 	ieee80211_setup_rates(ni, sp->sp_rates, sp->sp_xrates,
@@ -1367,6 +1375,12 @@ ieee80211_init_neighbor(struct ieee80211com *ic, struct ieee80211_node *ni,
 		ieee80211_saveie(&ni->ni_wme_ie, sp->sp_wme);
 	if (sp->sp_wpa != NULL)
 		ieee80211_saveie(&ni->ni_wpa_ie, sp->sp_wpa);
+	if (sp->sp_rsnx != NULL)
+		ieee80211_saveie(&ni->ni_rsnx_ie, sp->sp_rsnx);
+	else if (ni->ni_rsnx_ie != NULL) {
+		free(ni->ni_rsnx_ie, M_DEVBUF);
+		ni->ni_rsnx_ie = NULL;
+	}
 
 	/* NB: must be after ni_chan is setup */
 	ieee80211_setup_rates(ni, sp->sp_rates, sp->sp_xrates,

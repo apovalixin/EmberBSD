@@ -1,4 +1,4 @@
-/*	$NetBSD: riscv_machdep.c,v 1.43.2.4 2026/08/25 18:49:24 martin Exp $	*/
+/*	$NetBSD: riscv_machdep.c,v 1.43.2.2 2026/04/02 18:13:21 martin Exp $	*/
 
 /*-
  * Copyright (c) 2014, 2019, 2022 The NetBSD Foundation, Inc.
@@ -35,7 +35,7 @@
 #include "opt_riscv_debug.h"
 
 #include <sys/cdefs.h>
-__RCSID("$NetBSD: riscv_machdep.c,v 1.43.2.4 2026/08/25 18:49:24 martin Exp $");
+__RCSID("$NetBSD: riscv_machdep.c,v 1.43.2.2 2026/04/02 18:13:21 martin Exp $");
 
 #include <sys/param.h>
 
@@ -452,11 +452,6 @@ cpu_reboot(int howto, char *bootstr)
 	DISABLE_INTERRUPTS();
 
 	if (howto & RB_HALT) {
-		if (howto & RB_POWERDOWN) {
-			printf("power off...\n");
-			sbi_system_reset(SBI_RESET_TYPE_SHUTDOWN,
-					 SBI_RESET_REASON_NONE);
-		} /* FALLTHRU */
 		printf("\n");
 		printf("The operating system has halted.\n");
 		printf("Please press any key to reboot.\n\n");
@@ -776,7 +771,7 @@ init_riscv(register_t hartid, paddr_t dtb)
 	const uint64_t memory_limit = ptoa(maxppn);
 
 	if (memory_end > memory_limit) {
-		fdt_memory_remove_range(memory_limit, memory_end - memory_limit);
+		fdt_memory_remove_range(memory_limit, memory_end);
 		memory_end = memory_limit;
 	}
 
@@ -853,7 +848,7 @@ init_riscv(register_t hartid, paddr_t dtb)
 	/* XXX check all ranges for last one with a big enough hole */
 	msgbufaddr = memory_end - MSGBUFSIZE;
 	KASSERT(msgbufaddr != 0);	/* no space for msgbuf */
-	fdt_memory_remove_range(msgbufaddr, MSGBUFSIZE);
+	fdt_memory_remove_range(msgbufaddr, msgbufaddr + MSGBUFSIZE);
 	msgbufaddr = RISCV_PA_TO_KVA(msgbufaddr);
 	VPRINTF("msgbufaddr = %#lx\n", msgbufaddr);
 	initmsgbuf((void *)msgbufaddr, MSGBUFSIZE);

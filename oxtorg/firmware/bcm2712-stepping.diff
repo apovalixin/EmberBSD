@@ -1,0 +1,418 @@
+Origin:
+One build for the BCM2712 C0/C1 and D0. The rpi5-20260730.1 release
+(eotics c4b5d05) is built for D0 (8d71efb3d5 "Set pinctrl lengths for
+D0", aa8151c68c "Adjust UART interrupt for D0"). On a C1 its pin layout
+muxes the Wi-Fi SDIO pins wrong and the console UART gets the wrong
+interrupt.
+The stepping comes from the boot loader's device tree. On a D0 it hands
+over bcm2712d0-rpi-5-b.dtb or applies overlays/bcm2712d0.dtbo, and both
+name "brcm,bcm2712d0-pinctrl"; a C0/C1 tree names "brcm,bcm2712-pinctrl".
+Only the latter selects C1: a tree without the node keeps the release's
+D0 behaviour. Raspberry Pi's bcm2712d0-overlay.dts lists what differs;
+two of those items are the firmware's:
+- the pin controller layout. The GPIO library gets the C0/C1 tables it
+  had before 8d71efb3d5 next to the D0 ones, and GpioInitialize ()
+  picks one. The C0/C1 function numbers of the seven pins
+  InitGpioPinctrls sets are those of Linux's pinctrl-bcm2712.c;
+- the debug UART's interrupt, GIC SPI 121 on C0/C1 and 120 on D0. SPCR
+  and \_SB.SOCB.URT0.URTI get the C0/C1 number at install time.
+The selection by the FDT compatible and GpioInitialize (IsD0) follow
+damian5466/edk2-platforms (766b18949a) and farjanatech/rpi5-uefi
+(temporary-patches/0004); neither moves the UART interrupt. eotics' later
+code reads a stepping register instead (BCM2712_SOC_STEPPING_BASE,
+0x1001504004, rpi5 e547cd467f). On our C1 boards a read of it from
+NetBSD user space through /dev/mem ends in a bus error, as do the chip
+ID registers at 0x107d504000; the pin controller next to them reads
+fine. This diff does not use them.
+Replaces the reverts of 8d71efb3d5 and aa8151c68c (NumberOneGit
+a55431926d and 3f12136f81). Tested on C1 boards only.
+
+diff --git a/Platform/RaspberryPi/RPi5/AcpiTables/Dsdt.asl b/Platform/RaspberryPi/RPi5/AcpiTables/Dsdt.asl
+index 24893bd..3536c40 100644
+--- a/Platform/RaspberryPi/RPi5/AcpiTables/Dsdt.asl
++++ b/Platform/RaspberryPi/RPi5/AcpiTables/Dsdt.asl
+@@ -92,12 +92,18 @@ DefinitionBlock ("Dsdt.aml", "DSDT", 2, "RPIFDN", "RPI5    ", 2)
+         Name (_UID, 0x0)
+         Name (_CCA, 0x0)
+ 
++        // The interrupt differs between steppings; the platform driver
++        // patches in the C0/C1 number over the D0 one.
++        Name (URTI, PL011_DEBUG_INTERRUPT)
++
+         Method (_CRS, 0x0, Serialized) {
+           Name (RBUF, ResourceTemplate () {
+             QWORDMEMORY_BUF (00, ResourceConsumer)
+-            Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive) { PL011_DEBUG_INTERRUPT }
++            Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive, , , UIRQ) { PL011_DEBUG_INTERRUPT }
+           })
+           QWORD_SET (00, PL011_DEBUG_BASE_ADDRESS, PL011_DEBUG_LENGTH, 0)
++          CreateDWordField (RBUF, UIRQ._INT, IRQN)
++          IRQN = URTI
+           Return (RBUF)
+         }
+ 
+diff --git a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
+index 1a8cb98..c1b4e03 100644
+--- a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
++++ b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
+@@ -10,6 +10,7 @@
+ #include <IndustryStandard/Acpi.h>
+ #include <IndustryStandard/Pci.h>
+ #include <IndustryStandard/PeImage.h>
++#include <IndustryStandard/SerialPortConsoleRedirectionTable.h>
+ #include <Library/AcpiLib.h>
+ #include <Library/BaseLib.h>
+ #include <Library/BaseMemoryLib.h>
+@@ -455,6 +456,54 @@ DsdtFixupPcie (
+   }
+ }
+ 
++//
++// The debug UART (PL011) interrupts on GIC SPI 120 on a D0 and SPI 121 on
++// a C0/C1 (Raspberry Pi Linux, overlays/bcm2712d0-overlay.dts). SPCR and
++// the DSDT are built with the D0 number.
++//
++#define PL011_DEBUG_INTERRUPT_C1  153
++
++STATIC
++VOID
++EFIAPI
++AcpiFixupDebugUartInterrupt (
++  IN EFI_ACPI_SDT_PROTOCOL    *AcpiSdtProtocol,
++  IN EFI_ACPI_HANDLE          TableHandle
++  )
++{
++  EFI_ACPI_SERIAL_PORT_CONSOLE_REDIRECTION_TABLE  *Spcr;
++  EFI_STATUS                                      Status;
++  UINTN                                           Index;
++  UINTN                                           TableKey;
++
++  if (Bcm2712IsD0 ()) {
++    return;
++  }
++
++  Status = AcpiAmlObjectUpdateInteger (AcpiSdtProtocol, TableHandle,
++              "\\_SB.SOCB.URT0.URTI", PL011_DEBUG_INTERRUPT_C1);
++  if (EFI_ERROR (Status)) {
++    DEBUG ((DEBUG_ERROR, "%a: Failed to patch \\_SB.SOCB.URT0.URTI. Status=%r\n",
++            __func__, Status));
++  }
++
++  Index = 0;
++  Status = AcpiLocateTableBySignature (
++             AcpiSdtProtocol,
++             EFI_ACPI_6_3_SERIAL_PORT_CONSOLE_REDIRECTION_TABLE_SIGNATURE,
++             &Index,
++             (EFI_ACPI_DESCRIPTION_HEADER **)&Spcr,
++             &TableKey);
++  if (EFI_ERROR (Status)) {
++    DEBUG ((DEBUG_ERROR, "%a: Couldn't locate ACPI SPCR table! Status=%r\n",
++            __func__, Status));
++    return;
++  }
++
++  Spcr->GlobalSystemInterrupt = PL011_DEBUG_INTERRUPT_C1;
++  AcpiUpdateChecksum ((UINT8 *)Spcr, Spcr->Header.Length);
++}
++
+ STATIC
+ EFI_STATUS
+ EFIAPI
+@@ -974,6 +1023,7 @@ InstallAcpiTables (
+   DsdtFixupSd (mAcpiSdtProtocol, TableHandle);
+   DsdtFixupRp1 (mAcpiSdtProtocol, TableHandle);
+   DsdtFixupPcie (mAcpiSdtProtocol, TableHandle);
++  AcpiFixupDebugUartInterrupt (mAcpiSdtProtocol, TableHandle);
+ 
+   mAcpiSdtProtocol->Close (TableHandle);
+ 
+diff --git a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/Peripherals.c b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/Peripherals.c
+index e3cf8f2..325868d 100644
+--- a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/Peripherals.c
++++ b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/Peripherals.c
+@@ -11,6 +11,8 @@
+ #include <IndustryStandard/Bcm2712Pinctrl.h>
+ #include <Library/Bcm2712GpioLib.h>
+ #include <Library/DebugLib.h>
++#include <Library/FdtLib.h>
++#include <Library/FdtPlatformLib.h>
+ #include <Library/IoLib.h>
+ #include <Library/UefiBootServicesTableLib.h>
+ #include <Library/UefiRuntimeServicesTableLib.h>
+@@ -62,6 +64,48 @@ RegisterSdControllers (
+   return Status;
+ }
+ 
++//
++// The BCM2712 C0/C1 and D0 lay out their pin controllers differently, and
++// D0 moves the debug UART's interrupt (Raspberry Pi Linux,
++// overlays/bcm2712d0-overlay.dts). The boot loader knows the stepping: on
++// a D0 it hands over bcm2712d0-rpi-5-b.dtb or applies that overlay, and
++// both name the D0 pin controller. Only a device tree that names the
++// C0/C1 controller selects C1; otherwise the D0 layout stays.
++//
++BOOLEAN
++EFIAPI
++Bcm2712IsD0 (
++  VOID
++  )
++{
++  STATIC BOOLEAN  Known;
++  STATIC BOOLEAN  IsD0;
++  VOID            *Fdt;
++
++  if (!Known) {
++    Fdt   = FdtPlatformGetBase ();
++    IsD0  = (Fdt == NULL) ||
++            (FdtNodeOffsetByCompatible (Fdt, -1, "brcm,bcm2712-pinctrl") < 0);
++    Known = TRUE;
++    DEBUG ((DEBUG_INFO, "BCM2712: %a pin controller layout\n", IsD0 ? "D0" : "C0/C1"));
++  }
++
++  return IsD0;
++}
++
++//
++// C0/C1 function numbers of the pins set below. Bcm2712Pinctrl.h describes
++// D0; these are the numbers of its layout before 8d71efb3d5, the same as
++// Raspberry Pi Linux's bcm2712_c0 function tables.
++//
++#define C1_GIO_AON_PIN5_ALT_SD_CARD_G  6
++#define C1_GIO_PIN30_ALT_SD2           4
++#define C1_GIO_PIN31_ALT_SD2           4
++#define C1_GIO_PIN32_ALT_SD2           4
++#define C1_GIO_PIN33_ALT_SD2           3
++#define C1_GIO_PIN34_ALT_SD2           4
++#define C1_GIO_PIN35_ALT_SD2           3
++
+ STATIC
+ EFI_STATUS
+ EFIAPI
+@@ -69,8 +113,14 @@ InitGpioPinctrls (
+   VOID
+   )
+ {
++  BOOLEAN  IsD0;
++
++  IsD0 = Bcm2712IsD0 ();
++  GpioInitialize (IsD0);
++
+   // SD card detect
+-  GpioSetFunction (BCM2712_GIO_AON, 5, GIO_AON_PIN5_ALT_SD_CARD_G);
++  GpioSetFunction (BCM2712_GIO_AON, 5,
++    IsD0 ? GIO_AON_PIN5_ALT_SD_CARD_G : C1_GIO_AON_PIN5_ALT_SD_CARD_G);
+   GpioSetPull (BCM2712_GIO_AON, 5, BCM2712_GPIO_PIN_PULL_UP);
+ 
+   // The slot stays powered: UEFI boots from the card. ACPI's power
+@@ -83,17 +133,17 @@ InitGpioPinctrls (
+   GpioSetDirection (BCM2712_GIO_AON, 3, BCM2712_GPIO_PIN_OUTPUT);
+ 
+   // Route SDIO to Wi-Fi
+-  GpioSetFunction (BCM2712_GIO, 30, GIO_PIN30_ALT_SD2);
++  GpioSetFunction (BCM2712_GIO, 30, IsD0 ? GIO_PIN30_ALT_SD2 : C1_GIO_PIN30_ALT_SD2);
+   GpioSetPull (BCM2712_GIO, 30, BCM2712_GPIO_PIN_PULL_NONE);
+-  GpioSetFunction (BCM2712_GIO, 31, GIO_PIN31_ALT_SD2);
++  GpioSetFunction (BCM2712_GIO, 31, IsD0 ? GIO_PIN31_ALT_SD2 : C1_GIO_PIN31_ALT_SD2);
+   GpioSetPull (BCM2712_GIO, 31, BCM2712_GPIO_PIN_PULL_UP);
+-  GpioSetFunction (BCM2712_GIO, 32, GIO_PIN32_ALT_SD2);
++  GpioSetFunction (BCM2712_GIO, 32, IsD0 ? GIO_PIN32_ALT_SD2 : C1_GIO_PIN32_ALT_SD2);
+   GpioSetPull (BCM2712_GIO, 32, BCM2712_GPIO_PIN_PULL_UP);
+-  GpioSetFunction (BCM2712_GIO, 33, GIO_PIN33_ALT_SD2);
++  GpioSetFunction (BCM2712_GIO, 33, IsD0 ? GIO_PIN33_ALT_SD2 : C1_GIO_PIN33_ALT_SD2);
+   GpioSetPull (BCM2712_GIO, 33, BCM2712_GPIO_PIN_PULL_UP);
+-  GpioSetFunction (BCM2712_GIO, 34, GIO_PIN34_ALT_SD2);
++  GpioSetFunction (BCM2712_GIO, 34, IsD0 ? GIO_PIN34_ALT_SD2 : C1_GIO_PIN34_ALT_SD2);
+   GpioSetPull (BCM2712_GIO, 34, BCM2712_GPIO_PIN_PULL_UP);
+-  GpioSetFunction (BCM2712_GIO, 35, GIO_PIN35_ALT_SD2);
++  GpioSetFunction (BCM2712_GIO, 35, IsD0 ? GIO_PIN35_ALT_SD2 : C1_GIO_PIN35_ALT_SD2);
+   GpioSetPull (BCM2712_GIO, 35, BCM2712_GPIO_PIN_PULL_UP);
+ 
+   // CYW43455 WL_ON
+diff --git a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/Peripherals.h b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/Peripherals.h
+index 3ef14eb..59fa6ac 100644
+--- a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/Peripherals.h
++++ b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/Peripherals.h
+@@ -35,6 +35,12 @@ SetupPeripheralVariables (
+   VOID
+   );
+ 
++BOOLEAN
++EFIAPI
++Bcm2712IsD0 (
++  VOID
++  );
++
+ extern BCM2712_PCIE_PLATFORM_PROTOCOL  mPciePlatform;
+ #endif // VFRCOMPILE
+ 
+diff --git a/Silicon/Broadcom/Bcm27xx/Include/Library/Bcm2712GpioLib.h b/Silicon/Broadcom/Bcm27xx/Include/Library/Bcm2712GpioLib.h
+index 6109fcc..6b818e1 100644
+--- a/Silicon/Broadcom/Bcm27xx/Include/Library/Bcm2712GpioLib.h
++++ b/Silicon/Broadcom/Bcm27xx/Include/Library/Bcm2712GpioLib.h
+@@ -40,6 +40,17 @@ typedef enum {
+   BCM2712_GPIO_PIN_INPUT  = 1
+ } BCM2712_GPIO_PIN_DIRECTION;
+ 
++/**
++  Select the pin controller layout of the running BCM2712 stepping.
++  The library starts with the D0 layout; call this with FALSE on a C0/C1
++  before any other function.
++**/
++VOID
++EFIAPI
++GpioInitialize (
++  IN  BOOLEAN                         IsD0
++  );
++
+ UINT8
+ EFIAPI
+ GpioGetFunction (
+diff --git a/Silicon/Broadcom/Bcm27xx/Library/Bcm2712GpioLib/Bcm2712GpioLib.c b/Silicon/Broadcom/Bcm27xx/Library/Bcm2712GpioLib/Bcm2712GpioLib.c
+index 266f787..ebf8844 100644
+--- a/Silicon/Broadcom/Bcm27xx/Library/Bcm2712GpioLib/Bcm2712GpioLib.c
++++ b/Silicon/Broadcom/Bcm27xx/Library/Bcm2712GpioLib/Bcm2712GpioLib.c
+@@ -131,6 +131,121 @@ STATIC BCM2712_PINCTRL_REGISTERS Bcm2712PinctrlGioAonRegisters[] = {
+   [37] = { .MuxReg = 0x8, .MuxBit = 0, .CtlReg = PINCTRL_REG_UNUSED, .CtlBit = 0 },
+ };
+ 
++//
++// The tables above describe the D0 stepping. The C0/C1 layout below is the
++// one this library used before commit 8d71efb3d5 ("Set pinctrl lengths for
++// D0"); GpioInitialize () selects it.
++//
++
++STATIC BCM2712_PINCTRL_REGISTERS Bcm2712C1PinctrlGioRegisters[] = {
++  [0] = { .MuxReg = 0x0, .MuxBit = 0, .CtlReg = 0x1C, .CtlBit = 14 },
++  [1] = { .MuxReg = 0x0, .MuxBit = 4, .CtlReg = 0x1C, .CtlBit = 16 },
++  [2] = { .MuxReg = 0x0, .MuxBit = 8, .CtlReg = 0x1C, .CtlBit = 18 },
++  [3] = { .MuxReg = 0x0, .MuxBit = 12, .CtlReg = 0x1C, .CtlBit = 20 },
++  [4] = { .MuxReg = 0x0, .MuxBit = 16, .CtlReg = 0x1C, .CtlBit = 22 },
++  [5] = { .MuxReg = 0x0, .MuxBit = 20, .CtlReg = 0x1C, .CtlBit = 24 },
++  [6] = { .MuxReg = 0x0, .MuxBit = 24, .CtlReg = 0x1C, .CtlBit = 26 },
++  [7] = { .MuxReg = 0x0, .MuxBit = 28, .CtlReg = 0x1C, .CtlBit = 28 },
++  [8] = { .MuxReg = 0x4, .MuxBit = 0, .CtlReg = 0x20, .CtlBit = 0 },
++  [9] = { .MuxReg = 0x4, .MuxBit = 4, .CtlReg = 0x20, .CtlBit = 2 },
++  [10] = { .MuxReg = 0x4, .MuxBit = 8, .CtlReg = 0x20, .CtlBit = 4 },
++  [11] = { .MuxReg = 0x4, .MuxBit = 12, .CtlReg = 0x20, .CtlBit = 6 },
++  [12] = { .MuxReg = 0x4, .MuxBit = 16, .CtlReg = 0x20, .CtlBit = 8 },
++  [13] = { .MuxReg = 0x4, .MuxBit = 20, .CtlReg = 0x20, .CtlBit = 10 },
++  [14] = { .MuxReg = 0x4, .MuxBit = 24, .CtlReg = 0x20, .CtlBit = 12 },
++  [15] = { .MuxReg = 0x4, .MuxBit = 28, .CtlReg = 0x20, .CtlBit = 14 },
++  [16] = { .MuxReg = 0x8, .MuxBit = 0, .CtlReg = 0x20, .CtlBit = 16 },
++  [17] = { .MuxReg = 0x8, .MuxBit = 4, .CtlReg = 0x20, .CtlBit = 18 },
++  [18] = { .MuxReg = 0x8, .MuxBit = 8, .CtlReg = 0x20, .CtlBit = 20 },
++  [19] = { .MuxReg = 0x8, .MuxBit = 12, .CtlReg = 0x20, .CtlBit = 22 },
++  [20] = { .MuxReg = 0x8, .MuxBit = 16, .CtlReg = 0x20, .CtlBit = 24 },
++  [21] = { .MuxReg = 0x8, .MuxBit = 20, .CtlReg = 0x20, .CtlBit = 26 },
++  [22] = { .MuxReg = 0x8, .MuxBit = 24, .CtlReg = 0x20, .CtlBit = 28 },
++  [23] = { .MuxReg = 0x8, .MuxBit = 28, .CtlReg = 0x24, .CtlBit = 0 },
++  [24] = { .MuxReg = 0xC, .MuxBit = 0, .CtlReg = 0x24, .CtlBit = 2 },
++  [25] = { .MuxReg = 0xC, .MuxBit = 4, .CtlReg = 0x24, .CtlBit = 4 },
++  [26] = { .MuxReg = 0xC, .MuxBit = 8, .CtlReg = 0x24, .CtlBit = 6 },
++  [27] = { .MuxReg = 0xC, .MuxBit = 12, .CtlReg = 0x24, .CtlBit = 8 },
++  [28] = { .MuxReg = 0xC, .MuxBit = 16, .CtlReg = 0x24, .CtlBit = 10 },
++  [29] = { .MuxReg = 0xC, .MuxBit = 20, .CtlReg = 0x24, .CtlBit = 12 },
++  [30] = { .MuxReg = 0xC, .MuxBit = 24, .CtlReg = 0x24, .CtlBit = 14 },
++  [31] = { .MuxReg = 0xC, .MuxBit = 28, .CtlReg = 0x24, .CtlBit = 16 },
++  [32] = { .MuxReg = 0x10, .MuxBit = 0, .CtlReg = 0x24, .CtlBit = 18 },
++  [33] = { .MuxReg = 0x10, .MuxBit = 4, .CtlReg = 0x24, .CtlBit = 20 },
++  [34] = { .MuxReg = 0x10, .MuxBit = 8, .CtlReg = 0x24, .CtlBit = 22 },
++  [35] = { .MuxReg = 0x10, .MuxBit = 12, .CtlReg = 0x24, .CtlBit = 24 },
++  [36] = { .MuxReg = 0x10, .MuxBit = 16, .CtlReg = 0x24, .CtlBit = 26 },
++  [37] = { .MuxReg = 0x10, .MuxBit = 20, .CtlReg = 0x24, .CtlBit = 28 },
++  [38] = { .MuxReg = 0x10, .MuxBit = 24, .CtlReg = 0x28, .CtlBit = 0 },
++  [39] = { .MuxReg = 0x10, .MuxBit = 28, .CtlReg = 0x28, .CtlBit = 2 },
++  [40] = { .MuxReg = 0x14, .MuxBit = 0, .CtlReg = 0x28, .CtlBit = 4 },
++  [41] = { .MuxReg = 0x14, .MuxBit = 4, .CtlReg = 0x28, .CtlBit = 6 },
++  [42] = { .MuxReg = 0x14, .MuxBit = 8, .CtlReg = 0x28, .CtlBit = 8 },
++  [43] = { .MuxReg = 0x14, .MuxBit = 12, .CtlReg = 0x28, .CtlBit = 10 },
++  [44] = { .MuxReg = 0x14, .MuxBit = 16, .CtlReg = 0x28, .CtlBit = 12 },
++  [45] = { .MuxReg = 0x14, .MuxBit = 20, .CtlReg = 0x28, .CtlBit = 14 },
++  [46] = { .MuxReg = 0x14, .MuxBit = 24, .CtlReg = 0x28, .CtlBit = 16 },
++  [47] = { .MuxReg = 0x14, .MuxBit = 28, .CtlReg = 0x28, .CtlBit = 18 },
++  [48] = { .MuxReg = 0x18, .MuxBit = 0, .CtlReg = 0x28, .CtlBit = 20 },
++  [49] = { .MuxReg = 0x18, .MuxBit = 4, .CtlReg = 0x28, .CtlBit = 22 },
++  [50] = { .MuxReg = 0x18, .MuxBit = 8, .CtlReg = 0x28, .CtlBit = 24 },
++  [51] = { .MuxReg = 0x18, .MuxBit = 12, .CtlReg = 0x28, .CtlBit = 26 },
++  [52] = { .MuxReg = 0x18, .MuxBit = 16, .CtlReg = 0x28, .CtlBit = 28 },
++  [53] = { .MuxReg = 0x18, .MuxBit = 20, .CtlReg = 0x2C, .CtlBit = 0 },
++  [54] = { .MuxReg = PINCTRL_REG_UNUSED, .MuxBit = 0, .CtlReg = 0x2C, .CtlBit = 2 },
++  [55] = { .MuxReg = PINCTRL_REG_UNUSED, .MuxBit = 0, .CtlReg = 0x2C, .CtlBit = 4 },
++  [56] = { .MuxReg = PINCTRL_REG_UNUSED, .MuxBit = 0, .CtlReg = 0x2C, .CtlBit = 6 },
++  [57] = { .MuxReg = PINCTRL_REG_UNUSED, .MuxBit = 0, .CtlReg = 0x2C, .CtlBit = 8 },
++  [58] = { .MuxReg = PINCTRL_REG_UNUSED, .MuxBit = 0, .CtlReg = 0x2C, .CtlBit = 10 },
++  [59] = { .MuxReg = PINCTRL_REG_UNUSED, .MuxBit = 0, .CtlReg = 0x2C, .CtlBit = 12 },
++  [60] = { .MuxReg = PINCTRL_REG_UNUSED, .MuxBit = 0, .CtlReg = 0x2C, .CtlBit = 14 },
++  [61] = { .MuxReg = PINCTRL_REG_UNUSED, .MuxBit = 0, .CtlReg = 0x2C, .CtlBit = 16 },
++  [62] = { .MuxReg = PINCTRL_REG_UNUSED, .MuxBit = 0, .CtlReg = 0x2C, .CtlBit = 18 },
++  [63] = { .MuxReg = PINCTRL_REG_UNUSED, .MuxBit = 0, .CtlReg = 0x2C, .CtlBit = 20 },
++  [64] = { .MuxReg = PINCTRL_REG_UNUSED, .MuxBit = 0, .CtlReg = 0x2C, .CtlBit = 22 },
++};
++
++STATIC BCM2712_PINCTRL_REGISTERS Bcm2712C1PinctrlGioAonRegisters[] = {
++  [0] = { .MuxReg = 0xC, .MuxBit = 0, .CtlReg = 0x18, .CtlBit = 20 },
++  [1] = { .MuxReg = 0xC, .MuxBit = 4, .CtlReg = 0x18, .CtlBit = 22 },
++  [2] = { .MuxReg = 0xC, .MuxBit = 8, .CtlReg = 0x18, .CtlBit = 24 },
++  [3] = { .MuxReg = 0xC, .MuxBit = 12, .CtlReg = 0x18, .CtlBit = 26 },
++  [4] = { .MuxReg = 0xC, .MuxBit = 16, .CtlReg = 0x18, .CtlBit = 28 },
++  [5] = { .MuxReg = 0xC, .MuxBit = 20, .CtlReg = 0x1C, .CtlBit = 0 },
++  [6] = { .MuxReg = 0xC, .MuxBit = 24, .CtlReg = 0x1C, .CtlBit = 2 },
++  [7] = { .MuxReg = 0xC, .MuxBit = 28, .CtlReg = 0x1C, .CtlBit = 4 },
++  [8] = { .MuxReg = 0x10, .MuxBit = 0, .CtlReg = 0x1C, .CtlBit = 6 },
++  [9] = { .MuxReg = 0x10, .MuxBit = 4, .CtlReg = 0x1C, .CtlBit = 8 },
++  [10] = { .MuxReg = 0x10, .MuxBit = 8, .CtlReg = 0x1C, .CtlBit = 10 },
++  [11] = { .MuxReg = 0x10, .MuxBit = 12, .CtlReg = 0x1C, .CtlBit = 12 },
++  [12] = { .MuxReg = 0x10, .MuxBit = 16, .CtlReg = 0x1C, .CtlBit = 14 },
++  [13] = { .MuxReg = 0x10, .MuxBit = 20, .CtlReg = 0x1C, .CtlBit = 16 },
++  [14] = { .MuxReg = 0x10, .MuxBit = 24, .CtlReg = 0x1C, .CtlBit = 18 },
++  [15] = { .MuxReg = 0x10, .MuxBit = 28, .CtlReg = 0x1C, .CtlBit = 20 },
++  [16] = { .MuxReg = 0x14, .MuxBit = 0, .CtlReg = 0x1C, .CtlBit = 22 },
++  [17] = { .MuxReg = PINCTRL_REG_UNUSED, .MuxBit = 0, .CtlReg = PINCTRL_REG_UNUSED, .CtlBit = 0 },
++  [18] = { .MuxReg = PINCTRL_REG_UNUSED, .MuxBit = 0, .CtlReg = PINCTRL_REG_UNUSED, .CtlBit = 0 },
++  [19] = { .MuxReg = PINCTRL_REG_UNUSED, .MuxBit = 0, .CtlReg = PINCTRL_REG_UNUSED, .CtlBit = 0 },
++  [20] = { .MuxReg = PINCTRL_REG_UNUSED, .MuxBit = 0, .CtlReg = PINCTRL_REG_UNUSED, .CtlBit = 0 },
++  [21] = { .MuxReg = PINCTRL_REG_UNUSED, .MuxBit = 0, .CtlReg = PINCTRL_REG_UNUSED, .CtlBit = 0 },
++  [22] = { .MuxReg = PINCTRL_REG_UNUSED, .MuxBit = 0, .CtlReg = PINCTRL_REG_UNUSED, .CtlBit = 0 },
++  [23] = { .MuxReg = PINCTRL_REG_UNUSED, .MuxBit = 0, .CtlReg = PINCTRL_REG_UNUSED, .CtlBit = 0 },
++  [24] = { .MuxReg = PINCTRL_REG_UNUSED, .MuxBit = 0, .CtlReg = PINCTRL_REG_UNUSED, .CtlBit = 0 },
++  [25] = { .MuxReg = PINCTRL_REG_UNUSED, .MuxBit = 0, .CtlReg = PINCTRL_REG_UNUSED, .CtlBit = 0 },
++  [26] = { .MuxReg = PINCTRL_REG_UNUSED, .MuxBit = 0, .CtlReg = PINCTRL_REG_UNUSED, .CtlBit = 0 },
++  [27] = { .MuxReg = PINCTRL_REG_UNUSED, .MuxBit = 0, .CtlReg = PINCTRL_REG_UNUSED, .CtlBit = 0 },
++  [28] = { .MuxReg = PINCTRL_REG_UNUSED, .MuxBit = 0, .CtlReg = PINCTRL_REG_UNUSED, .CtlBit = 0 },
++  [29] = { .MuxReg = PINCTRL_REG_UNUSED, .MuxBit = 0, .CtlReg = PINCTRL_REG_UNUSED, .CtlBit = 0 },
++  [30] = { .MuxReg = PINCTRL_REG_UNUSED, .MuxBit = 0, .CtlReg = PINCTRL_REG_UNUSED, .CtlBit = 0 },
++  [31] = { .MuxReg = PINCTRL_REG_UNUSED, .MuxBit = 0, .CtlReg = PINCTRL_REG_UNUSED, .CtlBit = 0 },
++  [32] = { .MuxReg = 0x0, .MuxBit = 0, .CtlReg = PINCTRL_REG_UNUSED, .CtlBit = 0 },
++  [33] = { .MuxReg = 0x0, .MuxBit = 4, .CtlReg = PINCTRL_REG_UNUSED, .CtlBit = 0 },
++  [34] = { .MuxReg = 0x0, .MuxBit = 8, .CtlReg = PINCTRL_REG_UNUSED, .CtlBit = 0 },
++  [35] = { .MuxReg = 0x0, .MuxBit = 12, .CtlReg = PINCTRL_REG_UNUSED, .CtlBit = 0 },
++  [36] = { .MuxReg = 0x4, .MuxBit = 0, .CtlReg = PINCTRL_REG_UNUSED, .CtlBit = 0 },
++  [37] = { .MuxReg = 0x8, .MuxBit = 0, .CtlReg = PINCTRL_REG_UNUSED, .CtlBit = 0 },
++};
++
+ STATIC BCM2712_GPIO_CONTROLLER Controllers[BCM2712_GIO_COUNT] = {
+   {
+     .GioBase            = BCM2712_BRCMSTB_GIO_BASE,
+@@ -145,6 +260,22 @@ STATIC BCM2712_GPIO_CONTROLLER Controllers[BCM2712_GIO_COUNT] = {
+   }
+ };
+ 
++VOID
++EFIAPI
++GpioInitialize (
++  IN  BOOLEAN                         IsD0
++  )
++{
++  if (IsD0) {
++    return;
++  }
++
++  Controllers[BCM2712_GIO].PinctrlRegisters     = Bcm2712C1PinctrlGioRegisters;
++  Controllers[BCM2712_GIO].PinCount             = ARRAY_SIZE (Bcm2712C1PinctrlGioRegisters);
++  Controllers[BCM2712_GIO_AON].PinctrlRegisters = Bcm2712C1PinctrlGioAonRegisters;
++  Controllers[BCM2712_GIO_AON].PinCount         = ARRAY_SIZE (Bcm2712C1PinctrlGioAonRegisters);
++}
++
+ #define GPIOLIB_ASSERT_OR_FAIL(Expression, FailAction) \
+   do { \
+     ASSERT(Expression); \

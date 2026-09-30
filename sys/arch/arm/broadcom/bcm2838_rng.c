@@ -51,6 +51,7 @@ CFATTACH_DECL_NEW(bcm2838rng_fdt, sizeof(struct bcm2838rng_softc),
 
 static const struct device_compatible_entry compat_data[] = {
 	{ .compat = "brcm,bcm2838-rng200" },
+	{ .compat = "brcm,bcm2711-rng200" },	/* the Pi 4 device tree */
 	DEVICE_COMPAT_EOL
 };
 

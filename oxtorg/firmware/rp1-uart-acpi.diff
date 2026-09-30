@@ -1,0 +1,99 @@
+Origin:
+
+Expose the optional GPIO14/15 console as an ACPI PL011 device under RP1.
+Use the existing shared PCIe2 INTA line for UART0, as for RP1 USB and
+Ethernet. Keep the DSDT resource and SPCR console address consistent
+with the firmware-assigned RP1 BAR. The default build hides this UART.
+
+--- a/Silicon/RaspberryPi/RpiSiliconPkg/Include/Rp1.asi
++++ b/Silicon/RaspberryPi/RpiSiliconPkg/Include/Rp1.asi
+@@ -28,6 +28,35 @@
+ #define RP1_INTERRUPT_SET(Index)                                \
+   CreateDwordField (RBUF, RB ## Index._INT, IN ## Index)        \
+   IN ## Index = PINT
++
++// Enabled only when the GPIO14/15 console is selected in the firmware build.
++Name (U0ST, 0xFE) // Patched to 0x0 or 0xF.
++
++Device (URP0) {
++  Name (_HID, "ARMH0011")
++  Name (_UID, 0x1)
++
++  Method (_STA) {
++    Return (U0ST)
++  }
++
++  Method (_CRS, 0, Serialized) {
++    Name (RBUF, ResourceTemplate () {
++      RP1_QWORDMEMORY_BUF (00)
++      RP1_INTERRUPT_BUF (01)
++    })
++    RP1_QWORDMEMORY_SET (00, RP1_UART0_BASE, 0x1000)
++    RP1_INTERRUPT_SET (01)
++    Return (RBUF)
++  }
++
++  Name (_DSD, Package () {
++    ToUUID ("daffd814-6eba-4d8c-8a91-bc9bbf4aa301"),
++    Package () {
++      Package () { "clock-frequency", 50000000 }
++    }
++  })
++}
+ 
+ Device (XHC0) {
+   Name (_HID, "PNP0D10")
+--- a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
++++ b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
+@@ -621,6 +621,20 @@
+     DEBUG ((DEBUG_ERROR, "%a: Failed to patch PBAR. Status=%r\n", __func__, Status));
+   }
+ 
++  Status = AcpiAmlObjectUpdateInteger (
++             AcpiSdtProtocol,
++             TableHandle,
++             "\\_SB.RP1B.U0ST",
++#ifdef RP1_UART_CONSOLE
++             0xF
++#else
++             0x0
++#endif
++             );
++  if (EFI_ERROR (Status)) {
++    DEBUG ((DEBUG_ERROR, "%a: Failed to patch U0ST. Status=%r\n", __func__, Status));
++  }
++
+   Rp1ProgramGemMac (Rp1Bus);
+   Rp1SetupHeaderI2c (AcpiSdtProtocol, TableHandle, Rp1Bus);
+ 
+@@ -732,8 +746,8 @@
+ //
+ // Describe the same UART that SerialDxe uses. Its CPU address is assigned
+ // by PCI enumeration and differs between boards. This diagnostic SPCR is
+-// polled only: RP1's MSI interrupt is not the native UART10 GIC interrupt.
+-// The native UART device in the DSDT is left unchanged.
++// shared with the other RP1 devices through PCIe2 INTA, not UART10's IRQ.
++// The DSDT also exposes RP1 UART0 so the OS can attach its full driver.
+ //
+ STATIC
+ VOID
+@@ -772,11 +786,16 @@
+ 
+   mDiagnosticUartBase = (UINTN)PeripheralBase + 0x30000;
+   Spcr->BaseAddress.Address = mDiagnosticUartBase;
+-  Spcr->InterruptType = 0;
++  // Route UART0 onto the shared RP1 interrupt, just as USB and Ethernet.
++  MmioWrite32 (
++    PeripheralBase + RP1_PCIE_REG_SET + RP1_PCIE_MSIX_CFG (RP1_INT_UART0),
++    RP1_PCIE_MSIX_CFG_ENABLE
++    );
++  Spcr->InterruptType = EFI_ACPI_SERIAL_PORT_CONSOLE_REDIRECTION_TABLE_INTERRUPT_TYPE_GIC;
+   Spcr->Irq = 0;
+-  Spcr->GlobalSystemInterrupt = 0;
++  Spcr->GlobalSystemInterrupt = 261;
+   AcpiUpdateChecksum ((UINT8 *)Spcr, Spcr->Header.Length);
+-  ConsoleDiagnosticWrite ("\r\n[CM5] SPCR uses RP1 UART0 (polled)\r\n");
++  ConsoleDiagnosticWrite ("\r\n[CM5] SPCR uses RP1 UART0 (shared RP1 IRQ)\r\n");
+ }
+ #endif
+ 

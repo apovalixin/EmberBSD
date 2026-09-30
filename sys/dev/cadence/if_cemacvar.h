@@ -72,6 +72,9 @@ struct cemac_softc {
 
 	unsigned		cemac_flags;
 #define CEMAC_FLAG_GEM	__BIT(0)
+#define CEMAC_FLAG_RGMII	__BIT(1)	/* GEM: select RGMII in USER_IO */
+	uint32_t		sc_mdc_clk;	/* GEM_CFG_CLK_*; 0: divide by 64 */
+	int			sc_mii_flags;	/* for mii_attach: MIIF_RXID... */
 
 	kmutex_t *sc_mcast_lock;	/* m: lock for SIOCADD/DELMULTI */
 	kmutex_t *sc_intr_lock;		/* i: lock for interrupt operations */

@@ -1,4 +1,4 @@
-/*	$NetBSD: sig_machdep.c,v 1.51.24.1 2026/09/06 18:02:12 martin Exp $	*/
+/*	$NetBSD: sig_machdep.c,v 1.51 2021/04/24 16:14:08 tsutsui Exp $	*/
 
 /*
  * Copyright (c) 1988 University of Utah.
@@ -40,7 +40,7 @@
 #include "opt_m68k_arch.h"
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: sig_machdep.c,v 1.51.24.1 2026/09/06 18:02:12 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD: sig_machdep.c,v 1.51 2021/04/24 16:14:08 tsutsui Exp $");
 
 #define __M68K_SIGNAL_PRIVATE
 
@@ -113,23 +113,18 @@ fpsr2siginfocode(u_int fpsr)
 }
 
 void *
-getframe(struct lwp *l, int sig, int *onstack, size_t size)
+getframe(struct lwp *l, int sig, int *onstack)
 {
 	struct frame *tf = (struct frame *)l->l_md.md_regs;
-	uintptr_t frame;
 
 	/* Do we need to jump onto the signal stack? */
-	*onstack =
-	    (l->l_sigstk.ss_flags & (SS_DISABLE | SS_ONSTACK)) == 0 &&
-	    (SIGACTION(l->l_proc, sig).sa_flags & SA_ONSTACK) != 0;
+	*onstack =(l->l_sigstk.ss_flags & (SS_DISABLE | SS_ONSTACK)) == 0
+		&& (SIGACTION(l->l_proc, sig).sa_flags & SA_ONSTACK) != 0;
 
 	if (*onstack)
-		frame = (uintptr_t)l->l_sigstk.ss_sp + l->l_sigstk.ss_size;
+		return (char *)l->l_sigstk.ss_sp + l->l_sigstk.ss_size;
 	else
-		frame = tf->f_regs[SP];
-	frame -= size;
-	frame &= ~STACK_ALIGNBYTES;
-	return (void *)frame;
+		return (void *)tf->f_regs[SP];
 }
 
 /*
@@ -159,10 +154,10 @@ sendsig_siginfo(const ksiginfo_t *ksi, const sigset_t *mask)
 	struct sigacts *ps = p->p_sigacts;
 	int onstack, error;
 	int sig = ksi->ksi_signo;
-	struct sigframe_siginfo *fp, kf;
+	struct sigframe_siginfo *fp = getframe(l, sig, &onstack), kf;
 	sig_t catcher = SIGACTION(p, sig).sa_handler;
 
-	fp = getframe(l, sig, &onstack, sizeof(*fp));
+	fp--;
 
 	memset(&kf, 0, sizeof(kf));
 	kf.sf_ra = (int)ps->sa_sigdesc[sig].sd_tramp;

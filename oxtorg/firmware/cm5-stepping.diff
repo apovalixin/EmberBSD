@@ -1,0 +1,35 @@
+Origin:
+
+CM5 and CM5 Lite use BCM2712 D0. Select their pin controller layout
+from the firmware board revision, even if config.txt selected a Pi 5
+C1 DTB. Prefer an explicit D0 compatible over an old C1 compatible.
+A C1 AON GPIO pull register at offset 0x1c lies beyond the D0 register
+block and causes pending SError on CM5 before PCIe initialization.
+
+--- a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/Peripherals.c
++++ b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/Peripherals.c
+@@ -94,7 +94,13 @@
+ 
+   if (!Known) {
+     Fdt   = FdtPlatformGetBase ();
+-    IsD0  = (Fdt == NULL) ||
++    // CM5 uses D0. A Pi 5 C1 DTB explicitly selected in config.txt
++    // must not override the board identity supplied by the firmware.
++    IsD0  = (((mBoardRevisionCode & BIT23) != 0) &&
++             ((((mBoardRevisionCode >> 4) & 0xff) == 0x18) ||
++              (((mBoardRevisionCode >> 4) & 0xff) == 0x1a))) ||
++            (Fdt == NULL) ||
++            (FdtNodeOffsetByCompatible (Fdt, -1, "brcm,bcm2712d0-pinctrl") >= 0) ||
+             (FdtNodeOffsetByCompatible (Fdt, -1, "brcm,bcm2712-pinctrl") < 0);
+     Known = TRUE;
+     DEBUG ((DEBUG_INFO, "BCM2712: %a pin controller layout\n", IsD0 ? "D0" : "C0/C1"));
+@@ -127,6 +133,9 @@
+ 
+   IsD0 = Bcm2712IsD0 ();
+   GpioInitialize (IsD0);
++#ifdef RP1_UART_CONSOLE
++  Cm5PcieRecord (70, mBoardRevisionCode, IsD0, 0, Cm5PcieReadIsr (), 0);
++#endif
+ 
+   // SD card detect
+   GpioSetFunction (BCM2712_GIO_AON, 5,

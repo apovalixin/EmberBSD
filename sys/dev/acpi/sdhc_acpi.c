@@ -36,6 +36,7 @@ __KERNEL_RCSID(0, "$NetBSD: sdhc_acpi.c,v 1.22.2.1 2026/06/15 17:18:41 martin Ex
 #include <dev/acpi/acpireg.h>
 #include <dev/acpi/acpivar.h>
 #include <dev/acpi/acpi_intr.h>
+#include <dev/acpi/acpi_power.h>
 
 #include <dev/sdmmc/sdhcreg.h>
 #include <dev/sdmmc/sdhcvar.h>
@@ -71,7 +72,26 @@ struct sdhc_acpi_softc {
 
 	ACPI_HANDLE sc_crs, sc_srs;
 	ACPI_BUFFER sc_crs_buffer;
+
+	bus_space_handle_t sc_ledh;
 };
+
+/*
+ * Raspberry Pi 5: the green ACT LED is AON GPIO 9 of the BCM2712,
+ * active low. Raspberry Pi OS lights it while the microSD card is in
+ * use (its "mmc0" trigger); the microSD host (BRCM5D12, UID 0) does
+ * the same here. The GPIO block is not among the host's resources and
+ * is mapped by address. The DSDT drives bits 3 and 4 of the same DATA
+ * register (the slot's signal voltage and power), at attach and not
+ * while commands run.
+ */
+#define	BCM2712_GIO_AON_BASE	0x107d517c00ULL
+#define	BCM2712_GIO_AON_SIZE	0x40
+#define	BCM2712_GIO_DATA	0x04
+#define	BCM2712_GIO_IODIR	0x08
+#define	BCM2712_ACT_LED		__BIT(9)
+#define	BCM2712_AON_MUX_8_15	0x107d510710ULL	/* C1 layout */
+#define	BCM2712_AON_MUX_9	__BITS(7, 4)	/* 0: GPIO */
 
 CFATTACH_DECL_NEW(sdhc_acpi, sizeof(struct sdhc_acpi_softc),
     sdhc_acpi_match, sdhc_acpi_attach, sdhc_acpi_detach, NULL);
@@ -81,6 +101,9 @@ static void	sdhc_acpi_intel_emmc_hw_reset(struct sdhc_softc *,
 
 static int	sdhc_acpi_rockchip_bus_clock(struct sdhc_softc *,
 		    int);
+
+static void	sdhc_acpi_brcm_led_attach(struct sdhc_acpi_softc *);
+static void	sdhc_acpi_brcm_led(struct sdhc_softc *, int);
 
 static const struct sdhc_acpi_slot {
 	const char *hid;
@@ -182,12 +205,23 @@ sdhc_acpi_attach(device_t parent, device_t self, void *opaque)
 	ACPI_INTEGER caps, caps_mask;
 	ACPI_INTEGER funcs;
 	bool non_removable;
+	int pstate;
 
 	sc->sc.sc_dev = self;
 	sc->sc.sc_dmat = aa->aa_dmat;
 	sc->sc.sc_host = NULL;
 	sc->sc_memt = aa->aa_memt;
 	sc->sc_handle = aa->aa_node->ad_handle;
+
+	/*
+	 * A slot's power can be an ACPI power resource that the firmware
+	 * leaves off for the OS: the Raspberry Pi 5 UEFI (eotics-com)
+	 * switches the microSD rail off and describes it this way. Bring
+	 * the device to D0 before the host is probed.
+	 */
+	if (acpi_power_get(sc->sc_handle, &pstate) &&
+	    pstate != ACPI_STATE_D0)
+		(void)acpi_power_set(sc->sc_handle, ACPI_STATE_D0);
 
 	slot = sdhc_acpi_find_slot(aa->aa_node->ad_devinfo);
 	if (slot->type == SLOT_TYPE_EMMC)
@@ -278,6 +312,10 @@ sdhc_acpi_attach(device_t parent, device_t self, void *opaque)
 		sc->sc.sc_caps2 |= (caps >> 32);
 		sc->sc.sc_flags |= SDHC_FLAG_HOSTCAPS;
 	}
+
+	if (strcmp(slot->hid, "BRCM5D12") == 0 && slot->uid != NULL &&
+	    strcmp(slot->uid, "0") == 0)
+		sdhc_acpi_brcm_led_attach(sc);
 
 	if (sdhc_host_found(&sc->sc, sc->sc_memt, sc->sc_memh,
 	    sc->sc_memsize) != 0) {
@@ -407,4 +445,45 @@ sdhc_acpi_rockchip_bus_clock(struct sdhc_softc *sc, int freq)
 	}
 
 	return 0;
+}
+
+static void
+sdhc_acpi_brcm_led_attach(struct sdhc_acpi_softc *sc)
+{
+	bus_space_handle_t muxh;
+	uint32_t mux, iodir;
+
+	if (bus_space_map(sc->sc_memt, BCM2712_AON_MUX_8_15, 4, 0, &muxh) != 0)
+		return;
+	mux = bus_space_read_4(sc->sc_memt, muxh, 0);
+	bus_space_unmap(sc->sc_memt, muxh, 4);
+	if (__SHIFTOUT(mux, BCM2712_AON_MUX_9) != 0) {
+		aprint_normal_dev(sc->sc.sc_dev,
+		    "ACT LED pin is not a GPIO (mux %#x), left alone\n", mux);
+		return;
+	}
+
+	if (bus_space_map(sc->sc_memt, BCM2712_GIO_AON_BASE,
+	    BCM2712_GIO_AON_SIZE, 0, &sc->sc_ledh) != 0)
+		return;
+	sdhc_acpi_brcm_led(&sc->sc, 0);
+	iodir = bus_space_read_4(sc->sc_memt, sc->sc_ledh, BCM2712_GIO_IODIR);
+	bus_space_write_4(sc->sc_memt, sc->sc_ledh, BCM2712_GIO_IODIR,
+	    iodir & ~BCM2712_ACT_LED);
+	sc->sc.sc_vendor_led = sdhc_acpi_brcm_led;
+	aprint_normal_dev(sc->sc.sc_dev, "ACT LED shows card activity\n");
+}
+
+static void
+sdhc_acpi_brcm_led(struct sdhc_softc *ssc, int on)
+{
+	struct sdhc_acpi_softc *sc = (struct sdhc_acpi_softc *)ssc;
+	uint32_t data;
+
+	data = bus_space_read_4(sc->sc_memt, sc->sc_ledh, BCM2712_GIO_DATA);
+	if (on)
+		data &= ~BCM2712_ACT_LED;
+	else
+		data |= BCM2712_ACT_LED;
+	bus_space_write_4(sc->sc_memt, sc->sc_ledh, BCM2712_GIO_DATA, data);
 }

@@ -1,0 +1,133 @@
+Origin:
+The Raspberry Pi 5's green
+ACT LED (BCM2712 AON GPIO 9) lights while the microSD card is in use, as
+Raspberry Pi OS does with its "mmc0" trigger. sdhc gets a vendor hook
+next to its own SDHC_LED_ON handling; sdhc_acpi sets it for BRCM5D12 UID
+0 and drives the GPIO, which ACPI does not describe, by address.
+
+--- sys/dev/sdmmc/sdhcvar.h.orig
++++ sys/dev/sdmmc/sdhcvar.h
+@@ -86,6 +86,7 @@
+ 	int (*sc_vendor_transfer_data_dma)(struct sdhc_softc *, struct sdmmc_command *);
+ 	void (*sc_vendor_hw_reset)(struct sdhc_softc *, struct sdhc_host *);
+ 	int (*sc_vendor_signal_voltage)(struct sdhc_softc *, int);
++	void (*sc_vendor_led)(struct sdhc_softc *, int);
+ };
+ 
+ /* Host controller functions called by the attachment driver. */
+--- sys/dev/sdmmc/sdhc.c.orig
++++ sys/dev/sdmmc/sdhc.c
+@@ -1692,6 +1692,8 @@
+ 		/* Turn off the LED. */
+ 		HCLR1(hp, SDHC_HOST_CTL, SDHC_LED_ON);
+ 	}
++	if (hp->sc->sc_vendor_led != NULL)
++		hp->sc->sc_vendor_led(hp->sc, 0);
+ 	SET(cmd->c_flags, SCF_ITSDONE);
+ 
+ 	if (ISSET(hp->sc->sc_flags, SDHC_FLAG_NO_AUTO_STOP) &&
+@@ -1807,6 +1809,8 @@
+ 		/* Alert the user not to remove the card. */
+ 		HSET1(hp, SDHC_HOST_CTL, SDHC_LED_ON);
+ 	}
++	if (hp->sc->sc_vendor_led != NULL)
++		hp->sc->sc_vendor_led(hp->sc, 1);
+ 
+ 	/* Set DMA start address. */
+ 	if (ISSET(mode, SDHC_DMA_ENABLE) &&
+--- sys/dev/acpi/sdhc_acpi.c.orig
++++ sys/dev/acpi/sdhc_acpi.c
+@@ -72,8 +72,27 @@
+ 
+ 	ACPI_HANDLE sc_crs, sc_srs;
+ 	ACPI_BUFFER sc_crs_buffer;
++
++	bus_space_handle_t sc_ledh;
+ };
+ 
++/*
++ * Raspberry Pi 5: the green ACT LED is AON GPIO 9 of the BCM2712,
++ * active low. Raspberry Pi OS lights it while the microSD card is in
++ * use (its "mmc0" trigger); the microSD host (BRCM5D12, UID 0) does
++ * the same here. The GPIO block is not among the host's resources and
++ * is mapped by address. The DSDT drives bits 3 and 4 of the same DATA
++ * register (the slot's signal voltage and power), at attach and not
++ * while commands run.
++ */
++#define	BCM2712_GIO_AON_BASE	0x107d517c00ULL
++#define	BCM2712_GIO_AON_SIZE	0x40
++#define	BCM2712_GIO_DATA	0x04
++#define	BCM2712_GIO_IODIR	0x08
++#define	BCM2712_ACT_LED		__BIT(9)
++#define	BCM2712_AON_MUX_8_15	0x107d510710ULL	/* C1 layout */
++#define	BCM2712_AON_MUX_9	__BITS(7, 4)	/* 0: GPIO */
++
+ CFATTACH_DECL_NEW(sdhc_acpi, sizeof(struct sdhc_acpi_softc),
+     sdhc_acpi_match, sdhc_acpi_attach, sdhc_acpi_detach, NULL);
+ 
+@@ -83,6 +102,9 @@
+ static int	sdhc_acpi_rockchip_bus_clock(struct sdhc_softc *,
+ 		    int);
+ 
++static void	sdhc_acpi_brcm_led_attach(struct sdhc_acpi_softc *);
++static void	sdhc_acpi_brcm_led(struct sdhc_softc *, int);
++
+ static const struct sdhc_acpi_slot {
+ 	const char *hid;
+ 	const char *uid;
+@@ -291,6 +313,10 @@
+ 		sc->sc.sc_flags |= SDHC_FLAG_HOSTCAPS;
+ 	}
+ 
++	if (strcmp(slot->hid, "BRCM5D12") == 0 && slot->uid != NULL &&
++	    strcmp(slot->uid, "0") == 0)
++		sdhc_acpi_brcm_led_attach(sc);
++
+ 	if (sdhc_host_found(&sc->sc, sc->sc_memt, sc->sc_memh,
+ 	    sc->sc_memsize) != 0) {
+ 		aprint_error_dev(self, "couldn't initialize host\n");
+@@ -420,3 +446,44 @@
+ 
+ 	return 0;
+ }
++
++static void
++sdhc_acpi_brcm_led_attach(struct sdhc_acpi_softc *sc)
++{
++	bus_space_handle_t muxh;
++	uint32_t mux, iodir;
++
++	if (bus_space_map(sc->sc_memt, BCM2712_AON_MUX_8_15, 4, 0, &muxh) != 0)
++		return;
++	mux = bus_space_read_4(sc->sc_memt, muxh, 0);
++	bus_space_unmap(sc->sc_memt, muxh, 4);
++	if (__SHIFTOUT(mux, BCM2712_AON_MUX_9) != 0) {
++		aprint_normal_dev(sc->sc.sc_dev,
++		    "ACT LED pin is not a GPIO (mux %#x), left alone\n", mux);
++		return;
++	}
++
++	if (bus_space_map(sc->sc_memt, BCM2712_GIO_AON_BASE,
++	    BCM2712_GIO_AON_SIZE, 0, &sc->sc_ledh) != 0)
++		return;
++	sdhc_acpi_brcm_led(&sc->sc, 0);
++	iodir = bus_space_read_4(sc->sc_memt, sc->sc_ledh, BCM2712_GIO_IODIR);
++	bus_space_write_4(sc->sc_memt, sc->sc_ledh, BCM2712_GIO_IODIR,
++	    iodir & ~BCM2712_ACT_LED);
++	sc->sc.sc_vendor_led = sdhc_acpi_brcm_led;
++	aprint_normal_dev(sc->sc.sc_dev, "ACT LED shows card activity\n");
++}
++
++static void
++sdhc_acpi_brcm_led(struct sdhc_softc *ssc, int on)
++{
++	struct sdhc_acpi_softc *sc = (struct sdhc_acpi_softc *)ssc;
++	uint32_t data;
++
++	data = bus_space_read_4(sc->sc_memt, sc->sc_ledh, BCM2712_GIO_DATA);
++	if (on)
++		data &= ~BCM2712_ACT_LED;
++	else
++		data |= BCM2712_ACT_LED;
++	bus_space_write_4(sc->sc_memt, sc->sc_ledh, BCM2712_GIO_DATA, data);
++}

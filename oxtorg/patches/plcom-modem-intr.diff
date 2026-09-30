@@ -1,0 +1,118 @@
+Origin:
+plcom(4) enabled all four
+PL011 modem status interrupts on open, whether or not the driver acts on
+them. On a Raspberry Pi 5 the console is the debug UART (UART10), whose
+modem inputs float: they interrupt hundreds of times a second, and at
+times CTS re-asserted its interrupt as fast as plcomintr() cleared it
+(73.6 million loop passes in 14.4 s). cpu0 stayed at IPL_HIGH, its clock
+interrupts stopped and the heartbeat check panicked ("time has not
+advanced"). Now only the modem interrupts behind carrier detect, DTR/DCD
+flow control and PPS are enabled; a console with CLOCAL gets none.
+TIOCMGET reads the modem inputs from the flag register.
+
+--- sys/arch/evbarm/dev/plcom.c.orig
++++ sys/arch/evbarm/dev/plcom.c
+@@ -166,6 +166,7 @@ void	plcom_modem	(struct plcom_softc *, int);
+ void	tiocm_to_plcom	(struct plcom_softc *, u_long, int);
+ int	plcom_to_tiocm	(struct plcom_softc *);
+ void	plcom_iflush	(struct plcom_softc *);
++static void plcom_msintr_update(struct plcom_softc *);
+ 
+ int	plcom_common_getc (dev_t, struct plcom_instance *);
+ void	plcom_common_putc (dev_t, struct plcom_instance *, int);
+@@ -887,8 +888,8 @@ plcomopen(dev_t dev, int flag, int mode, struct lwp *l)
+ 		case PLCOM_TYPE_PL011:
+ 		case PLCOM_TYPE_GENERIC_UART:
+ 			SET(sc->sc_cr, PL011_CR_RXE | PL011_CR_TXE);
+-			SET(sc->sc_imsc, PL011_INT_RT | PL011_INT_RX |
+-			    PL011_INT_MSMASK);
++			/* Modem status interrupts: plcomparam(). */
++			SET(sc->sc_imsc, PL011_INT_RT | PL011_INT_RX);
+ 			PWRITE4(pi, PL011COM_IMSC, sc->sc_imsc);
+ 			sc->sc_msr = PREAD4(pi, PL01XCOM_FR);
+ 			break;
+@@ -1200,6 +1201,7 @@ plcomioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
+ 			break;
+ 		}
+ 		mutex_spin_exit(&timecounter_lock);
++		plcom_msintr_update(sc);
+ 		break;
+ 	}
+ 
+@@ -1236,6 +1238,7 @@ plcomioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
+ 		    &sc->ppsinfo.clear_timestamp);
+ #endif
+ 		mutex_spin_exit(&timecounter_lock);
++		plcom_msintr_update(sc);
+ 		break;
+ 
+ 	default:
+@@ -1352,7 +1355,16 @@ plcom_to_tiocm(struct plcom_softc *sc)
+ 	if (ISSET(plcombits, PL01X_MCR_RTS))
+ 		SET(ttybits, TIOCM_RTS);
+ 
+-	plcombits = sc->sc_msr;
++	/* Not every modem input interrupts: read them now. */
++	switch (sc->sc_pi.pi_type) {
++	case PLCOM_TYPE_PL011:
++	case PLCOM_TYPE_GENERIC_UART:
++		plcombits = PREAD4(&sc->sc_pi, PL01XCOM_FR);
++		break;
++	default:
++		plcombits = sc->sc_msr;
++		break;
++	}
+ 	if (ISSET(plcombits, PL01X_MSR_DCD))
+ 		SET(ttybits, TIOCM_CD);
+ 	if (ISSET(plcombits, PL01X_MSR_CTS))
+@@ -1398,6 +1410,42 @@ cflag2lcr(tcflag_t cflag)
+ 	return lcr;
+ }
+ 
++/*
++ * Enable only the modem status interrupts the driver acts on: carrier
++ * without CLOCAL or for DTR/DCD flow control, and PPS on DCD.  With
++ * CRTSCTS the PL011 watches CTS itself.  An input nothing listens to
++ * may float: the modem inputs of the Raspberry Pi 5 debug UART change
++ * hundreds of times a second, and at times CTS re-asserts its
++ * interrupt as fast as plcomintr() clears it, holding a CPU at
++ * IPL_HIGH for good.
++ */
++static void
++plcom_msintr_update(struct plcom_softc *sc)
++{
++	struct plcom_instance *pi = &sc->sc_pi;
++	const uint32_t msr = sc->sc_msr_mask | sc->sc_ppsmask;
++	uint32_t imsc;
++
++	KASSERT(mutex_owned(&sc->sc_lock));
++
++	switch (pi->pi_type) {
++	case PLCOM_TYPE_PL011:
++	case PLCOM_TYPE_GENERIC_UART:
++		imsc = sc->sc_imsc & ~PL011_INT_MSMASK;
++		if (ISSET(msr, PL01X_MSR_DCD))
++			SET(imsc, PL011_INT_DCD);
++		if (ISSET(msr, PL01X_MSR_CTS))
++			SET(imsc, PL011_INT_CTS);
++		if (ISSET(msr, PL01X_MSR_DSR))
++			SET(imsc, PL011_INT_DSR);
++		if (imsc != sc->sc_imsc) {
++			sc->sc_imsc = imsc;
++			PWRITE4(pi, PL011COM_IMSC, sc->sc_imsc);
++		}
++		break;
++	}
++}
++
+ int
+ plcomparam(struct tty *tp, struct termios *t)
+ {
+@@ -1541,6 +1589,7 @@ plcomparam(struct tty *tp, struct termios *t)
+ 		}
+ 	}
+ 	sc->sc_msr_mask = sc->sc_msr_cts | sc->sc_msr_dcd;
++	plcom_msintr_update(sc);
+ 
+ #if 0
+ 	if (ospeed == 0)

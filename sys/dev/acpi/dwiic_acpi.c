@@ -64,6 +64,7 @@ static const struct device_compatible_entry compat_data[] = {
 	{ .compat = "AMDI0010" },	/* AMD FCH */
 	{ .compat = "AMDI0510" },	/* AMD Seattle */
 	{ .compat = "APMC0D0F" },	/* Ampere eMAG */
+	{ .compat = "snps,designware-i2c" },	/* PRP0001, e.g. Raspberry Pi 5 RP1 */
 	DEVICE_COMPAT_EOL
 };
 

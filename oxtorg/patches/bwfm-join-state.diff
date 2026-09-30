@@ -1,0 +1,67 @@
+Origin:
+bwfm moved net80211 to
+ASSOC and RUN on any successful join event from the firmware, whatever
+state net80211 was in. When wpa_supplicant switched networks, a join
+event arrived after the BSS node had been reset: ASSOC to RUN with a
+node without rates hit net80211's assertion, "ieee80211_newstate:
+bogus xmit rate 0 setup ostate 3 nstate 4" (Raspberry Pi 5, switching
+from 2.4 GHz to 5 GHz). Now the events advance only a join net80211
+started, as OpenBSD's bwfm does.
+An ASSOC event with UNSOLICITED status can arrive immediately after a
+successful link. It is not a failed association: resetting to SCAN
+there discards the following SET_SSID success event and can leave
+wpa_supplicant retrying authentication for minutes. Ignore that event,
+as OpenBSD does.
+
+On a network switch the firmware reports the old BSSID link ending after
+net80211 has entered AUTH for the new BSSID. Treating that LINK event as
+a failure restarts the scan, so the successful firmware join is
+discarded and a second attempt takes about 24 seconds. Ignore a LINK
+change for a different BSSID while authenticating or associating; keep
+handling failures for the selected BSSID.
+
+--- sys/dev/ic/bwfm.c.orig
++++ sys/dev/ic/bwfm.c
+@@ -2241,8 +2241,17 @@
+ 		}
+ 
+ 	case BWFM_E_SET_SSID:
++		/*
++		 * Only a join net80211 asked for may complete.  A late event
++		 * after a reset (wpa_supplicant switching networks) would
++		 * take a BSS node without rates into RUN, and net80211
++		 * asserts a valid transmit rate there.  OpenBSD checks the
++		 * state the same way.
++		 */
+ 		if (ntohl(e->msg.status) == BWFM_E_STATUS_SUCCESS) {
+-			ieee80211_new_state(ic, IEEE80211_S_RUN, -1);
++			if (ic->ic_state == IEEE80211_S_AUTH ||
++			    ic->ic_state == IEEE80211_S_ASSOC)
++				ieee80211_new_state(ic, IEEE80211_S_RUN, -1);
+ 		} else {
+ 			ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
+ 		}
+@@ -2250,8 +2259,9 @@
+ 
+ 	case BWFM_E_ASSOC:
+ 		if (ntohl(e->msg.status) == BWFM_E_STATUS_SUCCESS) {
+-			ieee80211_new_state(ic, IEEE80211_S_ASSOC, -1);
+-		} else {
++			if (ic->ic_state == IEEE80211_S_AUTH)
++				ieee80211_new_state(ic, IEEE80211_S_ASSOC, -1);
++		} else if (ntohl(e->msg.status) != BWFM_E_STATUS_UNSOLICITED) {
+ 			ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
+ 		}
+ 		break;
+@@ -2259,6 +2269,11 @@
+ 	case BWFM_E_LINK:
+ 		if (ntohl(e->msg.status) == BWFM_E_STATUS_SUCCESS &&
+ 		    ntohl(e->msg.reason) == 0)
++			break;
++		/* A previous BSSID may report link-down after a new join starts. */
++		if ((ic->ic_state == IEEE80211_S_AUTH ||
++		    ic->ic_state == IEEE80211_S_ASSOC) &&
++		    !IEEE80211_ADDR_EQ(&e->msg.addr, ic->ic_bss->ni_bssid))
+ 			break;
+ 
+ 		/* Link status has changed */

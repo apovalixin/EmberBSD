@@ -1,0 +1,9 @@
+
+ioconf if_cemac_acpi
+
+include "conf/files"
+include "dev/acpi/files.acpi"
+
+pseudo-root acpi*
+
+cemac* at acpi?

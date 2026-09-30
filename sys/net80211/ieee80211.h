@@ -515,7 +515,8 @@ enum {
 	IEEE80211_ELEMID_MMIE		= 76,	/* 11w */
 	IEEE80211_ELEMID_TPC		= 150,
 	IEEE80211_ELEMID_CCKM		= 156,
-	IEEE80211_ELEMID_VENDOR		= 221	/* vendor private */
+	IEEE80211_ELEMID_VENDOR		= 221,	/* vendor private */
+	IEEE80211_ELEMID_RSNX		= 244	/* RSN extension */
 };
 
 struct ieee80211_tim_ie {

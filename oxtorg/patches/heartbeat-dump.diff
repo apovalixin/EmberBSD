@@ -1,0 +1,118 @@
+Origin:
+A debugging aid kept on the Raspberry Pi 5 stand kernel while
+the stability work goes on. When a CPU stops taking interrupts, NetBSD's
+heartbeat check panics ("time has not advanced", or "heart stopped
+beating"). Before that panic one CPU prints every CPU's current LWP, IPL,
+interrupt depth, spin mutex count and pending softints, and the GIC's
+active and pending SPIs: an active SPI names the handler a CPU is stuck
+in. It found the plcom(4) modem-interrupt storm (plcom-modem-intr.diff).
+
+--- sys/arch/arm/cortex/gic.c.orig
++++ sys/arch/arm/cortex/gic.c
+@@ -151,6 +151,32 @@ gicd_write(struct armgic_softc *sc, bus_size_t o, uint32_t v)
+ 	bus_space_write_4(sc->sc_memt, sc->sc_gicdh, o, v);
+ }
+ 
++void	armgic_dump_spis(void);
++
++/*
++ * For a post-mortem run on another CPU: the SPIs the distributor holds
++ * active (acknowledged and not yet ended, so some CPU is inside the
++ * handler) or pending.  SGIs and PPIs are banked per CPU and cannot be
++ * read for another CPU.
++ */
++void
++armgic_dump_spis(void)
++{
++	struct armgic_softc * const sc = &armgic_softc;
++
++	if (sc->sc_dev == NULL)
++		return;
++	for (u_int n = 1; n < (u_int)sc->sc_pic.pic_maxsources / 32; n++) {
++		const uint32_t act = gicd_read(sc, GICD_ISACTIVERn(n));
++		const uint32_t pend = gicd_read(sc, GICD_ISPENDRn(n));
++
++		if ((act | pend) == 0)
++			continue;
++		printf("armgic: irq %u-%u active %#010x pending %#010x\n",
++		    n * 32, n * 32 + 31, act, pend);
++	}
++}
++
+ static uint32_t
+ gicd_find_targets(struct armgic_softc *sc)
+ {
+--- sys/kern/kern_heartbeat.c.orig
++++ sys/kern/kern_heartbeat.c
+@@ -488,6 +488,55 @@ defibrillator(void *cookie)
+ 	    curlwp->l_name ? curlwp->l_name : curproc->p_comm);
+ }
+ 
++#ifdef __aarch64__
++void	armgic_dump_spis(void);
++#endif
++
++/*
++ * heartbeat_stuck_dump()
++ *
++ *	Before a heartbeat panic, print what every CPU was doing, so
++ *	that the console log shows where a CPU that stopped taking
++ *	interrupts stands.  Other CPUs' fields are read without locks
++ *	and may be a little stale.
++ */
++static void
++heartbeat_stuck_dump(void)
++{
++	static volatile u_int dumping;
++	CPU_INFO_ITERATOR cii;
++	struct cpu_info *ci;
++
++	/*
++	 * All CPUs see time stand still at once.  One account is
++	 * enough: the others wait here for the panic to reboot.
++	 */
++	if (atomic_swap_uint(&dumping, 1) != 0) {
++		for (;;)
++			continue;
++	}
++
++	for (CPU_INFO_FOREACH(cii, ci)) {
++		struct lwp *l = atomic_load_relaxed(&ci->ci_curlwp);
++
++		printf("%s: beats %u uptime %u stamp %u lwp %d.%d %s",
++		    cpu_name(ci), ci->ci_heartbeat_count,
++		    ci->ci_heartbeat_uptime_cache,
++		    ci->ci_heartbeat_uptime_stamp,
++		    l->l_proc->p_pid, l->l_lid,
++		    l->l_name != NULL ? l->l_name : l->l_proc->p_comm);
++#ifdef __aarch64__
++		printf(" cpl %d idepth %u mtx %d softints %#x",
++		    ci->ci_cpl, ci->ci_intr_depth, ci->ci_mtx_count,
++		    ci->ci_softints);
++#endif
++		printf("\n");
++	}
++#ifdef __aarch64__
++	armgic_dump_spis();
++#endif
++}
++
+ /*
+  * defibrillate(ci, unsigned d)
+  *
+@@ -536,6 +585,7 @@ defibrillate(struct cpu_info *ci, unsigned d)
+ 	 * The patient CPU failed to acknowledge the panic request.
+ 	 * Panic now; with any luck, we'll get a crash dump.
+ 	 */
++	heartbeat_stuck_dump();
+ 	panic("%s: found %s heart stopped beating and unresponsive",
+ 	    cpu_name(curcpu()), cpu_name(ci));
+ }
+@@ -678,6 +728,7 @@ heartbeat(void)
+ 		d = count - stamp;
+ 		if (__predict_false(d > period_ticks) &&
+ 		    !heartbeat_timecounter_suspended()) {
++			heartbeat_stuck_dump();
+ 			panic("%s: time has not advanced in %u heartbeats",
+ 			    cpu_name(curcpu()), d);
+ 		}

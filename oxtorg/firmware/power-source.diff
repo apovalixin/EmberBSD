@@ -1,0 +1,138 @@
+Origin: eotics-com/edk2-platforms 25045edaee "Expose hardware telemetry
+through ACPI", branch rpi5, after the rpi5-20260730.1 release: only its
+power-source part, rewritten smaller. Their names (\_SB.PSMC, PSRR, PSUH,
+PSOC), our code. The bootloader reports the supply and the PMIC's last
+reset reason under /chosen/power of its device tree, which the OS never
+sees under ACPI; the platform driver copies the four cells into the DSDT.
+Ours on top: \_SB.BLRS carries /chosen/bootloader/rsts, the SoC's reset
+status register (PM_RSTS) as the bootloader found it; the register itself
+reads 0 by the time the OS runs. Drop the eotics part of this diff once
+an eotics release has the telemetry.
+
+diff --git a/Platform/RaspberryPi/RPi5/AcpiTables/Dsdt.asl b/Platform/RaspberryPi/RPi5/AcpiTables/Dsdt.asl
+index 0d28e71..aecfedc 100644
+--- a/Platform/RaspberryPi/RPi5/AcpiTables/Dsdt.asl
++++ b/Platform/RaspberryPi/RPi5/AcpiTables/Dsdt.asl
+@@ -17,6 +17,18 @@ DefinitionBlock ("Dsdt.aml", "DSDT", 2, "RPIFDN", "RPI5    ", 2)
+ {
+   Scope (\_SB_)
+   {
++    //
++    // Power source and reset status as the bootloader reports them in
++    // its device tree; patched by the platform driver, 0xFFFFFFFF when
++    // not reported. The PS* names are as in eotics-com/edk2-platforms
++    // 25045edaee.
++    //
++    Name (PSMC, ACPI_PATCH_DWORD_VALUE) // Advertised source current, mA
++    Name (PSRR, ACPI_PATCH_DWORD_VALUE) // PMIC reset reason
++    Name (PSUH, ACPI_PATCH_DWORD_VALUE) // USB high-current mode
++    Name (PSOC, ACPI_PATCH_DWORD_VALUE) // USB over-current detected
++    Name (BLRS, ACPI_PATCH_DWORD_VALUE) // PM_RSTS at boot, /chosen/bootloader
++
+     Device (CPU0) {
+       Name (_HID, "ACPI0007")
+       Name (_UID, 0x0)
+diff --git a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
+index c1b4e03..5178db6 100644
+--- a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
++++ b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
+@@ -504,6 +504,91 @@ AcpiFixupDebugUartInterrupt (
+   AcpiUpdateChecksum ((UINT8 *)Spcr, Spcr->Header.Length);
+ }
+ 
++//
++// One cell of the bootloader's device tree, or MAX_UINT32 when the
++// bootloader did not report it.
++//
++STATIC
++UINT32
++GetFdtCell (
++  IN CONST CHAR8  *NodePath,
++  IN CONST CHAR8  *PropertyName
++  )
++{
++  CONST UINT32  *Property;
++  VOID          *Fdt;
++  INT32         Length;
++  INT32         Node;
++
++  Fdt = FdtPlatformGetBase ();
++  if (Fdt == NULL) {
++    return MAX_UINT32;
++  }
++
++  Node = FdtPathOffset (Fdt, NodePath);
++  if (Node < 0) {
++    return MAX_UINT32;
++  }
++
++  Property = FdtGetProp (Fdt, Node, PropertyName, &Length);
++  if ((Property == NULL) || (Length < (INT32)sizeof (*Property))) {
++    return MAX_UINT32;
++  }
++
++  return Fdt32ToCpu (*Property);
++}
++
++//
++// The power source for the OS: what the supply advertised and why the
++// PMIC last reset the board (watchdog, under- or over-voltage,
++// over-temperature). Adapted from eotics-com/edk2-platforms 25045edaee.
++// Also the SoC's reset status register (PM_RSTS) as the bootloader
++// found it: by the time the OS runs the register reads 0.
++//
++STATIC
++VOID
++EFIAPI
++DsdtFixupPowerSource (
++  IN EFI_ACPI_SDT_PROTOCOL    *AcpiSdtProtocol,
++  IN EFI_ACPI_HANDLE          TableHandle
++  )
++{
++  EFI_STATUS  Status;
++  UINTN       Index;
++  UINT32      Value;
++
++  //
++  // The boot loader names the reset reason power_reset; the
++  // documentation calls it reset_event.
++  //
++  struct {
++    CHAR8          *ObjectPath;
++    CONST CHAR8    *Node;
++    CONST CHAR8    *Property;
++    CONST CHAR8    *OtherName;
++  } PowerSource[] = {
++    { "\\_SB.PSMC", "/chosen/power",      "max_current",               NULL          },
++    { "\\_SB.PSRR", "/chosen/power",      "power_reset",               "reset_event" },
++    { "\\_SB.PSUH", "/chosen/power",      "usb_max_current_enable",    NULL          },
++    { "\\_SB.PSOC", "/chosen/power",      "usb_over_current_detected", NULL          },
++    { "\\_SB.BLRS", "/chosen/bootloader", "rsts",                      NULL          },
++  };
++
++  for (Index = 0; Index < ARRAY_SIZE (PowerSource); Index++) {
++    Value = GetFdtCell (PowerSource[Index].Node, PowerSource[Index].Property);
++    if ((Value == MAX_UINT32) && (PowerSource[Index].OtherName != NULL)) {
++      Value = GetFdtCell (PowerSource[Index].Node,
++                PowerSource[Index].OtherName);
++    }
++    Status = AcpiAmlObjectUpdateInteger (AcpiSdtProtocol, TableHandle,
++                PowerSource[Index].ObjectPath, Value);
++    if (EFI_ERROR (Status)) {
++      DEBUG ((DEBUG_ERROR, "%a: Failed to patch %a. Status=%r\n",
++              __func__, PowerSource[Index].ObjectPath, Status));
++    }
++  }
++}
++
+ STATIC
+ EFI_STATUS
+ EFIAPI
+@@ -1024,6 +1109,7 @@ InstallAcpiTables (
+   DsdtFixupRp1 (mAcpiSdtProtocol, TableHandle);
+   DsdtFixupPcie (mAcpiSdtProtocol, TableHandle);
+   AcpiFixupDebugUartInterrupt (mAcpiSdtProtocol, TableHandle);
++  DsdtFixupPowerSource (mAcpiSdtProtocol, TableHandle);
+ 
+   mAcpiSdtProtocol->Close (TableHandle);
+ 

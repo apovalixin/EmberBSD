@@ -332,6 +332,7 @@ bwfm_attach(struct bwfm_softc *sc)
 	uint32_t bandlist[3];
 	int nmode, vhtmode;
 	uint32_t tmp;
+	prop_data_t eaprop;
 	int i, j, error;
 
 	error = workqueue_create(&sc->sc_taskq, DEVNAME(sc),
@@ -357,6 +358,21 @@ bwfm_attach(struct bwfm_softc *sc)
 	    sizeof(ic->ic_myaddr))) {
 		printf("%s: could not read mac address\n", DEVNAME(sc));
 		return;
+	}
+
+	/*
+	 * An address of this very board from the platform, the way other
+	 * network drivers take it: the chip's NVRAM file may carry one
+	 * address for every board of a kind.  Linux sets cur_etheraddr
+	 * the same way right after loading the firmware.
+	 */
+	eaprop = prop_dictionary_get(device_properties(sc->sc_dev),
+	    "mac-address");
+	if (eaprop != NULL && prop_data_size(eaprop) == ETHER_ADDR_LEN) {
+		memcpy(ic->ic_myaddr, prop_data_value(eaprop), ETHER_ADDR_LEN);
+		if (bwfm_fwvar_var_set_data(sc, "cur_etheraddr", ic->ic_myaddr,
+		    sizeof(ic->ic_myaddr)))
+			printf("%s: could not set mac address\n", DEVNAME(sc));
 	}
 
 	printf("%s: address %s\n", DEVNAME(sc), ether_sprintf(ic->ic_myaddr));
@@ -2241,8 +2257,17 @@ bwfm_rx_event_cb(struct bwfm_softc *sc, struct mbuf *m)
 		}
 
 	case BWFM_E_SET_SSID:
+		/*
+		 * Only a join net80211 asked for may complete.  A late event
+		 * after a reset (wpa_supplicant switching networks) would
+		 * take a BSS node without rates into RUN, and net80211
+		 * asserts a valid transmit rate there.  OpenBSD checks the
+		 * state the same way.
+		 */
 		if (ntohl(e->msg.status) == BWFM_E_STATUS_SUCCESS) {
-			ieee80211_new_state(ic, IEEE80211_S_RUN, -1);
+			if (ic->ic_state == IEEE80211_S_AUTH ||
+			    ic->ic_state == IEEE80211_S_ASSOC)
+				ieee80211_new_state(ic, IEEE80211_S_RUN, -1);
 		} else {
 			ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
 		}
@@ -2250,8 +2275,9 @@ bwfm_rx_event_cb(struct bwfm_softc *sc, struct mbuf *m)
 
 	case BWFM_E_ASSOC:
 		if (ntohl(e->msg.status) == BWFM_E_STATUS_SUCCESS) {
-			ieee80211_new_state(ic, IEEE80211_S_ASSOC, -1);
-		} else {
+			if (ic->ic_state == IEEE80211_S_AUTH)
+				ieee80211_new_state(ic, IEEE80211_S_ASSOC, -1);
+		} else if (ntohl(e->msg.status) != BWFM_E_STATUS_UNSOLICITED) {
 			ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
 		}
 		break;
@@ -2259,6 +2285,11 @@ bwfm_rx_event_cb(struct bwfm_softc *sc, struct mbuf *m)
 	case BWFM_E_LINK:
 		if (ntohl(e->msg.status) == BWFM_E_STATUS_SUCCESS &&
 		    ntohl(e->msg.reason) == 0)
+			break;
+		/* A previous BSSID may report link-down after a new join starts. */
+		if ((ic->ic_state == IEEE80211_S_AUTH ||
+		    ic->ic_state == IEEE80211_S_ASSOC) &&
+		    !IEEE80211_ADDR_EQ(&e->msg.addr, ic->ic_bss->ni_bssid))
 			break;
 
 		/* Link status has changed */
@@ -2315,7 +2346,11 @@ bwfm_scan_node(struct bwfm_softc *sc, struct bwfm_bss_info *bss, size_t len)
 	scan.sp_rates   = rates;
 	scan.sp_ssid    = ssid;
 
-	for (frm = sfrm; frm < efrm; frm += frm[1] + 2) {
+	for (frm = sfrm; frm + 1 < efrm; frm += frm[1] + 2) {
+		if (frm[1] + 2 > efrm - frm) {
+			ic->ic_stats.is_rx_elem_toosmall++;
+			return;
+		}
 		switch (frm[0]) {
 		case IEEE80211_ELEMID_COUNTRY:
 			scan.sp_country = frm;
@@ -2354,6 +2389,11 @@ bwfm_scan_node(struct bwfm_softc *sc, struct bwfm_bss_info *bss, size_t len)
 			break;
 		case IEEE80211_ELEMID_RSN:
 			scan.sp_wpa = frm;
+			break;
+		case IEEE80211_ELEMID_RSNX:
+			if (frm[1] >= 1 && frm[1] <= 16 &&
+			    (frm[2] & 0x0f) + 1 == frm[1])
+				scan.sp_rsnx = frm;
 			break;
 		case IEEE80211_ELEMID_VENDOR:
 			if (frm + 1 >= efrm)

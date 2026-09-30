@@ -1,0 +1,17 @@
+Origin:
+
+BCM43430 revision 2 uses the CYW43436 firmware, as on Zero 2 W.
+Other revisions keep their existing firmware selector.
+
+--- sys/dev/sdmmc/if_bwfm_sdio.c
++++ sys/dev/sdmmc/if_bwfm_sdio.c
+@@ -230,6 +230,9 @@
+ 
+ 	BWFM_FW_ENTRY(BRCM_CC_43430_CHIP_ID,
+ 		      BWFM_FWSEL_REV_EQ(0), "brcmfmac43430a0-sdio"),
++	BWFM_FW_ENTRY(BRCM_CC_43430_CHIP_ID,
++		      BWFM_FWSEL_REV_EQ(2), "brcmfmac43436-sdio"),
++
+ 	BWFM_FW_ENTRY(BRCM_CC_43430_CHIP_ID,
+ 		      BWFM_FWSEL_REV_GE(1), "brcmfmac43430-sdio"),
+ 

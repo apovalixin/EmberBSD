@@ -1,0 +1,901 @@
+Origin:
+
+Optional GPIO14/15 console after recursive RP1 PCI enumeration. Build
+with -D RP1_UART_CONSOLE=TRUE. Use a 50 MHz UART clock at 115200 8N1.
+The diagnostic console uses GPIO only. SPCR uses the dynamically assigned
+RP1 UART0 address, without an interrupt; the native DSDT UART is unchanged.
+Cm5PlatformStage records platform init (1), ReadyToBoot start (3) and
+completion (4) in the existing firmware variable store for USB inspection.
+
+--- a/Platform/RaspberryPi/RPi5/RPi5.dsc
++++ b/Platform/RaspberryPi/RPi5/RPi5.dsc
+@@ -32,6 +32,7 @@
+   #
+   DEFINE SECURE_BOOT_ENABLE      = FALSE
+   DEFINE INCLUDE_TFTP_COMMAND    = FALSE
++  DEFINE RP1_UART_CONSOLE        = FALSE
+   DEFINE DEBUG_PRINT_ERROR_LEVEL = 0x8000004F
+ 
+ !ifndef TFA_BUILD_ARTIFACTS
+@@ -252,7 +253,11 @@
+ ###################################################################################################
+ 
+ [BuildOptions]
++!if $(RP1_UART_CONSOLE) == TRUE
++  GCC:*_*_*_CC_FLAGS          = -DRPI_MODEL=5 -DRP1_UART_CONSOLE
++!else
+   GCC:*_*_*_CC_FLAGS          = -DRPI_MODEL=5
++!endif
+   GCC:*_*_*_PP_FLAGS          = -DRPI_MODEL=5
+   GCC:*_*_*_ASLPP_FLAGS       = -DRPI_MODEL=5
+   GCC:*_*_*_ASLCC_FLAGS       = -DRPI_MODEL=5
+@@ -564,7 +569,14 @@
+   MdeModulePkg/Universal/Console/ConSplitterDxe/ConSplitterDxe.inf
+   MdeModulePkg/Universal/Console/GraphicsConsoleDxe/GraphicsConsoleDxe.inf
+   MdeModulePkg/Universal/Console/TerminalDxe/TerminalDxe.inf
++!if $(RP1_UART_CONSOLE) == TRUE
++  MdeModulePkg/Universal/SerialDxe/SerialDxe.inf {
++    <LibraryClasses>
++      SerialPortLib|Platform/RaspberryPi/Library/Rp1SerialPortLib/Rp1SerialPortLib.inf
++  }
++!else
+   MdeModulePkg/Universal/SerialDxe/SerialDxe.inf
++!endif
+   Platform/RaspberryPi/Drivers/DisplayDxe/DisplayDxe.inf
+   EmbeddedPkg/Drivers/ConsolePrefDxe/ConsolePrefDxe.inf
+ 
+@@ -679,7 +691,16 @@
+   #
+   # RP1 I/O bridge
+   #
++!if $(RP1_UART_CONSOLE) == TRUE
++  Silicon/RaspberryPi/RpiSiliconPkg/Drivers/Rp1BusDxe/Rp1BusDxe.inf {
++    <LibraryClasses>
++      SerialPortLib|Platform/RaspberryPi/Library/Rp1SerialPortLib/Rp1SerialPortLib.inf
++    <BuildOptions>
++      GCC:*_*_*_CC_FLAGS = -D RP1_UART_CONSOLE
++  }
++!else
+   Silicon/RaspberryPi/RpiSiliconPkg/Drivers/Rp1BusDxe/Rp1BusDxe.inf
++!endif
+ 
+   #
+   # NVMe boot devices
+--- a/Platform/RaspberryPi/Library/Rp1SerialPortLib/Rp1SerialPortLib.c
++++ b/Platform/RaspberryPi/Library/Rp1SerialPortLib/Rp1SerialPortLib.c
+@@ -0,0 +1,372 @@
++/** @file
++  RP1 GPIO console initialized after the PCI bus driver is ready.
++
++  Copyright (c) 2008 - 2010, Apple Inc. All rights reserved.<BR>
++  Copyright (c) 2012 - 2016, ARM Ltd. All rights reserved.<BR>
++  Copyright (c) 2015, Intel Corporation. All rights reserved.<BR>
++
++  SPDX-License-Identifier: BSD-2-Clause-Patent
++
++**/
++
++#include <Base.h>
++#include <Uefi.h>
++#include <Protocol/Rp1Bus.h>
++#include <Library/BaseLib.h>
++#include <Library/UefiBootServicesTableLib.h>
++
++#include <Library/IoLib.h>
++#include <Library/PcdLib.h>
++#include <Library/PL011UartClockLib.h>
++#include <Library/PL011UartLib.h>
++#include <Library/SerialPortLib.h>
++
++// Diagnostic RP1 UART0 on GPIO14/15. UART10 and ACPI remain unchanged.
++#define RP1_UART0_OFFSET  0x30000
++#define RP1_UART_DR       0x00
++#define RP1_UART_FR       0x18
++#define RP1_UART_CR       0x30
++#define RP1_UART_RXFE     BIT4
++#define RP1_UART_TXFF     BIT5
++#define RP1_UART_ENABLE   BIT0
++#define RP1_UART_TXE      BIT8
++#define RP1_UART_RXE      BIT9
++#define RP1_TX_POLL_LIMIT  10000
++
++// Only SerialDxe links this library. Wait until the RP1 PCI driver has
++// enabled the device and published its CPU-visible BAR address.
++STATIC UINTN  mRp1Uart;
++
++STATIC
++UINTN
++Rp1UartBase (
++  VOID
++  )
++{
++  RP1_BUS_PROTOCOL  *Bus;
++  EFI_STATUS        Status;
++  UINTN             Base;
++  UINT32            Control;
++  UINTN             Peripheral;
++  UINTN             Pin;
++  UINTN             Register;
++
++  if (mRp1Uart != 0) {
++    return mRp1Uart;
++  }
++  Status = gBS->LocateProtocol (&gRp1BusProtocolGuid, NULL, (VOID **)&Bus);
++  if (EFI_ERROR (Status)) {
++    return 0;
++  }
++  Base = (UINTN)Bus->GetPeripheralBase (Bus);
++  if ((Base == 0) || (Base > MAX_UINTN - 0xf0040)) {
++    return 0;
++  }
++  Peripheral = Base;
++  Base += RP1_UART0_OFFSET;
++  // Use RP1's 50 MHz reference clock for a known diagnostic baud rate.
++  // The flag is opt-in; no other RP1 UART is used by this firmware.
++  MmioWrite32 (Base + RP1_UART_CR, 0);
++  Control = MmioRead32 (Peripheral + 0x18054);
++  Control &= ~(BIT11 | (0x1fU << 5));
++  Control |= (2U << 5);
++  MmioWrite32 (Peripheral + 0x18054, Control);
++  MmioWrite32 (Peripheral + 0x18058, 1);
++  MmioWrite32 (Peripheral + 0x18054, Control | BIT11);
++  for (Pin = 14; Pin <= 15; Pin++) {
++    Register = Peripheral + 0xd0000 + 4 + Pin * 8;
++    Control = MmioRead32 (Register);
++    Control &= ~(0x1fU | (0x3fU << 12));
++    Control |= 4;
++    MmioWrite32 (Register, Control);
++    Register = Peripheral + 0xf0000 + 4 + Pin * 4;
++    Control = MmioRead32 (Register);
++    Control &= ~(BIT7 | BIT2 | BIT3);
++    Control |= BIT6;
++    if (Pin == 15) {
++      Control |= BIT3;
++    }
++    MmioWrite32 (Register, Control);
++  }
++  // 50 MHz / (16 * (27 + 8/64)) = 115207 baud.
++  MmioWrite32 (Base + 0x24, 27);
++  MmioWrite32 (Base + 0x28, 8);
++  MmioWrite32 (Base + 0x2c, 0x70);
++  MmioWrite32 (Base + 0x38, 0);
++  MmioWrite32 (Base + 0x44, 0x7ff);
++  MmioWrite32 (Base + 0x48, 0);
++  MmioWrite32 (Base + RP1_UART_CR, RP1_UART_ENABLE | RP1_UART_TXE | RP1_UART_RXE);
++  mRp1Uart = Base;
++  return Base;
++}
++
++STATIC
++UINTN
++Rp1UartWrite (
++  IN UINT8  *Buffer,
++  IN UINTN  NumberOfBytes
++  )
++{
++  UINTN  Uart;
++  UINTN  Index;
++  UINTN  Retries;
++
++  Uart = Rp1UartBase ();
++  if (Uart == 0) {
++    return 0;
++  }
++
++  for (Index = 0; Index < NumberOfBytes; Index++) {
++    for (Retries = 0; Retries < RP1_TX_POLL_LIMIT; Retries++) {
++      if ((MmioRead32 (Uart + RP1_UART_FR) & RP1_UART_TXFF) == 0) {
++        break;
++      }
++      CpuPause ();
++    }
++    if (Retries == RP1_TX_POLL_LIMIT) {
++      return Index;
++    }
++    MmioWrite32 (Uart + RP1_UART_DR, Buffer[Index]);
++  }
++  return NumberOfBytes;
++}
++
++/** Initialise the serial device hardware with default settings.
++
++  @retval RETURN_SUCCESS            The serial device was initialised.
++  @retval RETURN_INVALID_PARAMETER  One or more of the default settings
++                                    has an unsupported value.
++ **/
++RETURN_STATUS
++EFIAPI
++SerialPortInitialize (
++  VOID
++  )
++{
++  // SerialDxe may load before the RP1 PCI driver. The first I/O operation
++  // after RP1 publication initializes its GPIO UART.
++  Rp1UartBase ();
++  return EFI_SUCCESS;
++}
++
++/**
++  Write data to serial device.
++
++  @param  Buffer           Point of data buffer which need to be written.
++  @param  NumberOfBytes    Number of output bytes which are cached in Buffer.
++
++  @retval 0                Write data failed.
++  @retval !0               Actual number of bytes written to serial device.
++
++**/
++UINTN
++EFIAPI
++SerialPortWrite (
++  IN UINT8  *Buffer,
++  IN UINTN  NumberOfBytes
++  )
++{
++  return Rp1UartWrite (Buffer, NumberOfBytes);
++}
++
++/**
++  Read data from serial device and save the data in buffer.
++
++  @param  Buffer           Point of data buffer which need to be written.
++  @param  NumberOfBytes    Number of output bytes which are cached in Buffer.
++
++  @retval 0                Read data failed.
++  @retval !0               Actual number of bytes read from serial device.
++
++**/
++UINTN
++EFIAPI
++SerialPortRead (
++  OUT UINT8  *Buffer,
++  IN  UINTN  NumberOfBytes
++  )
++{
++  UINTN  Uart;
++  UINTN  Count;
++
++  Uart = Rp1UartBase ();
++  Count = 0;
++  if (Uart != 0) {
++    while ((Count < NumberOfBytes) &&
++           ((MmioRead32 (Uart + RP1_UART_FR) & RP1_UART_RXFE) == 0)) {
++      Buffer[Count++] = (UINT8)MmioRead32 (Uart + RP1_UART_DR);
++    }
++  }
++  if (Count != 0) {
++    return Count;
++  }
++  return 0;
++}
++
++/**
++  Check to see if any data is available to be read from the debug device.
++
++  @retval TRUE       At least one byte of data is available to be read
++  @retval FALSE      No data is available to be read
++
++**/
++BOOLEAN
++EFIAPI
++SerialPortPoll (
++  VOID
++  )
++{
++  UINTN  Uart;
++
++  Uart = Rp1UartBase ();
++  return (Uart != 0) && ((MmioRead32 (Uart + RP1_UART_FR) & RP1_UART_RXFE) == 0);
++}
++
++/**
++  Set new attributes to PL011.
++
++  @param  BaudRate                The baud rate of the serial device. If the
++                                  baud rate is not supported, the speed will
++                                  be reduced down to the nearest supported one
++                                  and the variable's value will be updated
++                                  accordingly.
++  @param  ReceiveFifoDepth        The number of characters the device will
++                                  buffer on input. If the specified value is
++                                  not supported, the variable's value will
++                                  be reduced down to the nearest supported one.
++  @param  Timeout                 If applicable, the number of microseconds the
++                                  device will wait before timing out a Read or
++                                  a Write operation.
++  @param  Parity                  If applicable, this is the EFI_PARITY_TYPE
++                                  that is computed or checked as each character
++                                  is transmitted or received. If the device
++                                  does not support parity, the value is the
++                                  default parity value.
++  @param  DataBits                The number of data bits in each character
++  @param  StopBits                If applicable, the EFI_STOP_BITS_TYPE number
++                                  of stop bits per character. If the device
++                                  does not support stop bits, the value is the
++                                  default stop bit value.
++
++  @retval EFI_SUCCESS             All attributes were set correctly.
++  @retval EFI_INVALID_PARAMETERS  One or more attributes has an unsupported
++                                  value.
++
++**/
++RETURN_STATUS
++EFIAPI
++SerialPortSetAttributes (
++  IN OUT UINT64              *BaudRate,
++  IN OUT UINT32              *ReceiveFifoDepth,
++  IN OUT UINT32              *Timeout,
++  IN OUT EFI_PARITY_TYPE     *Parity,
++  IN OUT UINT8               *DataBits,
++  IN OUT EFI_STOP_BITS_TYPE  *StopBits
++  )
++{
++  if ((*BaudRate != 0 && *BaudRate != 115200) ||
++      (*DataBits != 0 && *DataBits != 8) ||
++      (*Parity != DefaultParity && *Parity != NoParity) ||
++      (*StopBits != DefaultStopBits && *StopBits != OneStopBit)) {
++    return EFI_UNSUPPORTED;
++  }
++  *BaudRate = 115200;
++  *ReceiveFifoDepth = 16;
++  *DataBits = 8;
++  *Parity = NoParity;
++  *StopBits = OneStopBit;
++  return EFI_SUCCESS;
++}
++
++/**
++
++  Assert or deassert the control signals on a serial port.
++  The following control signals are set according their bit settings :
++  . Request to Send
++  . Data Terminal Ready
++
++  @param[in]  Control  The following bits are taken into account :
++                       . EFI_SERIAL_REQUEST_TO_SEND : assert/deassert the
++                         "Request To Send" control signal if this bit is
++                         equal to one/zero.
++                       . EFI_SERIAL_DATA_TERMINAL_READY : assert/deassert
++                         the "Data Terminal Ready" control signal if this
++                         bit is equal to one/zero.
++                       . EFI_SERIAL_HARDWARE_LOOPBACK_ENABLE : enable/disable
++                         the hardware loopback if this bit is equal to
++                         one/zero.
++                       . EFI_SERIAL_SOFTWARE_LOOPBACK_ENABLE : not supported.
++                       . EFI_SERIAL_HARDWARE_FLOW_CONTROL_ENABLE : enable/
++                         disable the hardware flow control based on CTS (Clear
++                         To Send) and RTS (Ready To Send) control signals.
++
++  @retval  RETURN_SUCCESS      The new control bits were set on the device.
++  @retval  RETURN_UNSUPPORTED  The device does not support this operation.
++
++**/
++RETURN_STATUS
++EFIAPI
++SerialPortSetControl (
++  IN UINT32  Control
++  )
++{
++  if ((Control & (EFI_SERIAL_HARDWARE_FLOW_CONTROL_ENABLE |
++                  EFI_SERIAL_HARDWARE_LOOPBACK_ENABLE |
++                  EFI_SERIAL_SOFTWARE_LOOPBACK_ENABLE)) != 0) {
++    return EFI_UNSUPPORTED;
++  }
++  return EFI_SUCCESS;
++}
++
++/**
++
++  Retrieve the status of the control bits on a serial device.
++
++  @param[out]  Control  Status of the control bits on a serial device :
++
++                        . EFI_SERIAL_DATA_CLEAR_TO_SEND,
++                          EFI_SERIAL_DATA_SET_READY,
++                          EFI_SERIAL_RING_INDICATE,
++                          EFI_SERIAL_CARRIER_DETECT,
++                          EFI_SERIAL_REQUEST_TO_SEND,
++                          EFI_SERIAL_DATA_TERMINAL_READY
++                          are all related to the DTE (Data Terminal Equipment)
++                          and DCE (Data Communication Equipment) modes of
++                          operation of the serial device.
++                        . EFI_SERIAL_INPUT_BUFFER_EMPTY : equal to one if the
++                          receive buffer is empty, 0 otherwise.
++                        . EFI_SERIAL_OUTPUT_BUFFER_EMPTY : equal to one if the
++                          transmit buffer is empty, 0 otherwise.
++                        . EFI_SERIAL_HARDWARE_LOOPBACK_ENABLE : equal to one if
++                          the hardware loopback is enabled (the output feeds
++                          the receive buffer), 0 otherwise.
++                        . EFI_SERIAL_SOFTWARE_LOOPBACK_ENABLE : equal to one
++                          if a loopback is accomplished by software, else 0.
++                        . EFI_SERIAL_HARDWARE_FLOW_CONTROL_ENABLE : equal to
++                          one if the hardware flow control based on CTS (Clear
++                          To Send) and RTS (Ready To Send) control signals is
++                          enabled, 0 otherwise.
++
++  @retval RETURN_SUCCESS  The control bits were read from the device.
++
++**/
++RETURN_STATUS
++EFIAPI
++SerialPortGetControl (
++  OUT UINT32  *Control
++  )
++{
++  UINTN  Uart;
++
++  Uart = Rp1UartBase ();
++  *Control = EFI_SERIAL_INPUT_BUFFER_EMPTY | EFI_SERIAL_OUTPUT_BUFFER_EMPTY;
++  if (Uart != 0) {
++    if ((MmioRead32 (Uart + RP1_UART_FR) & RP1_UART_RXFE) == 0) {
++      *Control &= ~EFI_SERIAL_INPUT_BUFFER_EMPTY;
++    }
++    if ((MmioRead32 (Uart + RP1_UART_FR) & BIT3) != 0) {
++      *Control &= ~EFI_SERIAL_OUTPUT_BUFFER_EMPTY;
++    }
++  }
++  return EFI_SUCCESS;
++}
+--- a/Platform/RaspberryPi/Library/Rp1SerialPortLib/Rp1SerialPortLib.inf
++++ b/Platform/RaspberryPi/Library/Rp1SerialPortLib/Rp1SerialPortLib.inf
+@@ -0,0 +1,48 @@
++#/** @file
++#
++#  Component description file for Rp1SerialPortLib module
++#
++#  Copyright (c) 2011-2016, ARM Ltd. All rights reserved.<BR>
++#
++#  SPDX-License-Identifier: BSD-2-Clause-Patent
++#
++#**/
++
++[Defines]
++  INF_VERSION                    = 0x00010005
++  BASE_NAME                      = Rp1SerialPortLib
++  FILE_GUID                      = a2bc1b91-90b8-4a77-95c6-7ae496ccca22
++  MODULE_TYPE                    = BASE
++  VERSION_STRING                 = 1.0
++  LIBRARY_CLASS                  = SerialPortLib
++
++[Sources.common]
++  Rp1SerialPortLib.c
++
++[LibraryClasses]
++  BaseLib
++  IoLib
++  PL011UartClockLib
++  PL011UartLib
++  PcdLib
++  UefiBootServicesTableLib
++
++[Packages]
++  Silicon/Broadcom/Bcm27xx/Bcm27xx.dec
++  Silicon/RaspberryPi/RpiSiliconPkg/RpiSiliconPkg.dec
++  EmbeddedPkg/EmbeddedPkg.dec
++  MdePkg/MdePkg.dec
++  MdeModulePkg/MdeModulePkg.dec
++  ArmPlatformPkg/ArmPlatformPkg.dec
++
++[Pcd]
++  gEfiMdeModulePkgTokenSpaceGuid.PcdSerialRegisterBase
++  gEfiMdeModulePkgTokenSpaceGuid.PcdSerialUseHardwareFlowControl
++  gEfiMdePkgTokenSpaceGuid.PcdUartDefaultBaudRate
++  gEfiMdePkgTokenSpaceGuid.PcdUartDefaultDataBits
++  gEfiMdePkgTokenSpaceGuid.PcdUartDefaultParity
++  gEfiMdePkgTokenSpaceGuid.PcdUartDefaultStopBits
++  gArmPlatformTokenSpaceGuid.PL011UartClkInHz
++
++[Protocols]
++  gRp1BusProtocolGuid
+--- a/Silicon/RaspberryPi/RpiSiliconPkg/Drivers/Rp1BusDxe/Rp1BusDxe.c
++++ b/Silicon/RaspberryPi/RpiSiliconPkg/Drivers/Rp1BusDxe/Rp1BusDxe.c
+@@ -14,9 +14,55 @@
+ #include <Library/NonDiscoverableDeviceRegistrationLib.h>
+ #include <Library/UefiBootServicesTableLib.h>
+ #include <Library/UefiLib.h>
++#include <Library/SerialPortLib.h>
+ #include <Rp1.h>
+ 
+ #include "Rp1BusDxe.h"
++
++#ifdef RP1_UART_CONSOLE
++STATIC
++UINT64
++DiagnosticReadIsr (
++  VOID
++  )
++{
++  UINT64  Value;
++
++  __asm__ volatile ("dsb sy; isb; mrs %0, isr_el1" : "=r" (Value)
++                    : : "memory");
++  return Value;
++}
++
++STATIC
++VOID
++Rp1DiagnosticIsr (
++  IN CONST CHAR8  *Stage,
++  IN UINT64       Value
++  )
++{
++  STATIC CONST CHAR8  Digits[] = "0123456789abcdef";
++  STATIC UINT8        Prefix[] = "[CM5 UEFI] ISR ";
++  UINT8               Buffer[96];
++  UINTN               Index;
++  UINTN               Shift;
++
++  SerialPortWrite (Prefix, sizeof (Prefix) - 1);
++  Index = 0;
++  while ((*Stage != '\0') && (Index < sizeof (Buffer) - 20)) {
++    Buffer[Index++] = (UINT8)*Stage++;
++  }
++
++  Buffer[Index++] = '=';
++  for (Shift = 0; Shift < 16; Shift++) {
++    Buffer[Index++] = Digits[(Value >> ((15 - Shift) * 4)) & 15];
++  }
++
++  Buffer[Index++] = '\r';
++  Buffer[Index++] = '\n';
++  SerialPortWrite (Buffer, Index);
++}
++#endif
++
+ 
+ STATIC
+ VOID
+@@ -358,6 +404,12 @@
+   UINT64                             Supports;
+   RP1_BUS_DATA                       *Rp1Data;
+   EFI_ACPI_ADDRESS_SPACE_DESCRIPTOR  *PeripheralDesc;
++#ifdef RP1_UART_CONSOLE
++  UINT64                             EntryIsr;
++  UINT64                             PciIsr;
++
++  EntryIsr = DiagnosticReadIsr ();
++#endif
+ 
+   Rp1Data = NULL;
+ 
+@@ -421,6 +473,10 @@
+   Rp1Data->PeripheralBase = PeripheralDesc->AddrRangeMin;
+   FreePool (PeripheralDesc);
+ 
++#ifdef RP1_UART_CONSOLE
++  PciIsr = DiagnosticReadIsr ();
++#endif
++
+   Rp1Data->ChipId = MmioRead32 (Rp1Data->PeripheralBase + RP1_SYSINFO_BASE);
+ 
+   Status = gBS->InstallMultipleProtocolInterfaces (
+@@ -441,10 +497,36 @@
+     Rp1Data->PeripheralBase
+     ));
+ 
++#ifdef RP1_UART_CONSOLE
++  {
++    STATIC UINT8  Message[] = "\r\n[CM5] RP1 PCI driver ready; GPIO14/15 console enabled\r\n";
++    UINT64  BeforeConsole;
++
++    BeforeConsole = DiagnosticReadIsr ();
++    SerialPortWrite (Message, sizeof (Message) - 1);
++    Rp1DiagnosticIsr ("RP1 driver entry", EntryIsr);
++    Rp1DiagnosticIsr ("RP1 PCI enabled", PciIsr);
++    Rp1DiagnosticIsr ("before GPIO UART init", BeforeConsole);
++    Rp1DiagnosticIsr ("after GPIO UART init", DiagnosticReadIsr ());
++  }
++#endif
++
+   Rp1BusRegisterDevices (Rp1Data);
++#ifdef RP1_UART_CONSOLE
++  Rp1DiagnosticIsr ("RP1 child devices", DiagnosticReadIsr ());
++#endif
+   Rp1BusEthernetBringUp (Rp1Data);
++#ifdef RP1_UART_CONSOLE
++  Rp1DiagnosticIsr ("RP1 Ethernet", DiagnosticReadIsr ());
++#endif
+   Rp1BusUsbHostBringUp (Rp1Data);
++#ifdef RP1_UART_CONSOLE
++  Rp1DiagnosticIsr ("RP1 USB host", DiagnosticReadIsr ());
++#endif
+   Rp1BusEnableInterrupts (Rp1Data);
++#ifdef RP1_UART_CONSOLE
++  Rp1DiagnosticIsr ("RP1 interrupts", DiagnosticReadIsr ());
++#endif
+ 
+   return EFI_SUCCESS;
+ 
+--- a/Silicon/RaspberryPi/RpiSiliconPkg/Drivers/Rp1BusDxe/Rp1BusDxe.inf
++++ b/Silicon/RaspberryPi/RpiSiliconPkg/Drivers/Rp1BusDxe/Rp1BusDxe.inf
+@@ -26,6 +26,7 @@
+ [LibraryClasses]
+   DebugLib
+   IoLib
++  SerialPortLib
+   MemoryAllocationLib
+   NonDiscoverableDeviceRegistrationLib
+   UefiBootServicesTableLib
+--- a/Platform/RaspberryPi/Library/PlatformBootManagerLib/PlatformBm.c
++++ b/Platform/RaspberryPi/Library/PlatformBootManagerLib/PlatformBm.c
+@@ -337,7 +337,11 @@
+                   Handle, // ControllerHandle
+                   NULL,   // DriverImageHandle
+                   NULL,   // RemainingDevicePath -- produce all children
++#ifdef RP1_UART_CONSOLE
++                  TRUE    // Connect RP1 before opening the GPIO console
++#else
+                   FALSE   // Recursive
++#endif
+                   );
+   DEBUG ((EFI_ERROR (Status) ? DEBUG_ERROR : DEBUG_VERBOSE, "%a: %s: %r\n",
+     __func__, ReportText, Status));
+--- a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
++++ b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
+@@ -36,6 +36,89 @@
+ #include "RpiPlatformDxe.h"
+ #include "Peripherals.h"
+ 
++#ifdef RP1_UART_CONSOLE
++STATIC UINTN   mDiagnosticUartBase;
++STATIC UINT64  mDiagnosticInitIsr;
++STATIC UINT64  mDiagnosticInitPostIsr;
++
++STATIC
++UINT64
++DiagnosticReadIsr (
++  VOID
++  )
++{
++  UINT64  Value;
++
++  __asm__ volatile ("dsb sy; isb; mrs %0, isr_el1" : "=r" (Value)
++                    : : "memory");
++  return Value;
++}
++
++// No allocation or boot-service calls: valid while ExitBootServices runs.
++STATIC
++VOID
++ConsoleDiagnosticWrite (
++  IN CONST CHAR8  *Message
++  )
++{
++  UINTN  Timeout;
++
++  if (mDiagnosticUartBase == 0) {
++    return;
++  }
++
++  while (*Message != '\0') {
++    Timeout = 10000;
++    while ((MmioRead32 (mDiagnosticUartBase + 0x18) & BIT5) != 0) {
++      if (--Timeout == 0) {
++        return;
++      }
++    }
++
++    MmioWrite32 (mDiagnosticUartBase, (UINT8)*Message++);
++  }
++}
++
++STATIC
++VOID
++ConsoleDiagnosticIsr (
++  IN CONST CHAR8  *Stage,
++  IN UINT64       Value
++  )
++{
++  STATIC CONST CHAR8  Digits[] = "0123456789abcdef";
++  CHAR8               Buffer[19];
++  UINTN               Index;
++
++  for (Index = 0; Index < 16; Index++) {
++    Buffer[Index] = Digits[(Value >> ((15 - Index) * 4)) & 15];
++  }
++
++  Buffer[16] = '\r';
++  Buffer[17] = '\n';
++  Buffer[18] = '\0';
++  ConsoleDiagnosticWrite ("[CM5 UEFI] ISR ");
++  ConsoleDiagnosticWrite (Stage);
++  ConsoleDiagnosticWrite ("=");
++  ConsoleDiagnosticWrite (Buffer);
++}
++
++STATIC
++VOID
++RecordConsoleDiagnosticStage (
++  IN UINT32  Stage
++  )
++{
++  gRT->SetVariable (
++         L"Cm5PlatformStage",
++         &gRpiPlatformFormSetGuid,
++         EFI_VARIABLE_NON_VOLATILE | EFI_VARIABLE_BOOTSERVICE_ACCESS,
++         sizeof (Stage),
++         &Stage
++         );
++}
++#endif
++
+ //
+ // AcpiTables.inf
+ //
+@@ -607,6 +690,58 @@
+   AcpiUpdateChecksum ((UINT8 *)Spcr, Spcr->Header.Length);
+ }
+ 
++#ifdef RP1_UART_CONSOLE
++//
++// Describe the same UART that SerialDxe uses. Its CPU address is assigned
++// by PCI enumeration and differs between boards. This diagnostic SPCR is
++// polled only: RP1's MSI interrupt is not the native UART10 GIC interrupt.
++// The native UART device in the DSDT is left unchanged.
++//
++STATIC
++VOID
++AcpiFixupRp1Console (
++  IN EFI_ACPI_SDT_PROTOCOL  *AcpiSdtProtocol
++  )
++{
++  EFI_ACPI_SERIAL_PORT_CONSOLE_REDIRECTION_TABLE  *Spcr;
++  RP1_BUS_PROTOCOL                               *Rp1Bus;
++  EFI_STATUS                                     Status;
++  UINTN                                          Index;
++  UINTN                                          TableKey;
++  UINT64                                         PeripheralBase;
++
++  Status = gBS->LocateProtocol (&gRp1BusProtocolGuid, NULL, (VOID **)&Rp1Bus);
++  if (EFI_ERROR (Status)) {
++    return;
++  }
++
++  PeripheralBase = Rp1Bus->GetPeripheralBase (Rp1Bus);
++  if ((PeripheralBase == 0) || (PeripheralBase > MAX_UINTN - 0x30018)) {
++    return;
++  }
++
++  Index = 0;
++  Status = AcpiLocateTableBySignature (
++             AcpiSdtProtocol,
++             EFI_ACPI_6_3_SERIAL_PORT_CONSOLE_REDIRECTION_TABLE_SIGNATURE,
++             &Index,
++             (EFI_ACPI_DESCRIPTION_HEADER **)&Spcr,
++             &TableKey
++             );
++  if (EFI_ERROR (Status)) {
++    return;
++  }
++
++  mDiagnosticUartBase = (UINTN)PeripheralBase + 0x30000;
++  Spcr->BaseAddress.Address = mDiagnosticUartBase;
++  Spcr->InterruptType = 0;
++  Spcr->Irq = 0;
++  Spcr->GlobalSystemInterrupt = 0;
++  AcpiUpdateChecksum ((UINT8 *)Spcr, Spcr->Header.Length);
++  ConsoleDiagnosticWrite ("\r\n[CM5] SPCR uses RP1 UART0 (polled)\r\n");
++}
++#endif
++
+ //
+ // One cell of the bootloader's device tree, or MAX_UINT32 when the
+ // bootloader did not report it.
+@@ -965,6 +1100,11 @@
+   UINTN               ReturnAddress;
+   UINTN               OsLoaderAddress;
+   ACPI_OS_BOOT_TYPE   OsType;
++#ifdef RP1_UART_CONSOLE
++  EFI_STATUS          Status;
++
++  ConsoleDiagnosticWrite ("\r\n[CM5] ExitBootServices enter\r\n");
++#endif
+ 
+   ReturnAddress = (UINTN)RETURN_ADDRESS (0);
+ 
+@@ -982,7 +1122,16 @@
+ 
+   AcpiOsBootHandler (OsType);
+ 
++#ifdef RP1_UART_CONSOLE
++  ConsoleDiagnosticWrite ("[CM5] ACPI handoff prepared\r\n");
++  Status = gBS->ExitBootServices (ImageHandle, MapKey);
++  ConsoleDiagnosticWrite (EFI_ERROR (Status)
++                          ? "[CM5] ExitBootServices failed\r\n"
++                          : "[CM5] ExitBootServices returned success\r\n");
++  return Status;
++#else
+   return gBS->ExitBootServices (ImageHandle, MapKey);
++#endif
+ }
+ 
+ STATIC
+@@ -1252,12 +1401,33 @@
+   }
+ 
+   DsdtFixupStatus (mAcpiSdtProtocol, TableHandle);
++#ifdef RP1_UART_CONSOLE
++  ConsoleDiagnosticIsr ("ACPI status", DiagnosticReadIsr ());
++#endif
+   DsdtFixupSd (mAcpiSdtProtocol, TableHandle);
++#ifdef RP1_UART_CONSOLE
++  ConsoleDiagnosticIsr ("ACPI SD", DiagnosticReadIsr ());
++#endif
+   DsdtFixupRp1 (mAcpiSdtProtocol, TableHandle);
++#ifdef RP1_UART_CONSOLE
++  ConsoleDiagnosticIsr ("ACPI RP1", DiagnosticReadIsr ());
++#endif
+   DsdtFixupPcie (mAcpiSdtProtocol, TableHandle);
++#ifdef RP1_UART_CONSOLE
++  ConsoleDiagnosticIsr ("ACPI PCIe", DiagnosticReadIsr ());
++#endif
+   AcpiFixupDebugUartInterrupt (mAcpiSdtProtocol, TableHandle);
++#ifdef RP1_UART_CONSOLE
++  AcpiFixupRp1Console (mAcpiSdtProtocol);
++#endif
+   DsdtFixupPowerSource (mAcpiSdtProtocol, TableHandle);
++#ifdef RP1_UART_CONSOLE
++  ConsoleDiagnosticIsr ("ACPI power", DiagnosticReadIsr ());
++#endif
+   DsdtFixupWifiMac (mAcpiSdtProtocol, TableHandle);
++#ifdef RP1_UART_CONSOLE
++  ConsoleDiagnosticIsr ("ACPI Wi-Fi", DiagnosticReadIsr ());
++#endif
+ 
+   mAcpiSdtProtocol->Close (TableHandle);
+ 
+@@ -1273,14 +1443,42 @@
+   )
+ {
+   gBS->CloseEvent (Event);
++#ifdef RP1_UART_CONSOLE
++  {
++    RP1_BUS_PROTOCOL  *Rp1Bus;
++    UINT64            EntryIsr;
++    UINT64            PeripheralBase;
++
++    EntryIsr = DiagnosticReadIsr ();
++    if (!EFI_ERROR (gBS->LocateProtocol (&gRp1BusProtocolGuid, NULL,
++                                         (VOID **)&Rp1Bus))) {
++      PeripheralBase = Rp1Bus->GetPeripheralBase (Rp1Bus);
++      if ((PeripheralBase != 0) && (PeripheralBase <= MAX_UINTN - 0x30018)) {
++        mDiagnosticUartBase = (UINTN)PeripheralBase + 0x30000;
++      }
++    }
++
++    ConsoleDiagnosticIsr ("platform init entry", mDiagnosticInitIsr);
++    ConsoleDiagnosticIsr ("platform init variable", mDiagnosticInitPostIsr);
++    ConsoleDiagnosticIsr ("ReadyToBoot entry", EntryIsr);
++  }
++  RecordConsoleDiagnosticStage (3);
++#endif
+ 
+   AdjustPciReservedMemory ();
++#ifdef RP1_UART_CONSOLE
++  ConsoleDiagnosticIsr ("PCI reserved memory", DiagnosticReadIsr ());
++#endif
+ 
+   if (mIsAcpiEnabled) {
+     InstallAcpiTables ();
+   } else {
+     // FDT installation is done by FdtDxe.
+   }
++#ifdef RP1_UART_CONSOLE
++  RecordConsoleDiagnosticStage (4);
++  ConsoleDiagnosticIsr ("ReadyToBoot completed", DiagnosticReadIsr ());
++#endif
+ }
+ 
+ VOID
+@@ -1292,6 +1490,11 @@
+   EFI_STATUS  Status;
+   EFI_EVENT   Event;
+ 
++#ifdef RP1_UART_CONSOLE
++  mDiagnosticInitIsr = DiagnosticReadIsr ();
++  RecordConsoleDiagnosticStage (1);
++  mDiagnosticInitPostIsr = DiagnosticReadIsr ();
++#endif
+   mIsAcpiEnabled = PcdGet32 (PcdSystemTableMode) == SYSTEM_TABLE_MODE_ACPI ||
+                    PcdGet32 (PcdSystemTableMode) == SYSTEM_TABLE_MODE_BOTH;
+ 

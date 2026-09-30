@@ -26,6 +26,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include "opt_console.h"
 #include "opt_arm_debug.h"	/* VERBOSE_INIT_ARM and EARLYCONS */
 
 #include <sys/cdefs.h>
@@ -47,6 +48,13 @@ RCSID("$NetBSD: start.S,v 1.14 2024/02/07 04:20:26 msaitoh Exp $")
  */
 	.global start
 start:
+#if defined(EARLYCONS) && defined(CONSADDR) && CONSADDR == 0x1f00030000
+	/* K: reached the tested CM5 kernel before relocation and C calls. */
+	ldr	x16, =CONSADDR
+	mov	w17, #0x4b
+	str	w17, [x16]
+	dsb	sy
+#endif
 	/* DON'T CLOBBER X0-X3 REGISTERS. THEY ARE UBOOT ARGUMENTS */
 
 	/*

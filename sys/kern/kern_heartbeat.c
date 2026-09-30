@@ -488,6 +488,55 @@ defibrillator(void *cookie)
 	    curlwp->l_name ? curlwp->l_name : curproc->p_comm);
 }
 
+#ifdef __aarch64__
+void	armgic_dump_spis(void);
+#endif
+
+/*
+ * heartbeat_stuck_dump()
+ *
+ *	Before a heartbeat panic, print what every CPU was doing, so
+ *	that the console log shows where a CPU that stopped taking
+ *	interrupts stands.  Other CPUs' fields are read without locks
+ *	and may be a little stale.
+ */
+static void
+heartbeat_stuck_dump(void)
+{
+	static volatile u_int dumping;
+	CPU_INFO_ITERATOR cii;
+	struct cpu_info *ci;
+
+	/*
+	 * All CPUs see time stand still at once.  One account is
+	 * enough: the others wait here for the panic to reboot.
+	 */
+	if (atomic_swap_uint(&dumping, 1) != 0) {
+		for (;;)
+			continue;
+	}
+
+	for (CPU_INFO_FOREACH(cii, ci)) {
+		struct lwp *l = atomic_load_relaxed(&ci->ci_curlwp);
+
+		printf("%s: beats %u uptime %u stamp %u lwp %d.%d %s",
+		    cpu_name(ci), ci->ci_heartbeat_count,
+		    ci->ci_heartbeat_uptime_cache,
+		    ci->ci_heartbeat_uptime_stamp,
+		    l->l_proc->p_pid, l->l_lid,
+		    l->l_name != NULL ? l->l_name : l->l_proc->p_comm);
+#ifdef __aarch64__
+		printf(" cpl %d idepth %u mtx %d softints %#x",
+		    ci->ci_cpl, ci->ci_intr_depth, ci->ci_mtx_count,
+		    ci->ci_softints);
+#endif
+		printf("\n");
+	}
+#ifdef __aarch64__
+	armgic_dump_spis();
+#endif
+}
+
 /*
  * defibrillate(ci, unsigned d)
  *
@@ -536,6 +585,7 @@ defibrillate(struct cpu_info *ci, unsigned d)
 	 * The patient CPU failed to acknowledge the panic request.
 	 * Panic now; with any luck, we'll get a crash dump.
 	 */
+	heartbeat_stuck_dump();
 	panic("%s: found %s heart stopped beating and unresponsive",
 	    cpu_name(curcpu()), cpu_name(ci));
 }
@@ -678,6 +728,7 @@ heartbeat(void)
 		d = count - stamp;
 		if (__predict_false(d > period_ticks) &&
 		    !heartbeat_timecounter_suspended()) {
+			heartbeat_stuck_dump();
 			panic("%s: time has not advanced in %u heartbeats",
 			    cpu_name(curcpu()), d);
 		}

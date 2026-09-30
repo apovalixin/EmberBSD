@@ -151,6 +151,32 @@ gicd_write(struct armgic_softc *sc, bus_size_t o, uint32_t v)
 	bus_space_write_4(sc->sc_memt, sc->sc_gicdh, o, v);
 }
 
+void	armgic_dump_spis(void);
+
+/*
+ * For a post-mortem run on another CPU: the SPIs the distributor holds
+ * active (acknowledged and not yet ended, so some CPU is inside the
+ * handler) or pending.  SGIs and PPIs are banked per CPU and cannot be
+ * read for another CPU.
+ */
+void
+armgic_dump_spis(void)
+{
+	struct armgic_softc * const sc = &armgic_softc;
+
+	if (sc->sc_dev == NULL)
+		return;
+	for (u_int n = 1; n < (u_int)sc->sc_pic.pic_maxsources / 32; n++) {
+		const uint32_t act = gicd_read(sc, GICD_ISACTIVERn(n));
+		const uint32_t pend = gicd_read(sc, GICD_ISPENDRn(n));
+
+		if ((act | pend) == 0)
+			continue;
+		printf("armgic: irq %u-%u active %#010x pending %#010x\n",
+		    n * 32, n * 32 + 31, act, pend);
+	}
+}
+
 static uint32_t
 gicd_find_targets(struct armgic_softc *sc)
 {

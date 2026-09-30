@@ -1692,6 +1692,8 @@ out:
 		/* Turn off the LED. */
 		HCLR1(hp, SDHC_HOST_CTL, SDHC_LED_ON);
 	}
+	if (hp->sc->sc_vendor_led != NULL)
+		hp->sc->sc_vendor_led(hp->sc, 0);
 	SET(cmd->c_flags, SCF_ITSDONE);
 
 	if (ISSET(hp->sc->sc_flags, SDHC_FLAG_NO_AUTO_STOP) &&
@@ -1807,9 +1809,14 @@ sdhc_start_command(struct sdhc_host *hp, struct sdmmc_command *cmd)
 		/* Alert the user not to remove the card. */
 		HSET1(hp, SDHC_HOST_CTL, SDHC_LED_ON);
 	}
+	if (hp->sc->sc_vendor_led != NULL)
+		hp->sc->sc_vendor_led(hp->sc, 1);
 
 	/* Set DMA start address. */
-	if (ISSET(hp->flags, SHF_USE_ADMA2_MASK) && cmd->c_data != NULL) {
+	if (ISSET(mode, SDHC_DMA_ENABLE) &&
+	    ISSET(hp->flags, SHF_USE_ADMA2_MASK) &&
+	    cmd->c_data != NULL) {
+		KASSERT(cmd->c_dmamap != NULL);
 		for (int seg = 0; seg < cmd->c_dmamap->dm_nsegs; seg++) {
 			bus_addr_t paddr =
 			    cmd->c_dmamap->dm_segs[seg].ds_addr;

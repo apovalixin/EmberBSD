@@ -40,6 +40,7 @@
 #endif
 
 #include <sys/reboot.h>
+#include "cm5trace.h"
 
 EFI_HANDLE IH;
 EFI_DEVICE_PATH *efi_bootdp;
@@ -53,6 +54,52 @@ int howto = 0;
 #else
 #define PRIxEFIPTR "X"
 #define PRIxEFISIZE "X"
+#endif
+
+#ifdef EFIBOOT_DIAGNOSTIC_UART
+uintptr_t efi_cm5_uart_base;
+
+/* Packed ACPI fields are copied to avoid unaligned table accesses. */
+static void
+efi_cm5_console_probe(void)
+{
+	const uint8_t *rsdp, *xsdt, *table;
+	uint64_t address, uart;
+	uint32_t length, table_length;
+	unsigned offset;
+	volatile uint32_t *regs;
+
+	rsdp = efi_acpi_root();
+	if (rsdp == NULL || rsdp[15] < 2)
+		return;
+	memcpy(&address, rsdp + 24, sizeof(address));
+	if (address == 0)
+		return;
+	xsdt = (const uint8_t *)(uintptr_t)address;
+	memcpy(&length, xsdt + 4, sizeof(length));
+	if (memcmp(xsdt, "XSDT", 4) != 0 || length < 36 || length > 65536)
+		return;
+	for (offset = 36; offset + 8 <= length; offset += 8) {
+		memcpy(&address, xsdt + offset, sizeof(address));
+		if (address == 0)
+			continue;
+		table = (const uint8_t *)(uintptr_t)address;
+		memcpy(&table_length, table + 4, sizeof(table_length));
+		if (memcmp(table, "SPCR", 4) != 0 || table_length < 52 ||
+		    table[40] != 0)
+			continue;
+		memcpy(&uart, table + 44, sizeof(uart));
+		if (uart == 0 || uart > UINTPTR_MAX - 0x30 || (uart & 3) != 0)
+			return;
+		efi_cm5_uart_base = (uintptr_t)uart;
+		regs = (volatile uint32_t *)efi_cm5_uart_base;
+		printf("[CM5 EFI] SPCR UART=0x%lx FR=0x%x CR=0x%x\n",
+		    (unsigned long)uart, regs[0x18 / 4], regs[0x30 / 4]);
+		efi_cm5_trace("[CM5 EFI] direct UART probe\r\n");
+		return;
+	}
+	printf("[CM5 EFI] No memory-mapped SPCR UART found\n");
+}
 #endif
 
 static EFI_PHYSICAL_ADDRESS heap_start;
@@ -70,6 +117,14 @@ efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE *systemTable)
 	IH = imageHandle;
 
 	InitializeLib(imageHandle, systemTable);
+#ifdef EFIBOOT_DIAGNOSTIC_UART
+	{
+		uint64_t pending;
+		__asm volatile("dsb sy; isb; mrs %0, isr_el1" : "=r"(pending)
+		    :: "memory");
+		printf("[CM5 EFI] initial ISR=0x%lx\n", (unsigned long)pending);
+	}
+#endif
 
 	uefi_call_wrapper(ST->ConOut->Reset, 2, ST->ConOut, TRUE);
 	uefi_call_wrapper(ST->ConOut->SetMode, 2, ST->ConOut, 0);
@@ -110,6 +165,11 @@ efi_main(EFI_HANDLE imageHandle, EFI_SYSTEM_TABLE *systemTable)
 	efi_rng_probe();
 	efi_gop_probe();
 
+#ifdef EFIBOOT_DIAGNOSTIC_UART
+	efi_cm5_console_probe();
+	efi_cm5_pending("before boot");
+#endif
+
 	boot();
 
 	return EFI_SUCCESS;
@@ -123,16 +183,24 @@ efi_cleanup(void)
 	UINTN nentries, mapkey, descsize;
 	UINT32 descver;
 
+	efi_cm5_pending("before memory map");
 	memmap = LibMemoryMap(&nentries, &mapkey, &descsize, &descver);
 
+	efi_cm5_trace("[CM5 EFI] calling ExitBootServices\r\n");
+	efi_cm5_pending("before EBS");
 	status = uefi_call_wrapper(BS->ExitBootServices, 2, IH, mapkey);
+	efi_cm5_trace("[CM5 EFI] ExitBootServices call returned\r\n");
+	efi_cm5_pending("after EBS");
 	if (EFI_ERROR(status)) {
 		printf("WARNING: ExitBootServices failed\n");
 		return;
 	}
 
 #ifdef EFIBOOT_RUNTIME_ADDRESS
+	efi_cm5_trace("[CM5 EFI] SetVirtualAddressMap enter\r\n");
 	efi_fdt_set_virtual_address_map(memmap, nentries, mapkey, descsize, descver);
+	efi_cm5_trace("[CM5 EFI] SetVirtualAddressMap returned\r\n");
+	efi_cm5_pending("after VA map");
 #endif
 }
 

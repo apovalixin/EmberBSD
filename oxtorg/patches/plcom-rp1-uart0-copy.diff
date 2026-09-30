@@ -1,0 +1,83 @@
+Origin:
+On a Raspberry Pi 5 the
+console (SPCR) is UART10 on the debug connector, which needs its own
+cable. Kernel console output is also copied to RP1's UART0, pin 8 of the
+40-pin header, when the firmware set that UART up (config.txt:
+enable_rp1_uart=1). Output only; other boards are not affected.
+
+--- sys/arch/evbarm/dev/plcom.c.orig
++++ sys/arch/evbarm/dev/plcom.c
+@@ -2441,6 +2441,56 @@
+ 	return c;
+ }
+ 
++/*
++ * Raspberry Pi 5: the console is the BCM2712's UART10 on the debug
++ * connector, which needs a cable of its own. What the kernel prints on
++ * the console is also copied to RP1's UART0: GPIO14, pin 8 of the
++ * 40-pin header. Output only, and only if the firmware set that UART up
++ * (config.txt: enable_rp1_uart=1). RP1 sits in the PCIe window where
++ * the Pi 5 firmware puts it, so the copy is tried only when the console
++ * is UART10, that is, on a Pi 5.
++ */
++#define	PLCOM_BCM2712_UART10	0x107d001000ULL
++#define	PLCOM_RP1_UART0		0x1f00030000ULL
++
++static bus_space_handle_t plcom_copy_ioh;
++static bool plcom_copy_on;
++
++static void
++plcom_copy_attach(struct plcom_instance *pi)
++{
++	uint32_t cr;
++
++	if (pi->pi_iobase != PLCOM_BCM2712_UART10)
++		return;
++	if (bus_space_map(pi->pi_iot, PLCOM_RP1_UART0, PAGE_SIZE, 0,
++	    &plcom_copy_ioh) != 0)
++		return;
++	cr = bus_space_read_4(pi->pi_iot, plcom_copy_ioh, PL011COM_CR);
++	if (!ISSET(cr, PL01X_CR_UARTEN) || !ISSET(cr, PL011_CR_TXE)) {
++		bus_space_unmap(pi->pi_iot, plcom_copy_ioh, PAGE_SIZE);
++		return;
++	}
++	plcom_copy_on = true;
++	printf("plcom: console copied to RP1 UART0 (GPIO14)\n");
++}
++
++static void
++plcom_copy_putc(struct plcom_instance *pi, int c)
++{
++	int timo = 150000;
++
++	while (ISSET(bus_space_read_4(pi->pi_iot, plcom_copy_ioh,
++	    PL01XCOM_FR), PL01X_FR_TXFF) && --timo)
++		continue;
++	if (timo == 0) {
++		/* Stuck: stop copying rather than slow the console down. */
++		plcom_copy_on = false;
++		return;
++	}
++	bus_space_write_4(pi->pi_iot, plcom_copy_ioh, PL01XCOM_DR, c);
++}
++
+ void
+ plcom_common_putc(dev_t dev, struct plcom_instance *pi, int c)
+ {
+@@ -2463,6 +2513,8 @@
+ 
+ 	PWRITE1(pi, PL01XCOM_DR, c);
+ 	PLCOM_BARRIER(pi, BR | BW);
++	if (plcom_copy_on && pi == &plcomcons_info)
++		plcom_copy_putc(pi, c);
+ 
+ 	splx(s);
+ }
+@@ -2551,6 +2603,7 @@
+ 	res = plcominit(&plcomcons_info, rate, frequency, cflag);
+ 	if (res)
+ 		return res;
++	plcom_copy_attach(&plcomcons_info);
+ 
+ 	cn_tab = &plcomcons;
+ 	cn_init_magic(&plcom_cnm_state);

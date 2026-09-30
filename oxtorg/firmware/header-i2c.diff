@@ -1,0 +1,198 @@
+Origin:
+The Pi 5's header I2C for the OS: RP1 I2C1 on pins 3 and 5 (GPIO2 and
+GPIO3), i2c_arm in Raspberry Pi OS. The release describes no block of
+the header. The boot loader applies dtparam=i2c_arm=on from config.txt
+to its device tree; the platform driver reads that node's status, as it
+does for the fan (eotics dad7cc3332), and only then exposes the device
+(\_SB.RP1B.I2C1, PRP0001 "snps,designware-i2c"), muxes the pins
+(function i2c1 with pull-ups, Linux pinctrl-rp1.c and Raspberry Pi's
+rp1_i2c1_2_3) and enables its vector on the shared RP1 interrupt, as
+Rp1BusDxe does for ETH. The SCL counts for the 200 MHz system clock
+are Raspberry Pi's (rp1.dtsi, snps,ss_hcnt and the like), handed over
+as SSCN and FMCN. NetBSD attaches dwiic (netbsd/patches/dwiic-acpi-dt.diff).
+
+diff --git a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
+index aed554b..31f0655 100644
+--- a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
++++ b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c
+@@ -332,6 +332,108 @@ Rp1ProgramFan (
+   MmioWrite32 (Base + RP1_PWM_GLOBAL_CTRL, Register);
+ }
+ 
++//
++// I2C1 on header pins 3 and 5, i2c_arm in the boot loader's device tree:
++// dtparam=i2c_arm=on in config.txt turns it on, as in Raspberry Pi OS.
++// The pins get function i2c1 (a3 on GPIO2 and GPIO3, Linux pinctrl-rp1.c)
++// with pull-ups, as rp1_i2c1_2_3 in Raspberry Pi's device tree; the block
++// runs on the always-on 200 MHz system clock.
++//
++#define RP1_I2C1_FIRST_PIN      2
++#define RP1_I2C1_LAST_PIN       3
++#define RP1_GPIO_FSEL_I2C1      3
++#define RP1_BANK0_GPIO_CTRL(Pin)  (RP1_IO_BANK0_BASE + 0x04 + (Pin) * 8)
++#define RP1_BANK0_PAD_CTRL(Pin)   (RP1_PADS_BANK0_BASE + 0x04 + (Pin) * 4)
++#define RP1_PAD_PULL_UP         0x00000008
++#define RP1_PAD_IN_ENABLE       BIT6
++
++STATIC
++BOOLEAN
++Rp1HeaderI2cIsEnabled (
++  VOID
++  )
++{
++  CONST CHAR8  *NodeStatus;
++  VOID         *Fdt;
++  INT32        Length;
++  INT32        Node;
++
++  Fdt = FdtPlatformGetBase ();
++  if (Fdt == NULL) {
++    return FALSE;
++  }
++
++  // i2c_arm is a label of this node; its alias is i2c1.
++  Node = FdtPathOffset (Fdt, "i2c1");
++  if (Node < 0) {
++    return FALSE;
++  }
++
++  NodeStatus = FdtGetProp (Fdt, Node, "status", &Length);
++  if ((NodeStatus == NULL) || (Length <= 0) ||
++      (NodeStatus[Length - 1] != '\0'))
++  {
++    return FALSE;
++  }
++
++  return (AsciiStrCmp (NodeStatus, "okay") == 0) ||
++         (AsciiStrCmp (NodeStatus, "ok") == 0);
++}
++
++STATIC
++VOID
++Rp1SetupHeaderI2c (
++  IN EFI_ACPI_SDT_PROTOCOL    *AcpiSdtProtocol,
++  IN EFI_ACPI_HANDLE          TableHandle,
++  IN RP1_BUS_PROTOCOL         *Rp1Bus
++  )
++{
++  EFI_PHYSICAL_ADDRESS  Base;
++  BOOLEAN               Enabled;
++  EFI_STATUS            Status;
++  UINT32                Register;
++  UINTN                 Pin;
++
++  Enabled = Rp1HeaderI2cIsEnabled ();
++
++  Status = AcpiAmlObjectUpdateInteger (
++             AcpiSdtProtocol,
++             TableHandle,
++             "\\_SB.RP1B.I1ST",
++             Enabled ? 0xF : 0x0
++             );
++  if (EFI_ERROR (Status)) {
++    DEBUG ((DEBUG_ERROR, "%a: Failed to patch I1ST. Status=%r\n", __func__, Status));
++    return;
++  }
++
++  if (!Enabled) {
++    return;
++  }
++
++  Base = Rp1Bus->GetPeripheralBase (Rp1Bus);
++
++  for (Pin = RP1_I2C1_FIRST_PIN; Pin <= RP1_I2C1_LAST_PIN; Pin++) {
++    Register  = MmioRead32 (Base + RP1_BANK0_PAD_CTRL (Pin));
++    Register &= ~(RP1_PAD_PULL_MASK | RP1_PAD_OUT_DISABLE);
++    Register |= RP1_PAD_PULL_UP | RP1_PAD_IN_ENABLE;
++    MmioWrite32 (Base + RP1_BANK0_PAD_CTRL (Pin), Register);
++
++    Register  = MmioRead32 (Base + RP1_BANK0_GPIO_CTRL (Pin));
++    Register &= ~(RP1_GPIO_FUNCSEL_MASK | RP1_GPIO_OVERRIDE_MASK);
++    Register |= RP1_GPIO_FSEL_I2C1;
++    MmioWrite32 (Base + RP1_BANK0_GPIO_CTRL (Pin), Register);
++  }
++
++  // Its interrupt joins the shared RP1 line, as ETH does.
++  MmioWrite32 (
++    Base + RP1_PCIE_REG_SET + RP1_PCIE_MSIX_CFG (RP1_INT_I2C1),
++    RP1_PCIE_MSIX_CFG_ENABLE
++    );
++
++  DEBUG ((DEBUG_INFO, "%a: header I2C1 exposed through ACPI\n", __func__));
++}
++
+ STATIC
+ VOID
+ EFIAPI
+@@ -399,6 +501,7 @@ DsdtFixupRp1 (
+   }
+ 
+   Rp1ProgramGemMac (Rp1Bus);
++  Rp1SetupHeaderI2c (AcpiSdtProtocol, TableHandle, Rp1Bus);
+ 
+   FanPresent = Rp1FanIsPresent ();
+ 
+diff --git a/Silicon/RaspberryPi/RpiSiliconPkg/Include/Rp1.asi b/Silicon/RaspberryPi/RpiSiliconPkg/Include/Rp1.asi
+index 56692c6..34a54ff 100644
+--- a/Silicon/RaspberryPi/RpiSiliconPkg/Include/Rp1.asi
++++ b/Silicon/RaspberryPi/RpiSiliconPkg/Include/Rp1.asi
+@@ -82,6 +82,47 @@ Device (ETH0) {
+   })
+ }
+ 
++//
++// I2C1 on header pins 3 and 5 (GPIO2 and GPIO3): i2c_arm of Raspberry Pi
++// OS, enabled with dtparam=i2c_arm=on in config.txt. The platform driver
++// patches I1ST from the boot loader's device tree, muxes the pins and
++// enables the interrupt.
++//
++Name (I1ST, 0xFE) // Patched to 0x0 or 0xF.
++
++Device (I2C1) {
++  Name (_HID, "PRP0001")
++  Name (_UID, 0x1)
++
++  Method (_STA) {
++    Return (I1ST)
++  }
++
++  Method (_CRS, 0, Serialized) {
++    Name (RBUF, ResourceTemplate () {
++      RP1_QWORDMEMORY_BUF (00)
++      RP1_INTERRUPT_BUF (01)
++    })
++    RP1_QWORDMEMORY_SET (00, RP1_I2C1_BASE, RP1_I2C_SIZE)
++    RP1_INTERRUPT_SET (01)
++    Return (RBUF)
++  }
++
++  Name (_DSD, Package () {
++    ToUUID ("daffd814-6eba-4d8c-8a91-bc9bbf4aa301"),
++    Package () {
++      Package () { "compatible", "snps,designware-i2c" },
++      Package () { "clock-frequency", 100000 }
++    }
++  })
++
++  // SCL high and low counts for the 200 MHz system clock, from
++  // Raspberry Pi's rp1.dtsi (snps,ss_hcnt and the like); SDA hold as
++  // the controller left it.
++  Name (SSCN, Package () { 978, 990, 0 })
++  Name (FMCN, Package () { 200, 268, 0 })
++}
++
+ //
+ // The Pi 5 fan is one physical four-speed fan. Windows only supports the
+ // ACPI 1.0 D-state fan interface, so model each speed as a logical fan and
+diff --git a/Silicon/RaspberryPi/RpiSiliconPkg/Include/Rp1.h b/Silicon/RaspberryPi/RpiSiliconPkg/Include/Rp1.h
+index ed66d33..289e5f9 100644
+--- a/Silicon/RaspberryPi/RpiSiliconPkg/Include/Rp1.h
++++ b/Silicon/RaspberryPi/RpiSiliconPkg/Include/Rp1.h
+@@ -110,6 +110,7 @@
+ #define RP1_USBHOST_SIZE                            0x00100000
+ 
+ #define RP1_ETH_SIZE                                0x00004000
++#define RP1_I2C_SIZE                                0x00001000
+ 
+ //
+ // Local MSI-X vectors

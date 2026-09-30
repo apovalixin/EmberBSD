@@ -32,6 +32,21 @@
 #ifndef	_ARM_BROADCOM_BCM2835_PMWDOG_VAR_H_
 #define	_ARM_BROADCOM_BCM2835_PMWDOG_VAR_H_
 
+#include <sys/bus.h>
+#include <sys/device.h>
+
+#include <dev/sysmon/sysmonvar.h>
+
+struct bcm2835pmwdog_softc {
+	device_t sc_dev;
+
+	bus_space_tag_t sc_iot;
+	bus_space_handle_t sc_ioh;
+
+	struct sysmon_wdog sc_smw;
+};
+
+void bcmpmwdog_attach_common(struct bcm2835pmwdog_softc *);
 void bcm2835_system_reset(void);
 
 #endif	/* _ARM_BROADCOM_BCM2835_PMWDOG_VAR_H_ */

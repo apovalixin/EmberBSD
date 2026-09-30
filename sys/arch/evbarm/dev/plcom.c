@@ -166,6 +166,7 @@ void	plcom_modem	(struct plcom_softc *, int);
 void	tiocm_to_plcom	(struct plcom_softc *, u_long, int);
 int	plcom_to_tiocm	(struct plcom_softc *);
 void	plcom_iflush	(struct plcom_softc *);
+static void plcom_msintr_update(struct plcom_softc *);
 
 int	plcom_common_getc (dev_t, struct plcom_instance *);
 void	plcom_common_putc (dev_t, struct plcom_instance *, int);
@@ -887,8 +888,8 @@ plcomopen(dev_t dev, int flag, int mode, struct lwp *l)
 		case PLCOM_TYPE_PL011:
 		case PLCOM_TYPE_GENERIC_UART:
 			SET(sc->sc_cr, PL011_CR_RXE | PL011_CR_TXE);
-			SET(sc->sc_imsc, PL011_INT_RT | PL011_INT_RX |
-			    PL011_INT_MSMASK);
+			/* Modem status interrupts: plcomparam(). */
+			SET(sc->sc_imsc, PL011_INT_RT | PL011_INT_RX);
 			PWRITE4(pi, PL011COM_IMSC, sc->sc_imsc);
 			sc->sc_msr = PREAD4(pi, PL01XCOM_FR);
 			break;
@@ -1200,6 +1201,7 @@ plcomioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 			break;
 		}
 		mutex_spin_exit(&timecounter_lock);
+		plcom_msintr_update(sc);
 		break;
 	}
 
@@ -1236,6 +1238,7 @@ plcomioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 		    &sc->ppsinfo.clear_timestamp);
 #endif
 		mutex_spin_exit(&timecounter_lock);
+		plcom_msintr_update(sc);
 		break;
 
 	default:
@@ -1352,7 +1355,16 @@ plcom_to_tiocm(struct plcom_softc *sc)
 	if (ISSET(plcombits, PL01X_MCR_RTS))
 		SET(ttybits, TIOCM_RTS);
 
-	plcombits = sc->sc_msr;
+	/* Not every modem input interrupts: read them now. */
+	switch (sc->sc_pi.pi_type) {
+	case PLCOM_TYPE_PL011:
+	case PLCOM_TYPE_GENERIC_UART:
+		plcombits = PREAD4(&sc->sc_pi, PL01XCOM_FR);
+		break;
+	default:
+		plcombits = sc->sc_msr;
+		break;
+	}
 	if (ISSET(plcombits, PL01X_MSR_DCD))
 		SET(ttybits, TIOCM_CD);
 	if (ISSET(plcombits, PL01X_MSR_CTS))
@@ -1396,6 +1408,42 @@ cflag2lcr(tcflag_t cflag)
 		SET(lcr, PL01X_LCR_STP2);
 
 	return lcr;
+}
+
+/*
+ * Enable only the modem status interrupts the driver acts on: carrier
+ * without CLOCAL or for DTR/DCD flow control, and PPS on DCD.  With
+ * CRTSCTS the PL011 watches CTS itself.  An input nothing listens to
+ * may float: the modem inputs of the Raspberry Pi 5 debug UART change
+ * hundreds of times a second, and at times CTS re-asserts its
+ * interrupt as fast as plcomintr() clears it, holding a CPU at
+ * IPL_HIGH for good.
+ */
+static void
+plcom_msintr_update(struct plcom_softc *sc)
+{
+	struct plcom_instance *pi = &sc->sc_pi;
+	const uint32_t msr = sc->sc_msr_mask | sc->sc_ppsmask;
+	uint32_t imsc;
+
+	KASSERT(mutex_owned(&sc->sc_lock));
+
+	switch (pi->pi_type) {
+	case PLCOM_TYPE_PL011:
+	case PLCOM_TYPE_GENERIC_UART:
+		imsc = sc->sc_imsc & ~PL011_INT_MSMASK;
+		if (ISSET(msr, PL01X_MSR_DCD))
+			SET(imsc, PL011_INT_DCD);
+		if (ISSET(msr, PL01X_MSR_CTS))
+			SET(imsc, PL011_INT_CTS);
+		if (ISSET(msr, PL01X_MSR_DSR))
+			SET(imsc, PL011_INT_DSR);
+		if (imsc != sc->sc_imsc) {
+			sc->sc_imsc = imsc;
+			PWRITE4(pi, PL011COM_IMSC, sc->sc_imsc);
+		}
+		break;
+	}
 }
 
 int
@@ -1541,6 +1589,7 @@ plcomparam(struct tty *tp, struct termios *t)
 		}
 	}
 	sc->sc_msr_mask = sc->sc_msr_cts | sc->sc_msr_dcd;
+	plcom_msintr_update(sc);
 
 #if 0
 	if (ospeed == 0)
@@ -2441,6 +2490,56 @@ plcom_common_getc(dev_t dev, struct plcom_instance *pi)
 	return c;
 }
 
+/*
+ * Raspberry Pi 5: the console is the BCM2712's UART10 on the debug
+ * connector, which needs a cable of its own. What the kernel prints on
+ * the console is also copied to RP1's UART0: GPIO14, pin 8 of the
+ * 40-pin header. Output only, and only if the firmware set that UART up
+ * (config.txt: enable_rp1_uart=1). RP1 sits in the PCIe window where
+ * the Pi 5 firmware puts it, so the copy is tried only when the console
+ * is UART10, that is, on a Pi 5.
+ */
+#define	PLCOM_BCM2712_UART10	0x107d001000ULL
+#define	PLCOM_RP1_UART0		0x1f00030000ULL
+
+static bus_space_handle_t plcom_copy_ioh;
+static bool plcom_copy_on;
+
+static void
+plcom_copy_attach(struct plcom_instance *pi)
+{
+	uint32_t cr;
+
+	if (pi->pi_iobase != PLCOM_BCM2712_UART10)
+		return;
+	if (bus_space_map(pi->pi_iot, PLCOM_RP1_UART0, PAGE_SIZE, 0,
+	    &plcom_copy_ioh) != 0)
+		return;
+	cr = bus_space_read_4(pi->pi_iot, plcom_copy_ioh, PL011COM_CR);
+	if (!ISSET(cr, PL01X_CR_UARTEN) || !ISSET(cr, PL011_CR_TXE)) {
+		bus_space_unmap(pi->pi_iot, plcom_copy_ioh, PAGE_SIZE);
+		return;
+	}
+	plcom_copy_on = true;
+	printf("plcom: console copied to RP1 UART0 (GPIO14)\n");
+}
+
+static void
+plcom_copy_putc(struct plcom_instance *pi, int c)
+{
+	int timo = 150000;
+
+	while (ISSET(bus_space_read_4(pi->pi_iot, plcom_copy_ioh,
+	    PL01XCOM_FR), PL01X_FR_TXFF) && --timo)
+		continue;
+	if (timo == 0) {
+		/* Stuck: stop copying rather than slow the console down. */
+		plcom_copy_on = false;
+		return;
+	}
+	bus_space_write_4(pi->pi_iot, plcom_copy_ioh, PL01XCOM_DR, c);
+}
+
 void
 plcom_common_putc(dev_t dev, struct plcom_instance *pi, int c)
 {
@@ -2463,6 +2562,8 @@ plcom_common_putc(dev_t dev, struct plcom_instance *pi, int c)
 
 	PWRITE1(pi, PL01XCOM_DR, c);
 	PLCOM_BARRIER(pi, BR | BW);
+	if (plcom_copy_on && pi == &plcomcons_info)
+		plcom_copy_putc(pi, c);
 
 	splx(s);
 }
@@ -2551,6 +2652,7 @@ plcomcnattach(struct plcom_instance *pi, int rate, int frequency,
 	res = plcominit(&plcomcons_info, rate, frequency, cflag);
 	if (res)
 		return res;
+	plcom_copy_attach(&plcomcons_info);
 
 	cn_tab = &plcomcons;
 	cn_init_magic(&plcom_cnm_state);

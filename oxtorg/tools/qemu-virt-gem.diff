@@ -1,0 +1,158 @@
+Origin: against QEMU v11.1.1.
+A Cadence GEM in the virt machine, described in ACPI the way the
+Raspberry Pi 5's UEFI describes RP1's Ethernet, so that our driver for
+that port runs on the Mac before it meets the board. Applied by
+`nbk qemu` with `git apply`.
+
+diff --git a/hw/arm/virt-acpi-build.c b/hw/arm/virt-acpi-build.c
+index f638608..6ee40b9 100644
+--- a/hw/arm/virt-acpi-build.c
++++ b/hw/arm/virt-acpi-build.c
+@@ -105,6 +105,43 @@ static void acpi_dsdt_add_uart(Aml *scope, const MemMapEntry *uart_memmap,
+     aml_append(scope, dev);
+ }
+ 
++/*
++ * The GEM as the Raspberry Pi 5's UEFI describes RP1's Ethernet
++ * (eotics-com/rpi5-uefi, Rp1.asi): PRP0001 with compatible "cdns,macb",
++ * one QWordMemory window and a level, active-high, shared interrupt.
++ * One difference: QEMU's helper marks the window a producer where the
++ * Pi 5's table says consumer; NetBSD reads neither bit.
++ */
++static void acpi_dsdt_add_gem(Aml *scope, const MemMapEntry *gem_memmap,
++                              uint32_t gem_irq)
++{
++    Aml *dev = aml_device("ETH0");
++    aml_append(dev, aml_name_decl("_HID", aml_string("PRP0001")));
++    aml_append(dev, aml_name_decl("_UID", aml_int(0)));
++
++    Aml *crs = aml_resource_template();
++    aml_append(crs, aml_qword_memory(AML_POS_DECODE, AML_MIN_FIXED,
++                                     AML_MAX_FIXED, AML_NON_CACHEABLE,
++                                     AML_READ_WRITE, 0, gem_memmap->base,
++                                     gem_memmap->base + gem_memmap->size - 1,
++                                     0, gem_memmap->size));
++    aml_append(crs, aml_interrupt(AML_CONSUMER, AML_LEVEL, AML_ACTIVE_HIGH,
++                                  AML_SHARED, &gem_irq, 1));
++    aml_append(dev, aml_name_decl("_CRS", crs));
++
++    Aml *compatible = aml_package(2);
++    aml_append(compatible, aml_string("compatible"));
++    aml_append(compatible, aml_string("cdns,macb"));
++    Aml *properties = aml_package(1);
++    aml_append(properties, compatible);
++    Aml *dsd = aml_package(2);
++    aml_append(dsd, aml_touuid("DAFFD814-6EBA-4D8C-8A91-BC9BBF4AA301"));
++    aml_append(dsd, properties);
++    aml_append(dev, aml_name_decl("_DSD", dsd));
++
++    aml_append(scope, dev);
++}
++
+ static void acpi_dsdt_add_flash(Aml *scope, const MemMapEntry *flash_memmap)
+ {
+     Aml *dev, *crs;
+@@ -1232,6 +1269,10 @@ build_dsdt(GArray *table_data, BIOSLinker *linker, VirtMachineState *vms)
+                          (irqmap[VIRT_MMIO] + ARM_SPI_BASE),
+                          0, vms->virtio_transports);
+     acpi_dsdt_add_pci(scope, memmap, irqmap[VIRT_PCIE] + ARM_SPI_BASE, vms);
++    if (vms->gem) {
++        acpi_dsdt_add_gem(scope, &memmap[VIRT_GEM],
++                          irqmap[VIRT_GEM] + ARM_SPI_BASE);
++    }
+     if (vms->acpi_dev) {
+         build_ged_aml(scope, "\\_SB."GED_DEVICE,
+                       HOTPLUG_HANDLER(vms->acpi_dev),
+diff --git a/hw/arm/virt.c b/hw/arm/virt.c
+index 219597c..7869db3 100644
+--- a/hw/arm/virt.c
++++ b/hw/arm/virt.c
+@@ -96,6 +96,7 @@
+ #include "hw/cxl/cxl_host.h"
+ #include "qemu/guest-random.h"
+ #include "hw/watchdog/sbsa_gwdt.h"
++#include "hw/net/cadence_gem.h"
+ 
+ static GlobalProperty arm_virt_compat_defaults[] = {
+     { TYPE_VIRTIO_IOMMU_PCI, "aw-bits", "48" },
+@@ -217,6 +218,7 @@ static const MemMapEntry base_memmap[] = {
+     [VIRT_SECURE_MEM] =         { 0x0e000000, 0x01000000 },
+     [VIRT_GWDT_REFRESH] =       { 0x0f000000, 0x00001000 },
+     [VIRT_GWDT_CONTROL] =       { 0x0f001000, 0x00001000 },
++    [VIRT_GEM] =                { 0x0f100000, 0x00004000 },
+     [VIRT_PCIE_MMIO] =          { 0x10000000, 0x2eff0000 },
+     [VIRT_PCIE_PIO] =           { 0x3eff0000, 0x00010000 },
+     [VIRT_PCIE_ECAM] =          { 0x3f000000, 0x01000000 },
+@@ -268,6 +270,7 @@ static const int a15irqmap[] = {
+     [VIRT_UART1] = 8,
+     [VIRT_ACPI_GED] = 9,
+     [VIRT_GWDT_WS0] = 10,
++    [VIRT_GEM] = 11,
+     [VIRT_MMIO] = 16, /* ...to 16 + NUM_VIRTIO_TRANSPORTS - 1 */
+     [VIRT_GIC_V2M] = 48, /* ...to 48 + NUM_GICV2M_SPIS - 1 */
+     [VIRT_SMMU] = 74,    /* ...to 74 + NUM_SMMU_IRQS - 1 */
+@@ -1552,6 +1555,34 @@ static void create_uart(const VirtMachineState *vms, int uart,
+     g_free(nodename);
+ }
+ 
++/*
++ * A Cadence GEM, the controller behind the Raspberry Pi 5's Ethernet
++ * (it sits in RP1), so that a driver for that port can be run before
++ * it meets the board. Made only when a -nic names model=cadence_gem:
++ * without one the machine is exactly the stock virt. The PHY answers
++ * at MDIO address 1, where the Pi 5's BCM54213PE sits. ACPI only, as
++ * on the Pi 5: no device tree node is written.
++ */
++static void create_gem(VirtMachineState *vms)
++{
++    NICInfo *nd = qemu_find_nic_info(TYPE_CADENCE_GEM, false, NULL);
++    DeviceState *dev;
++    SysBusDevice *s;
++
++    if (!nd) {
++        return;
++    }
++    dev = qdev_new(TYPE_CADENCE_GEM);
++    qdev_set_nic_properties(dev, nd);
++    qdev_prop_set_uint8(dev, "phy-addr", 1);
++    s = SYS_BUS_DEVICE(dev);
++    sysbus_realize_and_unref(s, &error_fatal);
++    sysbus_mmio_map(s, 0, vms->memmap[VIRT_GEM].base);
++    sysbus_connect_irq(s, 0,
++                       qdev_get_gpio_in(vms->gic, vms->irqmap[VIRT_GEM]));
++    vms->gem = dev;
++}
++
+ static void create_rtc(const VirtMachineState *vms)
+ {
+     char *nodename;
+@@ -3208,6 +3239,9 @@ static void machvirt_init(MachineState *machine)
+ 
+     create_rtc(vms);
+ 
++    /* Before the PCIe NICs: they would take its -nic as theirs. */
++    create_gem(vms);
++
+     create_pcie(vms);
+     create_cxl_host_reg_region(vms);
+ 
+diff --git a/include/hw/arm/virt.h b/include/hw/arm/virt.h
+index 22e66d1..0c2638d 100644
+--- a/include/hw/arm/virt.h
++++ b/include/hw/arm/virt.h
+@@ -100,6 +100,7 @@ enum {
+     VIRT_GWDT_WS0,
+     VIRT_GWDT_REFRESH,
+     VIRT_GWDT_CONTROL,
++    VIRT_GEM,
+     VIRT_LOWMEMMAP_LAST,
+ };
+ 
+@@ -199,6 +200,7 @@ struct VirtMachineState {
+     hwaddr highest_gpa;
+     DeviceState *gic;
+     DeviceState *acpi_dev;
++    DeviceState *gem;
+     Notifier powerdown_notifier;
+     Notifier generic_error_notifier;
+     PCIBus *bus;

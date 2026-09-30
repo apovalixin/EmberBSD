@@ -48,6 +48,7 @@ __KERNEL_RCSID(1, "$NetBSD: cpu_machdep.c,v 1.16 2024/12/30 19:13:48 jmcneill Ex
 #include <aarch64/armreg.h>
 #include <aarch64/db_machdep.h>
 #include <aarch64/frame.h>
+#include <aarch64/locore.h>
 #include <aarch64/machdep.h>
 #include <aarch64/pcb.h>
 #include <aarch64/userret.h>
@@ -381,5 +382,18 @@ pic_ipi_shootdown(void *arg)
 void
 cpu_idle(void)
 {
-	arm_cpu_idle();
+	struct cpu_info * const ci = curcpu();
+	const register_t daif = daif_disable(DAIF_I | DAIF_F);
+
+	/*
+	 * idle_loop() looks for work with interrupts enabled.  An
+	 * interrupt taken after that look may have made an LWP runnable
+	 * here, and wfi would then sleep until the next interrupt, often
+	 * the next clock tick.  Look again with interrupts masked: an
+	 * interrupt arriving from now on stays pending and ends wfi at
+	 * once.  x86_cpu_idle_halt() does the same.
+	 */
+	if (__predict_true(ci->ci_want_resched == 0))
+		arm_cpu_idle();
+	reg_daif_write(daif);
 }

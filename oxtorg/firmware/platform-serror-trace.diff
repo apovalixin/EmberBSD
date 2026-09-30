@@ -1,0 +1,253 @@
+Origin:
+
+Extend optional CM5 pending-SError tracing to platform initialization,
+GPIO and Wi-Fi SDIO register accesses before PCIe initialization.
+Record only the first transition to a pending error. Do not clear it.
+
+--- a/Silicon/Broadcom/Bcm27xx/Include/Guid/Cm5PcieTrace.h
++++ b/Silicon/Broadcom/Bcm27xx/Include/Guid/Cm5PcieTrace.h
+@@ -8,6 +8,8 @@
+ 
+ #ifdef RP1_UART_CONSOLE
+ #include <Library/BaseMemoryLib.h>
++#include <Library/IoLib.h>
++#include <Library/MemoryAllocationLib.h>
+ #include <Library/UefiBootServicesTableLib.h>
+ 
+ #define CM5_PCIE_TRACE_GUID \
+@@ -81,5 +83,99 @@
+   Record->After = After;
+   Record->Data = Data;
+ }
++
++// Stages 50-56 cover platform entry through HII setup, 60-64 peripheral
++// setup. 200-204 identify the first MMIO operation that sets pending SError.
++STATIC inline VOID
++Cm5PlatformTraceInit (VOID)
++{
++  STATIC EFI_GUID  Guid = CM5_PCIE_TRACE_GUID;
++  CM5_PCIE_TRACE   *Trace;
++  UINT64          Before;
++
++  Before = Cm5PcieReadIsr ();
++  if (Cm5PcieFindTrace () == NULL) {
++    Trace = AllocateZeroPool (sizeof (*Trace));
++    if (Trace != NULL) {
++      Trace->Version = 1;
++      if (EFI_ERROR (gBS->InstallConfigurationTable (&Guid, Trace))) {
++        FreePool (Trace);
++      }
++    }
++  }
++
++  Cm5PcieRecord (50, 0, 0, Before, Cm5PcieReadIsr (), 0);
++}
++
++STATIC inline VOID
++Cm5MmioFirstError (UINT64 Stage, UINTN Address, UINT64 Before, UINT64 Data)
++{
++  UINT64  After;
++
++  After = Cm5PcieReadIsr ();
++  if (((Before & BIT8) == 0) && ((After & BIT8) != 0)) {
++    Cm5PcieRecord (Stage, Address, 0, Before, After, Data);
++  }
++}
++
++STATIC inline UINT32
++Cm5MmioRead32 (UINTN Address)
++{
++  UINT64  Before;
++  UINT32  Data;
++
++  Before = Cm5PcieReadIsr ();
++  Data = MmioRead32 (Address);
++  Cm5MmioFirstError (200, Address, Before, Data);
++  return Data;
++}
++
++STATIC inline UINT32
++Cm5MmioWrite32 (UINTN Address, UINT32 Value)
++{
++  UINT64  Before;
++  UINT32  Data;
++
++  Before = Cm5PcieReadIsr ();
++  Data = MmioWrite32 (Address, Value);
++  Cm5MmioFirstError (201, Address, Before, Data);
++  return Data;
++}
++
++STATIC inline UINT32
++Cm5MmioAnd32 (UINTN Address, UINT32 Value)
++{
++  UINT64  Before;
++  UINT32  Data;
++
++  Before = Cm5PcieReadIsr ();
++  Data = MmioAnd32 (Address, Value);
++  Cm5MmioFirstError (202, Address, Before, Data);
++  return Data;
++}
++
++STATIC inline UINT32
++Cm5MmioOr32 (UINTN Address, UINT32 Value)
++{
++  UINT64  Before;
++  UINT32  Data;
++
++  Before = Cm5PcieReadIsr ();
++  Data = MmioOr32 (Address, Value);
++  Cm5MmioFirstError (203, Address, Before, Data);
++  return Data;
++}
++
++STATIC inline UINT32
++Cm5MmioAndThenOr32 (UINTN Address, UINT32 AndMask, UINT32 OrMask)
++{
++  UINT64  Before;
++  UINT32  Data;
++
++  Before = Cm5PcieReadIsr ();
++  Data = MmioAndThenOr32 (Address, AndMask, OrMask);
++  Cm5MmioFirstError (204, Address, Before, Data);
++  return Data;
++}
+ #endif
+ #endif
+--- a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/RpiPlatformDxe.c
++++ b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/RpiPlatformDxe.c
+@@ -7,6 +7,7 @@
+  **/
+ 
+ #include <Uefi.h>
++#include <Guid/Cm5PcieTrace.h>
+ #include <Guid/RpiPlatformFormSetGuid.h>
+ #include <Library/BoardInfoLib.h>
+ #include <Library/BoardRevisionHelperLib.h>
+@@ -118,6 +119,10 @@
+ {
+   EFI_STATUS Status;
+ 
++#ifdef RP1_UART_CONSOLE
++  Cm5PlatformTraceInit ();
++#endif
++
+   Status = BoardInfoGetRevisionCode (&mBoardRevisionCode);
+   if (EFI_ERROR (Status)) {
+     DEBUG ((DEBUG_ERROR, "%a: Failed to get board revision. Status=%r\n",
+@@ -126,13 +131,28 @@
+   }
+ 
+   mSystemMemorySize = BoardRevisionGetMemorySize (mBoardRevisionCode);
++#ifdef RP1_UART_CONSOLE
++  Cm5PcieRecord (51, 0, 0, 0, Cm5PcieReadIsr (), 0);
++#endif
+ 
+   SetupVariables ();
++#ifdef RP1_UART_CONSOLE
++  Cm5PcieRecord (52, 0, 0, 0, Cm5PcieReadIsr (), 0);
++#endif
+   ApplyVariables ();
++#ifdef RP1_UART_CONSOLE
++  Cm5PcieRecord (53, 0, 0, 0, Cm5PcieReadIsr (), 0);
++#endif
+ 
+   SetupPeripherals ();
++#ifdef RP1_UART_CONSOLE
++  Cm5PcieRecord (54, 0, 0, 0, Cm5PcieReadIsr (), 0);
++#endif
+ 
+   Status = InstallHiiPages ();
++#ifdef RP1_UART_CONSOLE
++  Cm5PcieRecord (55, 0, 0, 0, Cm5PcieReadIsr (), Status);
++#endif
+   if (EFI_ERROR (Status)) {
+     DEBUG ((DEBUG_ERROR, "%a: Couldn't install HII pages. Status=%r\n", __func__, Status));
+   }
+--- a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/Peripherals.c
++++ b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/Peripherals.c
+@@ -7,6 +7,7 @@
+  **/
+ 
+ #include <Uefi.h>
++#include <Guid/Cm5PcieTrace.h>
+ #include <IndustryStandard/Bcm2712.h>
+ #include <IndustryStandard/Bcm2712Pinctrl.h>
+ #include <Library/Bcm2712GpioLib.h>
+@@ -21,6 +22,15 @@
+ #include "Peripherals.h"
+ #include "ConfigTable.h"
+ #include "RpiPlatformDxe.h"
++
++#ifdef RP1_UART_CONSOLE
++#define MmioRead32       Cm5MmioRead32
++#define MmioWrite32      Cm5MmioWrite32
++#define MmioAnd32        Cm5MmioAnd32
++#define MmioOr32         Cm5MmioOr32
++#define MmioAndThenOr32  Cm5MmioAndThenOr32
++#endif
++
+ 
+ STATIC
+ EFI_STATUS
+@@ -261,11 +271,26 @@
+   VOID
+   )
+ {
++#ifdef RP1_UART_CONSOLE
++  Cm5PcieRecord (60, 0, 0, 0, Cm5PcieReadIsr (), 0);
++#endif
+   InitGpioPinctrls ();
++#ifdef RP1_UART_CONSOLE
++  Cm5PcieRecord (61, 0, 0, 0, Cm5PcieReadIsr (), 0);
++#endif
+   InitWifiSdioHost ();
++#ifdef RP1_UART_CONSOLE
++  Cm5PcieRecord (62, 0, 0, 0, Cm5PcieReadIsr (), 0);
++#endif
+ 
+   RegisterSdControllers ();
++#ifdef RP1_UART_CONSOLE
++  Cm5PcieRecord (63, 0, 0, 0, Cm5PcieReadIsr (), 0);
++#endif
+   RegisterPciePlatform ();
++#ifdef RP1_UART_CONSOLE
++  Cm5PcieRecord (64, 0, 0, 0, Cm5PcieReadIsr (), 0);
++#endif
+ 
+   return EFI_SUCCESS;
+ }
+--- a/Silicon/Broadcom/Bcm27xx/Library/Bcm2712GpioLib/Bcm2712GpioLib.c
++++ b/Silicon/Broadcom/Bcm27xx/Library/Bcm2712GpioLib/Bcm2712GpioLib.c
+@@ -7,10 +7,20 @@
+  **/
+ 
+ #include <Uefi.h>
++#include <Guid/Cm5PcieTrace.h>
+ #include <IndustryStandard/Bcm2712.h>
+ #include <Library/Bcm2712GpioLib.h>
+ #include <Library/DebugLib.h>
+ #include <Library/IoLib.h>
++
++#ifdef RP1_UART_CONSOLE
++#define MmioRead32       Cm5MmioRead32
++#define MmioWrite32      Cm5MmioWrite32
++#define MmioAnd32        Cm5MmioAnd32
++#define MmioOr32         Cm5MmioOr32
++#define MmioAndThenOr32  Cm5MmioAndThenOr32
++#endif
++
+ 
+ #define BCM2712_GIO_DATA_REG                0x4
+ #define BCM2712_GIO_IODIR_REG               0x8
+--- a/Silicon/Broadcom/Bcm27xx/Library/Bcm2712GpioLib/Bcm2712GpioLib.inf
++++ b/Silicon/Broadcom/Bcm27xx/Library/Bcm2712GpioLib/Bcm2712GpioLib.inf
+@@ -22,5 +22,7 @@
+   Silicon/Broadcom/Bcm27xx/Bcm27xx.dec
+ 
+ [LibraryClasses]
++  BaseMemoryLib
++  UefiBootServicesTableLib
+   DebugLib
+   IoLib
