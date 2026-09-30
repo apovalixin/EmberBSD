@@ -1,3 +1,15 @@
+# NetBSD2
+
+Наш форк NetBSD 11 с адаптациями Raspberry Pi 5 и других плат.
+Поддержка оборудования, сборка и границы проверок описаны в
+[README.oxtorg.md](README.oxtorg.md).
+
+Программа агента и сборка персональной флешки находятся в
+[oxtorg-wiki](https://github.com/neonix20b/oxtorg-wiki). Сети, ключи,
+Bluetooth bonds и готовые образы хранятся вне Git.
+
+Ниже сохранена исходная справка NetBSD.
+
 NetBSD
 ======
 

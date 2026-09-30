@@ -140,7 +140,7 @@
     "sys/dev/ic/bq4802reg.h"
   ],
   "adaptationSourceRepository": "https://github.com/neonix20b/oxtorg-wiki",
-  "adaptationSourceCommit": "14a9931b",
+  "adaptationSourceCommit": "14a9931b0b8697d3977bf7d5df203307c5999a2d",
   "kernelPatches": [
     "aarch64-idle-resched.diff",
     "acpi-early-console.diff",
