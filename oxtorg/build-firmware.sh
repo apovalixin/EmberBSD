@@ -16,12 +16,14 @@ case "${2:-}" in
         flags="--model 5 --tfa-flags LOG_LEVEL=0 --edk2-flags '-D RP1_UART_CONSOLE=TRUE -D CM5_BOOT_TRACE=TRUE'" ;;
     *) echo 'unknown firmware option' >&2; exit 1 ;;
 esac
+mkdir -p "$out"
+out="$(cd "$out" && pwd)"
+# A failed rebuild must make the previous binary unusable as an image input.
+rm -f "$out/RPI_EFI.fd" "$out/RPI_EFI.fd.incoming"
 series="$ROOT/oxtorg/firmware/series"
 [[ "$(sort "$series")" == "$(cd "$ROOT/oxtorg/firmware" && ls ./*.diff | sed 's|^\./||' | sort)" ]] \
     || { echo 'firmware series must name every diff once' >&2; exit 1; }
 docker info >/dev/null 2>&1
-mkdir -p "$out"
-out="$(cd "$out" && pwd)"
 docker run --rm -v "$ROOT/oxtorg/firmware:/diffs:ro" -v "$out:/out" \
     ubuntu:24.04 bash -c "set -e
     export DEBIAN_FRONTEND=noninteractive
