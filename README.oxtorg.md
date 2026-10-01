@@ -1,84 +1,89 @@
-# NetBSD2: адаптации оборудования и сборка
+# NetBSD2: hardware adaptations and build instructions
 
-NetBSD2 — независимый форк NetBSD 11 для одноплатных компьютеров и
-встраиваемых устройств. Основной целевой платформой является Raspberry Pi 5.
-Репозиторий сохраняет дерево исходников и историю NetBSD, дополняя их
-драйверами, исправлениями ядра и средствами сборки для конкретных плат.
-Изменения форка не считаются принятыми разработчиками NetBSD.
+NetBSD2 is an independent NetBSD 11 fork for single-board computers and
+embedded systems. Its primary target is Raspberry Pi 5. The repository
+preserves the NetBSD source tree and history, adding device drivers,
+kernel fixes, and build tools for specific boards. Changes in this fork
+should not be treated as changes accepted by the NetBSD developers.
 
-Ядро и общие исходники начинаются с проверенного syssrc.tgz выпуска 11.0.
-Остальное дерево сохраняет upstream-снимок ветки netbsd-11, указанный
-в oxtorg/source.json. Наши диффы уже внесены в дерево. В oxtorg/patches
-они сохранены для происхождения и последующего переноса, повторно их не накладывают.
+The kernel and common sources are based on the verified NetBSD 11.0
+`syssrc.tgz` release archive. The rest of the tree retains the upstream
+`netbsd-11` snapshot recorded in `oxtorg/source.json`. The adaptation patches
+are already applied to the source tree. Copies in `oxtorg/patches` document
+their provenance and support future porting; do not apply them again.
 
-## Состояние поддержки
+## Hardware support and validation
 
-| Платформа или функция | Состояние |
+| Platform or feature | Status |
 |---|---|
-| Raspberry Pi 5: Wi-Fi, Ethernet, охлаждение | Проверены на физической плате |
-| Raspberry Pi 5: встроенный Bluetooth через UART | Проверены исправление приёма H4, SSP/Secure Connections, аутентификация, шифрование и повторное соединение с iPhone |
-| WM8960 Audio HAT через RP1 | Микрофоны и вывод на динамики проверены; громкость вывода зависит от подключённых динамиков |
-| USB-аудио | При воспроизведении на одном USB Audio Module A наблюдались отключения устройства; стабильность не подтверждена |
-| Raspberry Pi Zero 2 W | Есть адаптации, сборка ядра и дерева устройств; полная проверка устройства здесь не заявлена |
-| Compute Module 5 | Диагностическая конфигурация и изменения загрузки; полноценная поддержка не заявлена |
-| AirPods | Соединение подтверждено; качественный звук и микрофон гарнитуры не подтверждены |
-| ELM327 | Проверка на реальном адаптере ещё не выполнена |
-| BLE | Не реализован в добавленных средствах управления Bluetooth |
+| Raspberry Pi 5: Wi-Fi, Ethernet, cooling | Tested on physical hardware |
+| Raspberry Pi 5: built-in Bluetooth over UART | H4 receive fix, SSP/Secure Connections, authentication, encryption, and reconnection with an iPhone tested on hardware |
+| WM8960 Audio HAT over RP1 | Microphones and speaker output tested; output loudness depends on the attached speakers |
+| USB audio | One USB Audio Module A showed repeated device disconnections during playback; stable operation has not been confirmed |
+| Raspberry Pi Zero 2 W | Adaptations and kernel/device-tree builds are available; full device validation is not claimed |
+| Compute Module 5 | Diagnostic configuration and boot changes; full support is not claimed |
+| AirPods | Connection confirmed; reliable audio quality and headset microphone operation have not been confirmed |
+| ELM327 | Testing with a physical adapter is still pending |
+| BLE | Not implemented in the added Bluetooth management tools |
 
-## Сборка
+## Building
 
-Нативный стенд — NetBSD 11/aarch64 с gcc, config, dtc и Python 3.13 из pkgsrc.
-В чистой копии закреплённого коммита:
+The native build environment is NetBSD 11/aarch64 with gcc, config, dtc,
+and Python 3.13 from pkgsrc. From a clean checkout of a pinned commit:
 
 ```sh
 sh oxtorg/build-kernel.sh /absolute/output OXTORG64
 ```
 
-Сборка выдаёт ELF-ядро, родное ядро для Zero 2 W, дерево устройств Zero и
-модули Ethernet, Bluetooth UART и WM8960. Новую сборку сначала проверяют
-на стенде. Полная сборка и загрузка всех компонентов выпуска — отдельная
-проверка; текущий установочный рецепт использует userland официального 11.0.
+The build produces an ELF kernel, a native kernel image and device tree for
+Zero 2 W, and Ethernet, Bluetooth UART, and WM8960 modules. Validate new
+builds on the build environment before deployment. Building and booting
+all components of a complete release requires separate validation; the
+current installation recipe uses the official NetBSD 11.0 userland.
 
-UEFI Pi 5 собирается через Docker на macOS или Linux:
+Build Raspberry Pi 5 UEFI firmware using Docker on macOS or Linux:
 
 ```sh
 bash oxtorg/build-firmware.sh /absolute/cache --rp1-console
 ```
 
-Исходная прошивка eotics и подмодули закреплены; порядок наших диффов задаёт
-oxtorg/firmware/series. Обычная, консольная и диагностическая сборки имеют
-разные выходные каталоги. Прошивки радио загружаются по oxtorg/boot/image-assets.tsv
-с проверкой хешей и сохранением лицензий; бинарники в репозиторий не включаются.
+The eotics firmware source and submodules are pinned. The adaptation patch
+order is defined in `oxtorg/firmware/series`. Standard, console, and diagnostic
+variants use separate output directories. Radio firmware assets are fetched
+according to `oxtorg/boot/image-assets.tsv`, with hash verification and
+license preservation; their binaries are not included in the repository.
 
-При начале пересборки UEFI прежний выход выбранного варианта удаляется.
-Если Docker или компиляция откажут, сборщик образа остановится на отсутствующем
-входе. Этот случай проверяет `python3 oxtorg/tools/firmware-contract.py` на хосте.
+Starting a UEFI rebuild removes the previous output for the selected
+variant. If Docker or compilation fails, an image builder will stop because
+the required input is missing. The host-side contract check covers this
+case: `python3 oxtorg/tools/firmware-contract.py`.
 
-## Развёртывание на устройстве
+## Deploying to a device
 
-Этот репозиторий предоставляет исходники ОС, адаптации оборудования и
-сборочные инструменты. Он может служить основой для устройств с разными
-прикладными программами: приложения устанавливаются отдельно и не являются
-условием сборки ядра или UEFI.
+This repository provides OS sources, hardware adaptations, and build tools.
+It can serve as a base for devices running different applications.
+Applications are installed separately and are not required to build the
+kernel or UEFI firmware.
 
-Для воспроизводимой сборки закрепляйте коммит форка и проверяйте хеши
-полученных компонентов. Установочный образ должен включать совместимые
-ядро, модули, прошивки и пользовательское окружение NetBSD. Полностью
-проверенный универсальный образ этого форка пока не опубликован.
+For reproducible builds, pin the fork commit and verify the hashes of the
+resulting components. An installation image must contain compatible
+kernels, modules, firmware, and NetBSD userland. A fully validated general
+installation image of this fork has not yet been published.
 
-Настройки Wi-Fi, SSH-ключи, токены и прочие учётные данные добавляются
-оператором при подготовке конкретного устройства и остаются вне Git.
-Bluetooth-сопряжения привязаны к контроллеру: при переносе на другую плату
-используются её адрес и собственные сопряжения. Персонализированные образы
-с такими данными не предназначены для публичного распространения.
+Wi-Fi configuration, SSH keys, tokens, and other credentials are added by
+the operator when preparing each device and remain outside Git. Bluetooth
+bonds are tied to the controller: when moving to another board, use its
+address and its own bonds. Personalized images containing these settings
+are not intended for public distribution.
 
-## Upstream и лицензии
+## Upstream and licensing
 
-Upstream — [NetBSD/src](https://github.com/NetBSD/src), официальное CVS-зеркало.
-Наш main закрепляет собственную историю; автоматическая пересборка зеркала
-не меняет уже опубликованные ревизии форка. Обновления upstream принимаются
-отдельными коммитами с повторной сборкой и проверками железа.
+Upstream is [NetBSD/src](https://github.com/NetBSD/src), the official CVS
+mirror. This fork's `main` branch maintains its own history; automatic
+mirror updates do not alter already published fork revisions. Upstream
+updates are incorporated through separate commits followed by rebuilds
+and hardware validation.
 
-Лицензии NetBSD и сторонних исходников остаются в исходных файлах.
-Дополнительные утилиты oxtorg/ распространяются по BSD-2-Clause,
-кроме файлов с собственной исходной лицензией.
+NetBSD and third-party licenses remain in the source files. Additional
+utilities under `oxtorg/` use the BSD-2-Clause license, except where a file
+carries its own license.

@@ -1,25 +1,25 @@
 # NetBSD2
 
-NetBSD2 — независимый форк [NetBSD](https://github.com/NetBSD/src) на базе
-версии 11 для одноплатных компьютеров и встраиваемых устройств.
-Основное направление — поддержка Raspberry Pi 5: драйверы оборудования,
-исправления ядра и инструменты сборки ядра и UEFI.
+NetBSD2 is an independent fork of [NetBSD](https://github.com/NetBSD/src),
+based on version 11, for single-board computers and embedded systems.
+Its primary focus is Raspberry Pi 5 hardware support: device drivers,
+kernel fixes, and tools for building the kernel and UEFI firmware.
 
-На Raspberry Pi 5 проверены Wi-Fi, Ethernet, охлаждение, встроенный Bluetooth
-и микрофоны WM8960 Audio HAT. В дереве также есть адаптации Raspberry Pi
-Zero 2 W и диагностические изменения для Compute Module 5; степень их
-готовности отличается от поддержки Pi 5.
+Wi-Fi, Ethernet, cooling, the built-in Bluetooth controller, and WM8960
+Audio HAT microphones have been tested on physical Raspberry Pi 5 hardware.
+The tree also includes Raspberry Pi Zero 2 W adaptations and diagnostic
+changes for Compute Module 5; their validation status differs from Pi 5.
 
-[Описание адаптаций, сборки и ограничений](README.oxtorg.md) содержит
-состояние проверок и происхождение исходников. Изменения форка не означают
-их включения в официальный NetBSD.
+See [hardware support, build instructions, and limitations](README.oxtorg.md)
+for validation details and source provenance. Changes in this fork should
+not be treated as changes accepted into upstream NetBSD.
 
-Репозиторий содержит исходники ОС и поддержку оборудования. Прикладные
-программы и настройки конкретного устройства добавляются при развёртывании.
-Учётные данные и персональные образы в репозитории не публикуются.
+This repository contains OS sources and hardware support. Applications and
+device-specific configuration are added during deployment. Credentials and
+personalized device images are not published in this repository.
 
-Ниже сохранена исходная справка NetBSD. Ссылки на официальные бинарные
-выпуски относятся к NetBSD и не содержат доработок этого форка.
+The original NetBSD reference follows below. Links to official binary
+releases refer to upstream NetBSD and do not include this fork's changes.
 
 NetBSD
 ======
