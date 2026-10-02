@@ -155,6 +155,14 @@
 				bias-pull-up;
 			};
 
+			mmc1_pins: mmc1-pins {
+				pins = "PG0", "PG1", "PG2", "PG3", "PG4", "PG5";
+				function = "mmc1";
+				allwinner,pinmux = <2>;
+				drive-strength = <20>;
+				bias-pull-up;
+			};
+
 			uart0_pb_pins: uart0-pb-pins {
 				pins = "PB9", "PB10";
 				function = "uart0";
@@ -233,6 +241,23 @@
 			status = "disabled";
 		};
 
+		mmc1: mmc@4021000 {
+			compatible = "allwinner,sun60i-a733-mmc",
+				     "allwinner,sun20i-d1-mmc";
+			reg = <0x04021000 0x1000>;
+			interrupts = <GIC_SPI 162 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&ccu CLK_BUS_MMC1>, <&ccu CLK_MMC1>;
+			clock-names = "ahb", "mmc";
+			resets = <&ccu RST_BUS_MMC1>;
+			reset-names = "ahb";
+			max-frequency = <150000000>;
+			cap-sd-highspeed;
+			cap-sdio-irq;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
 		/*
 		 * The compatible string is not an upstream binding yet;
 		 * the Linux driver for the A523 calls its controller
@@ -264,6 +289,17 @@
 			compatible = "allwinner,sun60i-a733-gmac-syscon",
 				     "syscon";
 			reg = <0x04508000 0x100>;
+		};
+
+		/*
+		 * Pins of the always-on domain. Its clock controller has
+		 * no driver yet; the boot loader leaves the bus clock on.
+		 */
+		r_pio: pinctrl@7025000 {
+			compatible = "allwinner,sun60i-a733-r-pinctrl";
+			reg = <0x07025000 0x400>;
+			gpio-controller;
+			#gpio-cells = <3>;
 		};
 	};
 };

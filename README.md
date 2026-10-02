@@ -21,14 +21,14 @@ driver.
 | Serial console | Tested | Tested | Tested | Tested |
 | All CPU cores | Tested | Not validated | Tested | Tested (8 cores) |
 | Ethernet | Tested | Not validated | No port | Tested (gigabit) |
-| Wi-Fi | Tested | Tested | Tested at 2.4 GHz; large transfers stall | No (AIC8800) |
+| Wi-Fi | Tested | Tested | Tested at 2.4 GHz; large transfers stall | No driver; the AIC8800D80 module answers on SDIO |
 | Bluetooth | Classic: Tested; BLE: No | Not validated | Not validated | No |
 | Temperature sensor | Tested | Not validated | Tested | Tested (five sensors, factory calibration) |
 | Fan control | Tested | Not validated | No fan | No |
 | Watchdog | Tested | Not validated | Not validated | Tested |
 | I2C | Tested (WM8960 codec) | Not validated | Not validated | No |
 | Audio | WM8960 HAT: Tested | Not validated | Not validated | No |
-| Pin multiplexing and GPIO | Not validated | Not validated | Not validated | Pin multiplexing: Tested; no pin interrupts |
+| Pin multiplexing and GPIO | Not validated | Not validated | Not validated | Pin multiplexing and GPIO output: Tested; no pin interrupts |
 | Real-time clock | Not validated | Not validated | None on the board | No |
 
 Long-run stability has not been established on any of these boards.

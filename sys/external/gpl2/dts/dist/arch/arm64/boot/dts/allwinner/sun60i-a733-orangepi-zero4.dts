@@ -10,6 +10,8 @@
 
 #include "sun60i-a733.dtsi"
 
+#include <dt-bindings/gpio/gpio.h>
+
 / {
 	model = "OrangePi Zero 4";
 	compatible = "xunlong,orangepi-zero4", "allwinner,sun60i-a733";
@@ -20,6 +22,12 @@
 
 	chosen {
 		stdout-path = "serial0:115200n8";
+	};
+
+	/* The enable pin of the AIC8800 wireless module: PM1. */
+	wifi_pwrseq: wifi-pwrseq {
+		compatible = "mmc-pwrseq-simple";
+		reset-gpios = <&r_pio 1 1 GPIO_ACTIVE_LOW>;
 	};
 
 	/* The boot loader replaces the size with what it trained. */
@@ -61,6 +69,20 @@
 	/* PMIC rails are not described yet: stay at 3.3 V signalling. */
 	max-frequency = <50000000>;
 	broken-cd;
+	status = "okay";
+};
+
+/*
+ * The AIC8800 wireless module. Its pins run at 1.8 V; the boot loader
+ * leaves that supply on.
+ */
+&mmc1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&mmc1_pins>;
+	bus-width = <4>;
+	max-frequency = <50000000>;
+	non-removable;
+	mmc-pwrseq = <&wifi_pwrseq>;
 	status = "okay";
 };
 

@@ -27,9 +27,11 @@
 /*
  * Allwinner A733 pin controller: pin multiplexing and GPIO.
  *
- * Each bank owns 0x80 bytes, the first at 0x80. A pin's function is four
- * bits wide and comes straight from the device tree ("allwinner,pinmux"),
- * so no per-pin table is needed. sunxigpio(4) knows neither.
+ * On the main controller each bank owns 0x80 bytes, the first at 0x80;
+ * the controller of the always-on domain keeps the older, denser layout.
+ * A pin's function is four bits wide and comes straight from the device
+ * tree ("allwinner,pinmux"), so no per-pin table is needed. sunxigpio(4)
+ * knows neither.
  *
  * Pin interrupts are not handled.
  */
@@ -49,33 +51,47 @@ __KERNEL_RCSID(0, "$NetBSD$");
 
 #define	A733_GPIO_PINS_PER_BANK	32
 
-#define	A733_GPIO_BANK(b)	(0x80 + 0x80 * (b))
-#define	A733_GPIO_CFG(b, p)	(A733_GPIO_BANK(b) + 0x00 + 4 * ((p) / 8))
+#define	A733_GPIO_BANK(c, b)	((c)->bank_base + (c)->bank_size * (b))
+#define	A733_GPIO_CFG(c, b, p)	(A733_GPIO_BANK(c, b) + 0x00 + 4 * ((p) / 8))
 #define	 A733_GPIO_CFG_MASK(p)	(0xfU << (((p) % 8) * 4))
 #define	  A733_GPIO_CFG_INPUT	0
 #define	  A733_GPIO_CFG_OUTPUT	1
-#define	A733_GPIO_DATA(b)	(A733_GPIO_BANK(b) + 0x10)
-#define	A733_GPIO_DRV(b, p)	(A733_GPIO_BANK(b) + 0x20 + 4 * ((p) / 8))
+#define	A733_GPIO_DATA(c, b)	(A733_GPIO_BANK(c, b) + 0x10)
+#define	A733_GPIO_DRV(c, b, p)	\
+	(A733_GPIO_BANK(c, b) + (c)->drv_offset + 4 * ((p) / 8))
 #define	 A733_GPIO_DRV_MASK(p)	(0xfU << (((p) % 8) * 4))
-#define	A733_GPIO_PULL(b, p)	(A733_GPIO_BANK(b) + 0x30 + 4 * ((p) / 16))
+#define	A733_GPIO_PULL(c, b, p)	\
+	(A733_GPIO_BANK(c, b) + (c)->pull_offset + 4 * ((p) / 16))
 #define	 A733_GPIO_PULL_MASK(p)	(0x3U << (((p) % 16) * 2))
 #define	  A733_GPIO_PULL_NONE	0
 #define	  A733_GPIO_PULL_UP	1
 #define	  A733_GPIO_PULL_DOWN	2
 
 struct a733_gpio_config {
-	char	first_bank;	/* letter of the controller's first bank */
-	u_int	nbanks;
+	char		first_bank;	/* letter of the first bank */
+	u_int		nbanks;
+	bus_size_t	bank_base;	/* registers of the first bank */
+	bus_size_t	bank_size;
+	bus_size_t	drv_offset;	/* drive strength, inside a bank */
+	bus_size_t	pull_offset;	/* pull-up and pull-down */
 };
 
 static const struct a733_gpio_config a733_pio_config = {
 	.first_bank = 'A',
 	.nbanks = 11,		/* PA to PK */
+	.bank_base = 0x80,
+	.bank_size = 0x80,
+	.drv_offset = 0x20,
+	.pull_offset = 0x30,
 };
 
 static const struct a733_gpio_config a733_r_pio_config = {
 	.first_bank = 'L',
 	.nbanks = 2,		/* PL and PM */
+	.bank_base = 0x00,
+	.bank_size = 0x30,
+	.drv_offset = 0x14,
+	.pull_offset = 0x24,
 };
 
 static const struct device_compatible_entry compat_data[] = {
@@ -145,6 +161,7 @@ static int
 a733_pinctrl_set_config(device_t dev, const void *data, size_t len)
 {
 	struct a733_gpio_softc * const sc = device_private(dev);
+	const struct a733_gpio_config * const c = sc->sc_config;
 	u_int bank, pin, mux;
 	int pins_len;
 
@@ -171,11 +188,11 @@ a733_pinctrl_set_config(device_t dev, const void *data, size_t len)
 			aprint_error_dev(dev, "unknown pin name '%s'\n", pins);
 			continue;
 		}
-		a733_gpio_update(sc, A733_GPIO_CFG(bank, pin),
+		a733_gpio_update(sc, A733_GPIO_CFG(c, bank, pin),
 		    A733_GPIO_CFG_MASK(pin), mux);
 
 		if (bias != -1) {
-			a733_gpio_update(sc, A733_GPIO_PULL(bank, pin),
+			a733_gpio_update(sc, A733_GPIO_PULL(c, bank, pin),
 			    A733_GPIO_PULL_MASK(pin),
 			    bias == GPIO_PIN_PULLUP ? A733_GPIO_PULL_UP :
 			    bias == GPIO_PIN_PULLDOWN ? A733_GPIO_PULL_DOWN :
@@ -184,7 +201,7 @@ a733_pinctrl_set_config(device_t dev, const void *data, size_t len)
 
 		/* Drive strength comes in mA; a level is 10 mA. */
 		if (drive_strength >= 10 && drive_strength <= 40) {
-			a733_gpio_update(sc, A733_GPIO_DRV(bank, pin),
+			a733_gpio_update(sc, A733_GPIO_DRV(c, bank, pin),
 			    A733_GPIO_DRV_MASK(pin), drive_strength / 10 - 1);
 		}
 	}
@@ -202,6 +219,7 @@ static void *
 a733_gpio_acquire(device_t dev, const void *data, size_t len, int flags)
 {
 	struct a733_gpio_softc * const sc = device_private(dev);
+	const struct a733_gpio_config * const c = sc->sc_config;
 	struct a733_gpio_pin *gpin;
 	const u_int *gpio = data;
 
@@ -219,7 +237,8 @@ a733_gpio_acquire(device_t dev, const void *data, size_t len, int flags)
 		return NULL;
 
 	mutex_enter(&sc->sc_lock);
-	a733_gpio_update(sc, A733_GPIO_CFG(bank, pin), A733_GPIO_CFG_MASK(pin),
+	a733_gpio_update(sc, A733_GPIO_CFG(c, bank, pin),
+	    A733_GPIO_CFG_MASK(pin),
 	    (flags & GPIO_PIN_INPUT) ? A733_GPIO_CFG_INPUT :
 	    A733_GPIO_CFG_OUTPUT);
 	mutex_exit(&sc->sc_lock);
@@ -236,10 +255,11 @@ static void
 a733_gpio_release(device_t dev, void *priv)
 {
 	struct a733_gpio_softc * const sc = device_private(dev);
+	const struct a733_gpio_config * const c = sc->sc_config;
 	struct a733_gpio_pin *gpin = priv;
 
 	mutex_enter(&sc->sc_lock);
-	a733_gpio_update(sc, A733_GPIO_CFG(gpin->pin_bank, gpin->pin_num),
+	a733_gpio_update(sc, A733_GPIO_CFG(c, gpin->pin_bank, gpin->pin_num),
 	    A733_GPIO_CFG_MASK(gpin->pin_num), A733_GPIO_CFG_INPUT);
 	mutex_exit(&sc->sc_lock);
 
@@ -250,10 +270,11 @@ static int
 a733_gpio_read(device_t dev, void *priv, bool raw)
 {
 	struct a733_gpio_softc * const sc = device_private(dev);
+	const struct a733_gpio_config * const c = sc->sc_config;
 	struct a733_gpio_pin *gpin = priv;
 	int val;
 
-	val = __SHIFTOUT(GPIO_READ(sc, A733_GPIO_DATA(gpin->pin_bank)),
+	val = __SHIFTOUT(GPIO_READ(sc, A733_GPIO_DATA(c, gpin->pin_bank)),
 	    __BIT(gpin->pin_num));
 	if (!raw && gpin->pin_actlo)
 		val = !val;
@@ -265,13 +286,14 @@ static void
 a733_gpio_write(device_t dev, void *priv, int val, bool raw)
 {
 	struct a733_gpio_softc * const sc = device_private(dev);
+	const struct a733_gpio_config * const c = sc->sc_config;
 	struct a733_gpio_pin *gpin = priv;
 
 	if (!raw && gpin->pin_actlo)
 		val = !val;
 
 	mutex_enter(&sc->sc_lock);
-	a733_gpio_update(sc, A733_GPIO_DATA(gpin->pin_bank),
+	a733_gpio_update(sc, A733_GPIO_DATA(c, gpin->pin_bank),
 	    __BIT(gpin->pin_num), val ? 1 : 0);
 	mutex_exit(&sc->sc_lock);
 }
