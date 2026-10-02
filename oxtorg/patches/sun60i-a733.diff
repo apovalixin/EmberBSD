@@ -1,11 +1,12 @@
 Origin:
 Allwinner A733 (sun60iw2) and the Orange Pi Zero 4: the clock control unit,
 the pin controller, an SD/MMC controller variant, Ethernet glue for the
-DesignWare EQOS core and device trees. With these the board boots from
-microSD to multi-user with gigabit Ethernet. The register map was read on
-the board and agrees with the vendor kernel. The clock and reset numbers
-are those of the Linux binding allwinner,sun60i-a733-ccu (v3, September
-2026), whose headers are imported unchanged.
+DesignWare EQOS core, the thermal sensors, the watchdog and device trees.
+With these the board boots from microSD to multi-user with gigabit
+Ethernet. The register map was read on the board and agrees with the
+vendor kernel. The clock and reset numbers are those of the Linux binding
+allwinner,sun60i-a733-ccu (v3, September 2026), whose headers are imported
+unchanged.
 
 The boot loader leaves the SD card write threshold enabled, and the first
 write through the internal DMA never completes; the A733 variant of
@@ -14,6 +15,17 @@ sunximmc clears it on host reset.
 The EQOS core reports version 5.3, which the driver now accepts. The MAC
 address is derived from the chip ID. The RGMII delays in the board tree
 are the middles of the windows measured on the board.
+
+The thermal sensor controller has the register layout the H6 introduced,
+which sunxithermal(4) does not know, so it has a driver of its own. The
+conversion constants, the sampling timing and the place of the calibration
+codes in the EFUSE are those of the vendor kernel; the codes and the
+readings were checked on the board. sunxisid(4) now reads any EFUSE word
+for other drivers, and the Ethernet glue takes the chip ID through it.
+
+The watchdog has the sun20i registers four bytes lower, as on the A523.
+On the board it reset the system after its tickling process was killed,
+and the system booted again.
 
 --- sys/arch/arm/sunxi/files.sunxi
 +++ sys/arch/arm/sunxi/files.sunxi
@@ -38,9 +50,21 @@ are the middles of the windows measured on the board.
  # CCU (H6 PRCM)
  device	sun50ih6rccu: sunxi_ccu
  attach	sun50ih6rccu at fdt with sunxi_h6_r_ccu
+@@ -296,6 +310,11 @@ device	sunxithermal: sysmon_envsys, sysmon_taskq
+ attach	sunxithermal at fdt with sunxi_thermal
+ file	arch/arm/sunxi/sunxi_thermal.c		sunxi_thermal
+ 
++# Thermal sensor controller (A733)
++device	sun60ia733ths: sysmon_envsys
++attach	sun60ia733ths at fdt with sun60i_a733_ths
++file	arch/arm/sunxi/sun60i_a733_ths.c	sun60i_a733_ths
++
+ # SATA
+ attach	ahcisata at fdt with sunxi_sata
+ file	arch/arm/sunxi/sunxi_sata.c		sunxi_sata
 --- /dev/null
 +++ sys/arch/arm/sunxi/sun60i_a733_ccu.c
-@@ -0,0 +1,274 @@
+@@ -0,0 +1,283 @@
 +/*-
 + * Copyright (c) 2026 Anton and oxtorg contributors
 + * All rights reserved.
@@ -102,6 +126,7 @@ are the middles of the windows measured on the board.
 +#define	SMHC2_BGR_REG		0xd2c
 +#define	UART_BGR_REG(n)		(0xe00 + 4 * (n))
 +#define	TWI_BGR_REG(n)		(0xe80 + 4 * (n))
++#define	GPADC0_24M_CLK_REG	0xfc0
 +#define	THS_BGR_REG		0xfe4
 +#define	GMAC0_PHY_CLK_REG	0x1410
 +#define	GMAC0_BGR_REG		0x141c
@@ -153,6 +178,7 @@ are the middles of the windows measured on the board.
 +	"sys-24M", "pll-periph0-400M", "pll-periph0-300M",
 +	"pll-periph1-400M", "pll-periph1-300M"
 +};
++static const char *gpadc_24m_parents[] = { "sys-24M", "hosc" };
 +static const char *emmc_parents[] = {
 +	"sys-24M", "pll-periph0-800M", "pll-periph0-600M",
 +	"pll-periph1-800M", "pll-periph1-600M"
@@ -270,6 +296,13 @@ are the middles of the windows measured on the board.
 +	SUNXI_CCU_GATE(A733_CLK_BUS_I2C3, "bus-i2c3", "apb1",
 +	    TWI_BGR_REG(3), 0),
 +
++	/* The thermal sensors convert on this clock. */
++	SUNXI_CCU_DIV_GATE(A733_CLK_GPADC0_24M, "gpadc0-24m",
++	    gpadc_24m_parents, GPADC0_24M_CLK_REG,
++	    __BITS(4,0),		/* div */
++	    __BITS(26,24),		/* sel */
++	    __BIT(31),			/* enable */
++	    0),
 +	SUNXI_CCU_GATE(A733_CLK_BUS_THS0, "bus-ths0", "apb0",
 +	    THS_BGR_REG, 0),
 +
@@ -317,7 +350,7 @@ are the middles of the windows measured on the board.
 +}
 --- /dev/null
 +++ sys/arch/arm/sunxi/sun60i_a733_ccu.h
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,93 @@
 +/*-
 + * Copyright (c) 2026 Anton and oxtorg contributors
 + * All rights reserved.
@@ -387,6 +420,7 @@ are the middles of the windows measured on the board.
 +#define	A733_CLK_BUS_I2C1		158
 +#define	A733_CLK_BUS_I2C2		159
 +#define	A733_CLK_BUS_I2C3		160
++#define	A733_CLK_GPADC0_24M		182
 +#define	A733_CLK_BUS_THS0		184
 +#define	A733_CLK_GMAC0_PHY		227
 +#define	A733_CLK_BUS_GMAC0		228
@@ -493,6 +527,14 @@ are the middles of the windows measured on the board.
  tegragpio*	at fdt? pass 2		# NVIDIA Tegra GPIO
  gpio*		at gpiobus?
  
+@@ -544,6 +546,7 @@ pwmfan* 	at fdt?			# PWM Fan controls
+ # Thermal throttling controller
+ mesonthermal*	at fdt?			# Amlogic thermal sensor controller
+ sunxithermal*	at fdt?			# Allwinner thermal sensor controller
++sun60ia733ths*	at fdt?			# Allwinner A733 thermal sensors
+ tegrasoctherm*	at fdt?			# NVIDIA Tegra SOC_THERM
+ rktsadc*	at fdt?			# RockChip TSASC
+ 
 --- sys/dev/ic/dwc_eqos.c
 +++ sys/dev/ic/dwc_eqos.c
 @@ -1490,7 +1490,7 @@ eqos_attach(struct eqos_softc *sc)
@@ -580,7 +622,7 @@ are the middles of the windows measured on the board.
 +};
 --- /dev/null
 +++ sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
-@@ -0,0 +1,249 @@
+@@ -0,0 +1,269 @@
 +// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
 +/*
 + * Allwinner A733 (sun60iw2).
@@ -754,6 +796,16 @@ are the middles of the windows measured on the board.
 +			#reset-cells = <1>;
 +		};
 +
++		/* The same register layout as on the A523. */
++		wdt: watchdog@2050000 {
++			compatible = "allwinner,sun60i-a733-wdt",
++				     "allwinner,sun55i-a523-wdt";
++			reg = <0x02050000 0x20>;
++			interrupts = <GIC_SPI 106 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&osc24M>, <&osc32k>;
++			clock-names = "hosc", "losc";
++		};
++
 +		uart0: serial@2500000 {
 +			compatible = "snps,dw-apb-uart";
 +			reg = <0x02500000 0x400>;
@@ -763,6 +815,16 @@ are the middles of the windows measured on the board.
 +			clocks = <&ccu CLK_BUS_UART0>;
 +			resets = <&ccu RST_BUS_UART0>;
 +			status = "disabled";
++		};
++
++		/* Not an upstream binding yet. */
++		ths: thermal-sensor@2522000 {
++			compatible = "allwinner,sun60i-a733-ths";
++			reg = <0x02522000 0x400>;
++			clocks = <&ccu CLK_BUS_THS0>, <&ccu CLK_GPADC0_24M>;
++			clock-names = "bus", "gpadc";
++			resets = <&ccu RST_BUS_THS0>;
++			#thermal-sensor-cells = <1>;
 +		};
 +
 +		/* Not an upstream binding yet. */
@@ -1325,7 +1387,7 @@ are the middles of the windows measured on the board.
 +#endif /* _DT_BINDINGS_RST_ALLWINNER_SUN60I_A733_R_CCU_H_ */
 --- /dev/null
 +++ sys/arch/arm/sunxi/sun60i_a733_eqos.c
-@@ -0,0 +1,273 @@
+@@ -0,0 +1,262 @@
 +/*-
 + * Copyright (c) 2026 Anton and oxtorg contributors
 + * All rights reserved.
@@ -1381,6 +1443,8 @@ are the middles of the windows measured on the board.
 +
 +#include <dev/ic/dwc_eqos_var.h>
 +
++#include <arm/sunxi/sunxi_sid.h>
++
 +#include <prop/proplib.h>
 +
 +#define	EMAC_CLK_REG		0x00
@@ -1395,8 +1459,8 @@ are the middles of the windows measured on the board.
 +#define	EMAC_DELAY_STEP_PS	100
 +#define	EMAC_DELAY_MAX		31
 +
-+/* The chip ID inside the security ID block. */
-+#define	SID_CHIPID		0x200
++/* The chip ID at the start of the EFUSE. */
++#define	SID_CHIPID		0
 +#define	SID_CHIPID_WORDS	4
 +
 +static const struct device_compatible_entry compat_data[] = {
@@ -1432,25 +1496,12 @@ are the middles of the windows measured on the board.
 + * none. Derive one from the chip ID, so that it is the same on every boot.
 + */
 +static bool
-+sun60i_a733_eqos_chip_address(struct eqos_softc *sc, uint8_t *enaddr)
++sun60i_a733_eqos_chip_address(uint8_t *enaddr)
 +{
 +	uint32_t id[SID_CHIPID_WORDS], lo, hi;
-+	bus_space_handle_t bsh;
-+	bus_addr_t addr;
-+	bus_size_t size;
-+	u_int n;
 +
-+	const int sid = of_find_bycompat(OF_finddevice("/"),
-+	    "allwinner,sun60i-a733-sid");
-+	if (sid <= 0 || fdtbus_get_reg(sid, 0, &addr, &size) != 0 ||
-+	    size < SID_CHIPID + sizeof(id))
++	if (sunxi_sid_read(SID_CHIPID, id, SID_CHIPID_WORDS) != 0)
 +		return false;
-+	if (bus_space_map(sc->sc_bst, addr + SID_CHIPID, sizeof(id), 0,
-+	    &bsh) != 0)
-+		return false;
-+	for (n = 0; n < SID_CHIPID_WORDS; n++)
-+		id[n] = bus_space_read_4(sc->sc_bst, bsh, 4 * n);
-+	bus_space_unmap(sc->sc_bst, bsh, sizeof(id));
 +
 +	lo = hash32_buf(id, sizeof(id), HASH32_BUF_INIT);
 +	hi = hash32_buf(id, sizeof(id), lo);
@@ -1480,7 +1531,7 @@ are the middles of the windows measured on the board.
 +	if (addr != NULL && len == ETHER_ADDR_LEN &&
 +	    memcmp(addr, zero, ETHER_ADDR_LEN) != 0) {
 +		memcpy(enaddr, addr, ETHER_ADDR_LEN);
-+	} else if (!sun60i_a733_eqos_chip_address(sc, enaddr)) {
++	} else if (!sun60i_a733_eqos_chip_address(enaddr)) {
 +		cprng_strong(kern_cprng, enaddr, sizeof(enaddr), 0);
 +		enaddr[0] = (enaddr[0] & ~0x01) | 0x02;
 +	}
@@ -1943,3 +1994,425 @@ are the middles of the windows measured on the board.
 +
 +CFATTACH_DECL_NEW(sun60i_a733_gpio, sizeof(struct a733_gpio_softc),
 +	a733_gpio_match, a733_gpio_attach, NULL, NULL);
+--- /dev/null
++++ sys/arch/arm/sunxi/sun60i_a733_ths.c
+@@ -0,0 +1,288 @@
++/*-
++ * Copyright (c) 2026 Anton and oxtorg contributors
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
++ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
++ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
++ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
++ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
++ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
++ * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
++ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
++ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++ * SUCH DAMAGE.
++ */
++
++/*
++ * Allwinner A733 thermal sensor controller.
++ *
++ * Five sensors behind one converter, which samples them on its own; the
++ * driver only reads the latest codes. The register layout is the one the
++ * H6 introduced. Calibration codes come from the EFUSE: each is what the
++ * sensor returned at the factory test temperature.
++ */
++
++#include <sys/cdefs.h>
++__KERNEL_RCSID(0, "$NetBSD$");
++
++#include <sys/param.h>
++#include <sys/bus.h>
++#include <sys/device.h>
++#include <sys/systm.h>
++
++#include <dev/sysmon/sysmonvar.h>
++
++#include <dev/fdt/fdtvar.h>
++
++#include <arm/sunxi/sunxi_sid.h>
++
++#define	THS_CTRL		0x00
++#define	 THS_CTRL_FS_DIV	__BITS(31,16)
++#define	 THS_CTRL_T_ACQ		__BITS(15,0)
++#define	THS_EN			0x04
++#define	THS_PER			0x08
++#define	 THS_PER_THERMAL	__BITS(31,12)
++#define	THS_DATA_INTS		0x20
++#define	THS_MFC			0x30
++#define	 THS_MFC_FILTER_EN	__BIT(2)
++#define	 THS_MFC_FILTER_TYPE	__BITS(1,0)
++#define	THS_CDATA(n)		(0xa0 + 4 * ((n) / 2))
++#define	 THS_CDATA_SHIFT(n)	(16 * ((n) % 2))
++#define	THS_DATA(n)		(0xc0 + 4 * (n))
++#define	 THS_CODE_MASK		0xfff
++
++/* The timing the board vendor's kernel uses with the 24 MHz clock. */
++#define	THS_FS_DIV		479
++#define	THS_T_ACQ		47
++#define	THS_PERIOD		28
++#define	THS_FILTER_TYPE		1
++
++#define	THS_NSENSORS		5
++#define	THS_CDATA_DEFAULT	0x800
++
++/*
++ * Millidegrees Celsius from a code: two straight lines that meet near
++ * 65 degC. A larger code is a lower temperature.
++ */
++#define	THS_CODE_KNEE		1769
++#define	THS_COLD_OFFSET		2822
++#define	THS_COLD_SCALE		62
++#define	THS_HOT_OFFSET		2835
++#define	THS_HOT_SCALE		59
++
++/*
++ * EFUSE, from byte 0x44: the factory test temperature in tenths of a
++ * degree in the low 12 bits, then one 12-bit code per sensor.
++ */
++#define	THS_EFUSE_OFFSET	0x44
++#define	THS_EFUSE_WORDS		3
++
++/* The vendor's trip points for this chip. */
++#define	THS_WARN_MC		90000
++#define	THS_CRIT_MC		110000
++
++#define	THS_MC_TO_UK(mc)	((mc) * 1000 + 273150000)
++
++static const char * const sun60i_a733_ths_names[THS_NSENSORS] = {
++	"big cores",
++	"memory",
++	"NPU",
++	"little cores",
++	"GPU",
++};
++
++static const struct device_compatible_entry compat_data[] = {
++	{ .compat = "allwinner,sun60i-a733-ths" },
++	DEVICE_COMPAT_EOL
++};
++
++struct sun60i_a733_ths_softc {
++	device_t		sc_dev;
++	bus_space_tag_t		sc_bst;
++	bus_space_handle_t	sc_bsh;
++
++	struct sysmon_envsys	*sc_sme;
++	envsys_data_t		sc_data[THS_NSENSORS];
++};
++
++#define	RD4(sc, reg)		\
++	bus_space_read_4((sc)->sc_bst, (sc)->sc_bsh, (reg))
++#define	WR4(sc, reg, val)	\
++	bus_space_write_4((sc)->sc_bst, (sc)->sc_bsh, (reg), (val))
++
++static int
++sun60i_a733_ths_to_mc(uint32_t code)
++{
++	if (code > THS_CODE_KNEE)
++		return (THS_COLD_OFFSET - (int)code) * THS_COLD_SCALE;
++
++	return (THS_HOT_OFFSET - (int)code) * THS_HOT_SCALE;
++}
++
++/*
++ * Shift each sensor's code so that the code recorded at the factory
++ * reads as the factory temperature. Returns the number of sensors
++ * calibrated.
++ */
++static u_int
++sun60i_a733_ths_calibrate(struct sun60i_a733_ths_softc *sc)
++{
++	uint32_t efuse[THS_EFUSE_WORDS], val;
++	u_int n, done = 0;
++
++	if (sunxi_sid_read(THS_EFUSE_OFFSET, efuse, THS_EFUSE_WORDS) != 0)
++		return 0;
++
++	const int test_mc = (efuse[0] & THS_CODE_MASK) * 100;
++	if (test_mc == 0)
++		return 0;
++
++	for (n = 0; n < THS_NSENSORS; n++) {
++		const u_int bit = 12 * (n + 1);
++		uint32_t code = efuse[bit / 32] >> (bit % 32);
++
++		if (bit % 32 > 20)
++			code |= efuse[bit / 32 + 1] << (32 - bit % 32);
++		code &= THS_CODE_MASK;
++
++		const int cdata = THS_CDATA_DEFAULT -
++		    (sun60i_a733_ths_to_mc(code) - test_mc) / THS_COLD_SCALE;
++		if (cdata < 0 || cdata > THS_CODE_MASK)
++			continue;
++
++		val = RD4(sc, THS_CDATA(n));
++		val &= ~(THS_CODE_MASK << THS_CDATA_SHIFT(n));
++		val |= (uint32_t)cdata << THS_CDATA_SHIFT(n);
++		WR4(sc, THS_CDATA(n), val);
++		done++;
++	}
++
++	return done;
++}
++
++static void
++sun60i_a733_ths_refresh(struct sysmon_envsys *sme, envsys_data_t *edata)
++{
++	struct sun60i_a733_ths_softc * const sc = sme->sme_cookie;
++
++	const uint32_t code = RD4(sc, THS_DATA(edata->private)) &
++	    THS_CODE_MASK;
++	if (code == 0) {
++		/* No conversion has finished yet. */
++		edata->state = ENVSYS_SINVALID;
++		return;
++	}
++
++	edata->value_cur = THS_MC_TO_UK(sun60i_a733_ths_to_mc(code));
++	edata->state = ENVSYS_SVALID;
++}
++
++static void
++sun60i_a733_ths_get_limits(struct sysmon_envsys *sme, envsys_data_t *edata,
++    sysmon_envsys_lim_t *lim, uint32_t *props)
++{
++	lim->sel_warnmax = THS_MC_TO_UK(THS_WARN_MC);
++	lim->sel_critmax = THS_MC_TO_UK(THS_CRIT_MC);
++	*props = PROP_WARNMAX | PROP_CRITMAX;
++}
++
++static int
++sun60i_a733_ths_match(device_t parent, cfdata_t cf, void *aux)
++{
++	struct fdt_attach_args * const faa = aux;
++
++	return of_compatible_match(faa->faa_phandle, compat_data);
++}
++
++static void
++sun60i_a733_ths_attach(device_t parent, device_t self, void *aux)
++{
++	struct sun60i_a733_ths_softc * const sc = device_private(self);
++	struct fdt_attach_args * const faa = aux;
++	const int phandle = faa->faa_phandle;
++	struct fdtbus_reset *rst;
++	struct clk *clk;
++	bus_addr_t addr;
++	bus_size_t size;
++	u_int n;
++
++	if (fdtbus_get_reg(phandle, 0, &addr, &size) != 0) {
++		aprint_error(": couldn't get registers\n");
++		return;
++	}
++
++	sc->sc_dev = self;
++	sc->sc_bst = faa->faa_bst;
++	if (bus_space_map(sc->sc_bst, addr, size, 0, &sc->sc_bsh) != 0) {
++		aprint_error(": couldn't map registers\n");
++		return;
++	}
++
++	for (n = 0; (clk = fdtbus_clock_get_index(phandle, n)) != NULL; n++) {
++		if (clk_enable(clk) != 0) {
++			aprint_error(": couldn't enable clock #%u\n", n);
++			return;
++		}
++	}
++	rst = fdtbus_reset_get_index(phandle, 0);
++	if (rst == NULL || fdtbus_reset_deassert(rst) != 0) {
++		aprint_error(": couldn't de-assert reset\n");
++		return;
++	}
++
++	aprint_naive("\n");
++	aprint_normal(": Thermal sensor controller\n");
++
++	const u_int calibrated = sun60i_a733_ths_calibrate(sc);
++	if (calibrated != THS_NSENSORS)
++		aprint_error_dev(self,
++		    "%u of %u sensors have no factory calibration\n",
++		    THS_NSENSORS - calibrated, THS_NSENSORS);
++
++	WR4(sc, THS_CTRL, __SHIFTIN(THS_FS_DIV, THS_CTRL_FS_DIV) |
++	    __SHIFTIN(THS_T_ACQ, THS_CTRL_T_ACQ));
++	WR4(sc, THS_MFC, THS_MFC_FILTER_EN |
++	    __SHIFTIN(THS_FILTER_TYPE, THS_MFC_FILTER_TYPE));
++	WR4(sc, THS_PER, __SHIFTIN(THS_PERIOD, THS_PER_THERMAL));
++	WR4(sc, THS_DATA_INTS, __BITS(THS_NSENSORS - 1, 0));
++	WR4(sc, THS_EN, __BITS(THS_NSENSORS - 1, 0));
++
++	sc->sc_sme = sysmon_envsys_create();
++	sc->sc_sme->sme_name = device_xname(self);
++	sc->sc_sme->sme_cookie = sc;
++	sc->sc_sme->sme_refresh = sun60i_a733_ths_refresh;
++	sc->sc_sme->sme_get_limits = sun60i_a733_ths_get_limits;
++	for (n = 0; n < THS_NSENSORS; n++) {
++		sc->sc_data[n].private = n;
++		sc->sc_data[n].units = ENVSYS_STEMP;
++		sc->sc_data[n].state = ENVSYS_SINVALID;
++		sc->sc_data[n].flags = ENVSYS_FMONLIMITS;
++		strlcpy(sc->sc_data[n].desc, sun60i_a733_ths_names[n],
++		    sizeof(sc->sc_data[n].desc));
++		if (sysmon_envsys_sensor_attach(sc->sc_sme,
++		    &sc->sc_data[n]) != 0)
++			goto fail;
++	}
++	if (sysmon_envsys_register(sc->sc_sme) != 0)
++		goto fail;
++
++	return;
++
++fail:
++	aprint_error_dev(self, "couldn't register sensors\n");
++	sysmon_envsys_destroy(sc->sc_sme);
++}
++
++CFATTACH_DECL_NEW(sun60i_a733_ths, sizeof(struct sun60i_a733_ths_softc),
++    sun60i_a733_ths_match, sun60i_a733_ths_attach, NULL, NULL);
+--- sys/arch/arm/sunxi/sunxi_sid.c
++++ sys/arch/arm/sunxi/sunxi_sid.c
+@@ -61,6 +61,7 @@ static const struct device_compatible_entry compat_data[] = {
+ 	{ .compat = "allwinner,sun8i-a83t-sid",	.data = &sun8i_h3_sid_config },
+ 	{ .compat = "allwinner,sun20i-d1-sid",	.data = &sun8i_h3_sid_config },
+ 	{ .compat = "allwinner,sun50i-a64-sid",	.data = &sun8i_h3_sid_config },
++	{ .compat = "allwinner,sun60i-a733-sid", .data = &sun8i_h3_sid_config },
+ 	DEVICE_COMPAT_EOL
+ };
+ 
+@@ -128,3 +129,17 @@ sunxi_sid_read_tscalib(uint32_t *calib)
+ 	calib[1] = EFUSE_READ(sid_softc, EFUSE_THERMAL_CALIB1);
+ 	return 0;
+ }
++
++/* Read 32-bit words of the EFUSE, starting at a byte offset inside it. */
++int
++sunxi_sid_read(bus_size_t offset, uint32_t *words, u_int nwords)
++{
++	u_int n;
++
++	if (sid_softc == NULL)
++		return ENXIO;
++
++	for (n = 0; n < nwords; n++)
++		words[n] = EFUSE_READ(sid_softc, offset + 4 * n);
++	return 0;
++}
+--- sys/arch/arm/sunxi/sunxi_sid.h
++++ sys/arch/arm/sunxi/sunxi_sid.h
+@@ -29,6 +29,9 @@
+ #ifndef _ARM_SUNXI_SID_H
+ #define	_ARM_SUNXI_SID_H
+ 
++#include <sys/bus.h>
++
+ int	sunxi_sid_read_tscalib(uint32_t *);
++int	sunxi_sid_read(bus_size_t, uint32_t *, u_int);
+ 
+ #endif /* !_ARM_SUNXI_SID_H */
+--- sys/arch/arm/sunxi/sunxi_wdt.c
++++ sys/arch/arm/sunxi/sunxi_wdt.c
+@@ -71,6 +71,12 @@ __KERNEL_RCSID(0, "$NetBSD: sunxi_wdt.c,v 1.6.26.1 2026/04/02 18:10:40 martin Ex
+ #define	 SUNXI_WDT_KEY_FIELD		__BITS(31,16)
+ #define	  SUNXI_WDT_KEY_FIELD_V		0x16aa
+ 
++/*
++ * The A523 and the A733 keep the sun20i control, configuration and mode
++ * registers four bytes lower.
++ */
++#define	SUN55I_WDT_REG_SHIFT		4
++
+ static const int sunxi_periods[] = {
+ 	500, 1000, 2000, 3000,
+ 	4000, 5000, 6000, 8000,
+@@ -82,12 +88,14 @@ enum sunxi_wdt_type {
+ 	WDT_SUN4I = 1,
+ 	WDT_SUN6I,
+ 	WDT_SUN20I,
++	WDT_SUN55I,
+ };
+ 
+ static const struct device_compatible_entry compat_data[] = {
+ 	{ .compat = "allwinner,sun4i-a10-wdt",	.value = WDT_SUN4I },
+ 	{ .compat = "allwinner,sun6i-a31-wdt",	.value = WDT_SUN6I },
+ 	{ .compat = "allwinner,sun20i-d1-wdt",	.value = WDT_SUN20I },
++	{ .compat = "allwinner,sun55i-a523-wdt",	.value = WDT_SUN55I },
+ 	DEVICE_COMPAT_EOL
+ };
+ 
+@@ -97,6 +105,7 @@ struct sunxi_wdt_softc {
+ 	bus_space_handle_t sc_bsh;
+ 
+ 	const int *sc_periods;
++	bus_size_t sc_reg_shift;
+ 
+ 	struct sysmon_wdog sc_smw;
+ };
+@@ -105,6 +114,7 @@ struct sunxi_wdt_softc {
+     bus_space_read_4((sc)->sc_bst, (sc)->sc_bsh, (reg))
+ #define WDT_WRITE(sc, reg, val) \
+     bus_space_write_4((sc)->sc_bst, (sc)->sc_bsh, (reg), (val))
++#define WDT_REG(sc, reg)	((reg) - (sc)->sc_reg_shift)
+ 
+ static int
+ sunxi_wdt_map_period(struct sunxi_wdt_softc *sc, u_int period,
+@@ -197,7 +207,7 @@ sun6i_wdt_tickle(struct sysmon_wdog *smw)
+ 	const uint32_t ctrl = SUN6I_WDT_CTRL_RSTART |
+ 	    __SHIFTIN(SUN6I_WDT_CTRL_KEY_FIELD_V, SUN6I_WDT_CTRL_KEY_FIELD);
+ 
+-	WDT_WRITE(sc, SUN6I_WDT_CTRL_REG, ctrl);
++	WDT_WRITE(sc, WDT_REG(sc, SUN6I_WDT_CTRL_REG), ctrl);
+ 
+ 	return 0;
+ }
+@@ -211,7 +221,7 @@ sun20i_wdt_setmode(struct sysmon_wdog *smw)
+ 
+ 	if ((smw->smw_mode & WDOG_MODE_MASK) == WDOG_MODE_DISARMED) {
+ 		mode = __SHIFTIN(SUNXI_WDT_KEY_FIELD_V, SUNXI_WDT_KEY_FIELD);
+-		WDT_WRITE(sc, SUN6I_WDT_MODE_REG, mode);
++		WDT_WRITE(sc, WDT_REG(sc, SUN6I_WDT_MODE_REG), mode);
+ 	} else {
+ 		if (smw->smw_period == WDOG_PERIOD_DEFAULT)
+ 			smw->smw_period = SUNXI_WDT_PERIOD_DEFAULT;
+@@ -225,8 +235,8 @@ sun20i_wdt_setmode(struct sysmon_wdog *smw)
+ 		mode = SUN6I_WDT_MODE_EN | __SHIFTIN(intv, SUN6I_WDT_MODE_INTV);
+ 		mode |= __SHIFTIN(SUNXI_WDT_KEY_FIELD_V, SUNXI_WDT_KEY_FIELD);
+ 
+-		WDT_WRITE(sc, SUN6I_WDT_CFG_REG, cfg);
+-		WDT_WRITE(sc, SUN6I_WDT_MODE_REG, mode);
++		WDT_WRITE(sc, WDT_REG(sc, SUN6I_WDT_CFG_REG), cfg);
++		WDT_WRITE(sc, WDT_REG(sc, SUN6I_WDT_MODE_REG), mode);
+ 	}
+ 
+ 	return 0;
+@@ -295,6 +305,15 @@ sunxi_wdt_attach(device_t parent, device_t self, void *aux)
+ 		/* Disable watchdog IRQs */
+ 		WDT_WRITE(sc, SUN6I_WDT_IRQ_EN_REG, 0);
+ 		break;
++	case WDT_SUN55I:
++		sc->sc_reg_shift = SUN55I_WDT_REG_SHIFT;
++		sc->sc_smw.smw_setmode = sun20i_wdt_setmode;
++		sc->sc_smw.smw_tickle = sun6i_wdt_tickle;
++
++		/* Disable watchdog */
++		mode = __SHIFTIN(SUNXI_WDT_KEY_FIELD_V, SUNXI_WDT_KEY_FIELD);
++		WDT_WRITE(sc, WDT_REG(sc, SUN6I_WDT_MODE_REG), mode);
++		break;
+ 	}
+ 
+ 	aprint_normal_dev(self,

@@ -171,6 +171,16 @@
 			#reset-cells = <1>;
 		};
 
+		/* The same register layout as on the A523. */
+		wdt: watchdog@2050000 {
+			compatible = "allwinner,sun60i-a733-wdt",
+				     "allwinner,sun55i-a523-wdt";
+			reg = <0x02050000 0x20>;
+			interrupts = <GIC_SPI 106 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&osc24M>, <&osc32k>;
+			clock-names = "hosc", "losc";
+		};
+
 		uart0: serial@2500000 {
 			compatible = "snps,dw-apb-uart";
 			reg = <0x02500000 0x400>;
@@ -180,6 +190,16 @@
 			clocks = <&ccu CLK_BUS_UART0>;
 			resets = <&ccu RST_BUS_UART0>;
 			status = "disabled";
+		};
+
+		/* Not an upstream binding yet. */
+		ths: thermal-sensor@2522000 {
+			compatible = "allwinner,sun60i-a733-ths";
+			reg = <0x02522000 0x400>;
+			clocks = <&ccu CLK_BUS_THS0>, <&ccu CLK_GPADC0_24M>;
+			clock-names = "bus", "gpadc";
+			resets = <&ccu RST_BUS_THS0>;
+			#thermal-sensor-cells = <1>;
 		};
 
 		/* Not an upstream binding yet. */

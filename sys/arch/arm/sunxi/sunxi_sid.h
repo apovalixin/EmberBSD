@@ -29,6 +29,9 @@
 #ifndef _ARM_SUNXI_SID_H
 #define	_ARM_SUNXI_SID_H
 
+#include <sys/bus.h>
+
 int	sunxi_sid_read_tscalib(uint32_t *);
+int	sunxi_sid_read(bus_size_t, uint32_t *, u_int);
 
 #endif /* !_ARM_SUNXI_SID_H */

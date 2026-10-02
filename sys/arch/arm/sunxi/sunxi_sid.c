@@ -61,6 +61,7 @@ static const struct device_compatible_entry compat_data[] = {
 	{ .compat = "allwinner,sun8i-a83t-sid",	.data = &sun8i_h3_sid_config },
 	{ .compat = "allwinner,sun20i-d1-sid",	.data = &sun8i_h3_sid_config },
 	{ .compat = "allwinner,sun50i-a64-sid",	.data = &sun8i_h3_sid_config },
+	{ .compat = "allwinner,sun60i-a733-sid", .data = &sun8i_h3_sid_config },
 	DEVICE_COMPAT_EOL
 };
 
@@ -126,5 +127,19 @@ sunxi_sid_read_tscalib(uint32_t *calib)
 
 	calib[0] = EFUSE_READ(sid_softc, EFUSE_THERMAL_CALIB0);
 	calib[1] = EFUSE_READ(sid_softc, EFUSE_THERMAL_CALIB1);
+	return 0;
+}
+
+/* Read 32-bit words of the EFUSE, starting at a byte offset inside it. */
+int
+sunxi_sid_read(bus_size_t offset, uint32_t *words, u_int nwords)
+{
+	u_int n;
+
+	if (sid_softc == NULL)
+		return ENXIO;
+
+	for (n = 0; n < nwords; n++)
+		words[n] = EFUSE_READ(sid_softc, offset + 4 * n);
 	return 0;
 }

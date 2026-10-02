@@ -22,7 +22,7 @@ their provenance and support future porting; do not apply them again.
 | USB audio | One USB Audio Module A showed repeated device disconnections during playback; stable operation has not been confirmed |
 | Raspberry Pi Zero 2 W | Adaptations and kernel/device-tree builds are available; full device validation is not claimed |
 | Compute Module 5 | Diagnostic configuration and boot changes; full support is not claimed |
-| Orange Pi Zero 4 (Allwinner A733) | Boots from microSD to multi-user through the vendor boot loader: eight cores, clocks, pin multiplexing, SD card, gigabit Ethernet with a Motorcomm YT8531 PHY. Tested on physical hardware; RGMII delays were measured on the board with random data. No Wi-Fi or Bluetooth (AIC8800), PMIC, sensors, watchdog, USB or real-time clock yet |
+| Orange Pi Zero 4 (Allwinner A733) | Boots from microSD to multi-user through the vendor boot loader: eight cores, clocks, pin multiplexing, SD card, gigabit Ethernet with a Motorcomm YT8531 PHY, five temperature sensors calibrated from the EFUSE, watchdog. Tested on physical hardware; RGMII delays were measured on the board with random data. Without a heat sink the chip reached 89 degC after 13 minutes with all cores busy; there is no frequency scaling yet. No Wi-Fi or Bluetooth (AIC8800), PMIC, USB or real-time clock yet |
 | AirPods | Connection confirmed; reliable audio quality and headset microphone operation have not been confirmed |
 | ELM327 | Testing with a physical adapter is still pending |
 | BLE | Not implemented in the added Bluetooth management tools |

@@ -71,6 +71,12 @@ __KERNEL_RCSID(0, "$NetBSD: sunxi_wdt.c,v 1.6.26.1 2026/04/02 18:10:40 martin Ex
 #define	 SUNXI_WDT_KEY_FIELD		__BITS(31,16)
 #define	  SUNXI_WDT_KEY_FIELD_V		0x16aa
 
+/*
+ * The A523 and the A733 keep the sun20i control, configuration and mode
+ * registers four bytes lower.
+ */
+#define	SUN55I_WDT_REG_SHIFT		4
+
 static const int sunxi_periods[] = {
 	500, 1000, 2000, 3000,
 	4000, 5000, 6000, 8000,
@@ -82,12 +88,14 @@ enum sunxi_wdt_type {
 	WDT_SUN4I = 1,
 	WDT_SUN6I,
 	WDT_SUN20I,
+	WDT_SUN55I,
 };
 
 static const struct device_compatible_entry compat_data[] = {
 	{ .compat = "allwinner,sun4i-a10-wdt",	.value = WDT_SUN4I },
 	{ .compat = "allwinner,sun6i-a31-wdt",	.value = WDT_SUN6I },
 	{ .compat = "allwinner,sun20i-d1-wdt",	.value = WDT_SUN20I },
+	{ .compat = "allwinner,sun55i-a523-wdt",	.value = WDT_SUN55I },
 	DEVICE_COMPAT_EOL
 };
 
@@ -97,6 +105,7 @@ struct sunxi_wdt_softc {
 	bus_space_handle_t sc_bsh;
 
 	const int *sc_periods;
+	bus_size_t sc_reg_shift;
 
 	struct sysmon_wdog sc_smw;
 };
@@ -105,6 +114,7 @@ struct sunxi_wdt_softc {
     bus_space_read_4((sc)->sc_bst, (sc)->sc_bsh, (reg))
 #define WDT_WRITE(sc, reg, val) \
     bus_space_write_4((sc)->sc_bst, (sc)->sc_bsh, (reg), (val))
+#define WDT_REG(sc, reg)	((reg) - (sc)->sc_reg_shift)
 
 static int
 sunxi_wdt_map_period(struct sunxi_wdt_softc *sc, u_int period,
@@ -197,7 +207,7 @@ sun6i_wdt_tickle(struct sysmon_wdog *smw)
 	const uint32_t ctrl = SUN6I_WDT_CTRL_RSTART |
 	    __SHIFTIN(SUN6I_WDT_CTRL_KEY_FIELD_V, SUN6I_WDT_CTRL_KEY_FIELD);
 
-	WDT_WRITE(sc, SUN6I_WDT_CTRL_REG, ctrl);
+	WDT_WRITE(sc, WDT_REG(sc, SUN6I_WDT_CTRL_REG), ctrl);
 
 	return 0;
 }
@@ -211,7 +221,7 @@ sun20i_wdt_setmode(struct sysmon_wdog *smw)
 
 	if ((smw->smw_mode & WDOG_MODE_MASK) == WDOG_MODE_DISARMED) {
 		mode = __SHIFTIN(SUNXI_WDT_KEY_FIELD_V, SUNXI_WDT_KEY_FIELD);
-		WDT_WRITE(sc, SUN6I_WDT_MODE_REG, mode);
+		WDT_WRITE(sc, WDT_REG(sc, SUN6I_WDT_MODE_REG), mode);
 	} else {
 		if (smw->smw_period == WDOG_PERIOD_DEFAULT)
 			smw->smw_period = SUNXI_WDT_PERIOD_DEFAULT;
@@ -225,8 +235,8 @@ sun20i_wdt_setmode(struct sysmon_wdog *smw)
 		mode = SUN6I_WDT_MODE_EN | __SHIFTIN(intv, SUN6I_WDT_MODE_INTV);
 		mode |= __SHIFTIN(SUNXI_WDT_KEY_FIELD_V, SUNXI_WDT_KEY_FIELD);
 
-		WDT_WRITE(sc, SUN6I_WDT_CFG_REG, cfg);
-		WDT_WRITE(sc, SUN6I_WDT_MODE_REG, mode);
+		WDT_WRITE(sc, WDT_REG(sc, SUN6I_WDT_CFG_REG), cfg);
+		WDT_WRITE(sc, WDT_REG(sc, SUN6I_WDT_MODE_REG), mode);
 	}
 
 	return 0;
@@ -294,6 +304,15 @@ sunxi_wdt_attach(device_t parent, device_t self, void *aux)
 
 		/* Disable watchdog IRQs */
 		WDT_WRITE(sc, SUN6I_WDT_IRQ_EN_REG, 0);
+		break;
+	case WDT_SUN55I:
+		sc->sc_reg_shift = SUN55I_WDT_REG_SHIFT;
+		sc->sc_smw.smw_setmode = sun20i_wdt_setmode;
+		sc->sc_smw.smw_tickle = sun6i_wdt_tickle;
+
+		/* Disable watchdog */
+		mode = __SHIFTIN(SUNXI_WDT_KEY_FIELD_V, SUNXI_WDT_KEY_FIELD);
+		WDT_WRITE(sc, WDT_REG(sc, SUN6I_WDT_MODE_REG), mode);
 		break;
 	}
 

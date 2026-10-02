@@ -59,6 +59,7 @@ __KERNEL_RCSID(1, "$NetBSD$");
 #define	SMHC2_BGR_REG		0xd2c
 #define	UART_BGR_REG(n)		(0xe00 + 4 * (n))
 #define	TWI_BGR_REG(n)		(0xe80 + 4 * (n))
+#define	GPADC0_24M_CLK_REG	0xfc0
 #define	THS_BGR_REG		0xfe4
 #define	GMAC0_PHY_CLK_REG	0x1410
 #define	GMAC0_BGR_REG		0x141c
@@ -110,6 +111,7 @@ static const char *mmc_parents[] = {
 	"sys-24M", "pll-periph0-400M", "pll-periph0-300M",
 	"pll-periph1-400M", "pll-periph1-300M"
 };
+static const char *gpadc_24m_parents[] = { "sys-24M", "hosc" };
 static const char *emmc_parents[] = {
 	"sys-24M", "pll-periph0-800M", "pll-periph0-600M",
 	"pll-periph1-800M", "pll-periph1-600M"
@@ -227,6 +229,13 @@ static struct sunxi_ccu_clk sun60i_a733_ccu_clks[] = {
 	SUNXI_CCU_GATE(A733_CLK_BUS_I2C3, "bus-i2c3", "apb1",
 	    TWI_BGR_REG(3), 0),
 
+	/* The thermal sensors convert on this clock. */
+	SUNXI_CCU_DIV_GATE(A733_CLK_GPADC0_24M, "gpadc0-24m",
+	    gpadc_24m_parents, GPADC0_24M_CLK_REG,
+	    __BITS(4,0),		/* div */
+	    __BITS(26,24),		/* sel */
+	    __BIT(31),			/* enable */
+	    0),
 	SUNXI_CCU_GATE(A733_CLK_BUS_THS0, "bus-ths0", "apb0",
 	    THS_BGR_REG, 0),
 

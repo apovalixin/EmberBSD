@@ -53,6 +53,8 @@ __KERNEL_RCSID(0, "$NetBSD$");
 
 #include <dev/ic/dwc_eqos_var.h>
 
+#include <arm/sunxi/sunxi_sid.h>
+
 #include <prop/proplib.h>
 
 #define	EMAC_CLK_REG		0x00
@@ -67,8 +69,8 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define	EMAC_DELAY_STEP_PS	100
 #define	EMAC_DELAY_MAX		31
 
-/* The chip ID inside the security ID block. */
-#define	SID_CHIPID		0x200
+/* The chip ID at the start of the EFUSE. */
+#define	SID_CHIPID		0
 #define	SID_CHIPID_WORDS	4
 
 static const struct device_compatible_entry compat_data[] = {
@@ -104,25 +106,12 @@ sun60i_a733_eqos_delay(int phandle, const char *prop)
  * none. Derive one from the chip ID, so that it is the same on every boot.
  */
 static bool
-sun60i_a733_eqos_chip_address(struct eqos_softc *sc, uint8_t *enaddr)
+sun60i_a733_eqos_chip_address(uint8_t *enaddr)
 {
 	uint32_t id[SID_CHIPID_WORDS], lo, hi;
-	bus_space_handle_t bsh;
-	bus_addr_t addr;
-	bus_size_t size;
-	u_int n;
 
-	const int sid = of_find_bycompat(OF_finddevice("/"),
-	    "allwinner,sun60i-a733-sid");
-	if (sid <= 0 || fdtbus_get_reg(sid, 0, &addr, &size) != 0 ||
-	    size < SID_CHIPID + sizeof(id))
+	if (sunxi_sid_read(SID_CHIPID, id, SID_CHIPID_WORDS) != 0)
 		return false;
-	if (bus_space_map(sc->sc_bst, addr + SID_CHIPID, sizeof(id), 0,
-	    &bsh) != 0)
-		return false;
-	for (n = 0; n < SID_CHIPID_WORDS; n++)
-		id[n] = bus_space_read_4(sc->sc_bst, bsh, 4 * n);
-	bus_space_unmap(sc->sc_bst, bsh, sizeof(id));
 
 	lo = hash32_buf(id, sizeof(id), HASH32_BUF_INIT);
 	hi = hash32_buf(id, sizeof(id), lo);
@@ -152,7 +141,7 @@ sun60i_a733_eqos_set_address(struct eqos_softc *sc, int phandle)
 	if (addr != NULL && len == ETHER_ADDR_LEN &&
 	    memcmp(addr, zero, ETHER_ADDR_LEN) != 0) {
 		memcpy(enaddr, addr, ETHER_ADDR_LEN);
-	} else if (!sun60i_a733_eqos_chip_address(sc, enaddr)) {
+	} else if (!sun60i_a733_eqos_chip_address(enaddr)) {
 		cprng_strong(kern_cprng, enaddr, sizeof(enaddr), 0);
 		enaddr[0] = (enaddr[0] & ~0x01) | 0x02;
 	}
