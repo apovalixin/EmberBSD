@@ -565,9 +565,12 @@ mcommphyattach(device_t parent, device_t self, void *aux)
 	switch (msc->sc_type) {
 	case YT8521:
 	case YT8531:
-		/* Default values */
-		msc->sc_rx_clk_drv_microamp = YT8531_RGMII_RX_DS_DEFAULT;
-		msc->sc_rx_data_drv_microamp = YT8531_RGMII_RX_DS_DEFAULT;
+		/*
+		 * Default values. Zero microamps stands for "not given":
+		 * the pads then get the default drive strength code.
+		 */
+		msc->sc_rx_clk_drv_microamp = 0;
+		msc->sc_rx_data_drv_microamp = 0;
 		msc->sc_rx_internal_delay_ps = YT8521_DELAY_DEFAULT;
 		msc->sc_tx_internal_delay_ps = YT8521_DELAY_DEFAULT;
 

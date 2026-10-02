@@ -27,6 +27,11 @@ The watchdog has the sun20i registers four bytes lower, as on the A523.
 On the board it reset the system after its tickling process was killed,
 and the system booted again.
 
+mcommphy(4) kept a register code where it expects microamperes and then
+reported its own default as an unknown drive strength, which counted as a
+hardware detection error on every boot. The default is now "not given",
+which selects the same code silently.
+
 --- sys/arch/arm/sunxi/files.sunxi
 +++ sys/arch/arm/sunxi/files.sunxi
 @@ -78,6 +78,20 @@ device	sun50ih6ccu: sunxi_ccu
@@ -2416,3 +2421,21 @@ and the system booted again.
  	}
  
  	aprint_normal_dev(self,
+--- sys/dev/mii/mcommphy.c
++++ sys/dev/mii/mcommphy.c
+@@ -565,9 +565,12 @@ mcommphyattach(device_t parent, device_t self, void *aux)
+ 	switch (msc->sc_type) {
+ 	case YT8521:
+ 	case YT8531:
+-		/* Default values */
+-		msc->sc_rx_clk_drv_microamp = YT8531_RGMII_RX_DS_DEFAULT;
+-		msc->sc_rx_data_drv_microamp = YT8531_RGMII_RX_DS_DEFAULT;
++		/*
++		 * Default values. Zero microamps stands for "not given":
++		 * the pads then get the default drive strength code.
++		 */
++		msc->sc_rx_clk_drv_microamp = 0;
++		msc->sc_rx_data_drv_microamp = 0;
+ 		msc->sc_rx_internal_delay_ps = YT8521_DELAY_DEFAULT;
+ 		msc->sc_tx_internal_delay_ps = YT8521_DELAY_DEFAULT;
+ 
