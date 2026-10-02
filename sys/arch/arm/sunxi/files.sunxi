@@ -78,6 +78,11 @@ device	sun50ih6ccu: sunxi_ccu
 attach	sun50ih6ccu at fdt with sunxi_h6_ccu
 file	arch/arm/sunxi/sun50i_h6_ccu.c		sunxi_h6_ccu
 
+# CCU (A733)
+device	sun60ia733ccu: sunxi_ccu
+attach	sun60ia733ccu at fdt with sunxi_a733_ccu
+file	arch/arm/sunxi/sun60i_a733_ccu.c	sunxi_a733_ccu
+
 # CCU (H6 PRCM)
 device	sun50ih6rccu: sunxi_ccu
 attach	sun50ih6rccu at fdt with sunxi_h6_r_ccu

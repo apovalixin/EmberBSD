@@ -1,0 +1,42 @@
+// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
+/*
+ * Orange Pi Zero 4.
+ *
+ * The vendor boot loader hands over with the console UART and the
+ * microSD pins already configured and the card powered.
+ */
+
+/dts-v1/;
+
+#include "sun60i-a733.dtsi"
+
+/ {
+	model = "OrangePi Zero 4";
+	compatible = "xunlong,orangepi-zero4", "allwinner,sun60i-a733";
+
+	aliases {
+		serial0 = &uart0;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+	};
+
+	/* The boot loader replaces the size with what it trained. */
+	memory@40000000 {
+		device_type = "memory";
+		reg = <0x0 0x40000000 0x0 0x40000000>;
+	};
+};
+
+&mmc0 {
+	bus-width = <4>;
+	/* PMIC rails are not described yet: stay at 3.3 V signalling. */
+	max-frequency = <50000000>;
+	broken-cd;
+	status = "okay";
+};
+
+&uart0 {
+	status = "okay";
+};

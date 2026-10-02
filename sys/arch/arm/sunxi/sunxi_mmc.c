@@ -141,6 +141,7 @@ struct sunxi_mmc_config {
 #define	SUNXI_MMC_FLAG_NEW_TIMINGS	0x02
 #define	SUNXI_MMC_FLAG_MASK_DATA0	0x04
 #define	SUNXI_MMC_FLAG_HS200		0x08
+#define	SUNXI_MMC_FLAG_CLEAR_THLDC	0x10
 	const struct sunxi_mmc_delay *delays;
 	uint32_t dma_ftrglevel;
 };
@@ -256,6 +257,21 @@ static const struct sunxi_mmc_config sun20i_d1_mmc_config = {
 		 SUNXI_MMC_FLAG_MASK_DATA0,
 };
 
+/*
+ * As the D1, but the boot loader leaves the card write threshold enabled,
+ * which stalls the first write through the internal DMA.
+ */
+static const struct sunxi_mmc_config sun60i_a733_mmc_config = {
+	.idma_xferlen = 0x2000,
+	.idma_shift = 2,
+	.dma_ftrglevel = 0x20070008,
+	.delays = NULL,
+	.flags = SUNXI_MMC_FLAG_CALIB_REG |
+		 SUNXI_MMC_FLAG_NEW_TIMINGS |
+		 SUNXI_MMC_FLAG_MASK_DATA0 |
+		 SUNXI_MMC_FLAG_CLEAR_THLDC,
+};
+
 static const struct sunxi_mmc_config sun50i_a64_mmc_config = {
 	.idma_xferlen = 0x10000,
 	.dma_ftrglevel = 0x20070008,
@@ -301,6 +317,12 @@ static const struct device_compatible_entry compat_data[] = {
 	  .data = &sun8i_a83t_emmc_config },
 	{ .compat = "allwinner,sun9i-a80-mmc",
 	  .data = &sun9i_a80_mmc_config },
+	/*
+	 * The first entry of this table that the device names wins, and the
+	 * A733 names the D1 as its fallback: keep the A733 above it.
+	 */
+	{ .compat = "allwinner,sun60i-a733-mmc",
+	  .data = &sun60i_a733_mmc_config },
 	{ .compat = "allwinner,sun20i-d1-mmc",
 	  .data = &sun20i_d1_mmc_config },
 	{ .compat = "allwinner,sun50i-a64-mmc",
@@ -735,6 +757,9 @@ sunxi_mmc_host_reset(sdmmc_chipset_handle_t sch)
 	}
 
 	MMC_WRITE(sc, SUNXI_MMC_TIMEOUT, 0xffffffff);
+
+	if (sc->sc_config->flags & SUNXI_MMC_FLAG_CLEAR_THLDC)
+		MMC_WRITE(sc, SUNXI_MMC_THLDC, 0);
 
 	MMC_WRITE(sc, SUNXI_MMC_IMASK, 0);
 

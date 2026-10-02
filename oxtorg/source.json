@@ -171,6 +171,7 @@
     "sdhc-acpi-power-d0.diff",
     "sdhc-adma2-pio.diff",
     "sdhc-led-act.diff",
+    "sun60i-a733.diff",
     "vcmbox-pi5.diff"
   ],
   "firmwareRepository": "https://github.com/eotics-com/rpi5-uefi.git",
