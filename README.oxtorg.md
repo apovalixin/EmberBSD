@@ -36,8 +36,9 @@ and Python 3.13 from pkgsrc. From a clean checkout of a pinned commit:
 sh oxtorg/build-kernel.sh /absolute/output OXTORG64
 ```
 
-The build produces an ELF kernel, a native kernel image and device tree for
-Zero 2 W, and Ethernet, Bluetooth UART, and WM8960 modules. Validate new
+The build produces an ELF kernel, a native kernel image, device trees for
+Zero 2 W and Orange Pi Zero 4, and Ethernet, Bluetooth UART, and WM8960
+modules. Validate new
 builds on the build environment before deployment. Building and booting
 all components of a complete release requires separate validation; the
 current installation recipe uses the official NetBSD 11.0 userland.
@@ -53,6 +54,12 @@ order is defined in `oxtorg/firmware/series`. Standard, console, and diagnostic
 variants use separate output directories. Radio firmware assets are fetched
 according to `oxtorg/boot/image-assets.tsv`, with hash verification and
 license preservation; their binaries are not included in the repository.
+
+Orange Pi Zero 4 starts through the board vendor's boot0 and U-Boot. They
+are closed binaries and are not included in the repository: an image
+builder copies them from the vendor's own card image. U-Boot then runs
+`oxtorg/boot/orangepi-zero4-boot.cmd`, which loads the native kernel and
+the device tree from the first partition.
 
 Starting a UEFI rebuild removes the previous output for the selected
 variant. If Docker or compilation fails, an image builder will stop because
