@@ -50,6 +50,7 @@ __KERNEL_RCSID(1, "$NetBSD$");
 #define	APB0_CFG_REG		0x510
 #define	APB1_CFG_REG		0x518
 #define	APB_UART_CFG_REG	0x538
+#define	MBUS_GATE_REG		0x5e4
 #define	SMHC0_CLK_REG		0xd00
 #define	SMHC0_BGR_REG		0xd0c
 #define	SMHC1_CLK_REG		0xd10
@@ -188,6 +189,9 @@ static struct sunxi_ccu_clk sun60i_a733_ccu_clks[] = {
 	    __BITS(4,0),		/* div */
 	    __BITS(26,24),		/* sel */
 	    0),
+
+	SUNXI_CCU_GATE(A733_CLK_MBUS_GMAC0, "mbus-gmac0", "ahb",
+	    MBUS_GATE_REG, 11),
 
 	A733_MMC(A733_CLK_MMC0, "mmc0", mmc_parents, SMHC0_CLK_REG),
 	A733_MMC(A733_CLK_MMC1, "mmc1", mmc_parents, SMHC1_CLK_REG),

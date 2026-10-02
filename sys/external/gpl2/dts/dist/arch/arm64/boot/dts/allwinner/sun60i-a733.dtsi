@@ -128,6 +128,40 @@
 		#size-cells = <1>;
 		ranges = <0x0 0x0 0x0 0x40000000>;
 
+		pio: pinctrl@2000000 {
+			compatible = "allwinner,sun60i-a733-pinctrl";
+			reg = <0x02000000 0x800>;
+			clocks = <&ccu CLK_APB1>, <&osc24M>, <&osc32k>;
+			clock-names = "apb", "hosc", "losc";
+			gpio-controller;
+			#gpio-cells = <3>;
+
+			gmac0_rgmii_pins: gmac0-rgmii-pins {
+				pins = "PH0", "PH1", "PH2", "PH3",
+				       "PH4", "PH5", "PH6", "PH7",
+				       "PH8", "PH9", "PH10", "PH11",
+				       "PH12", "PH13", "PH14", "PH15";
+				function = "gmac0";
+				allwinner,pinmux = <5>;
+				drive-strength = <20>;
+				bias-pull-up;
+			};
+
+			mmc0_pins: mmc0-pins {
+				pins = "PF0", "PF1", "PF2", "PF3", "PF4", "PF5";
+				function = "mmc0";
+				allwinner,pinmux = <2>;
+				drive-strength = <30>;
+				bias-pull-up;
+			};
+
+			uart0_pb_pins: uart0-pb-pins {
+				pins = "PB9", "PB10";
+				function = "uart0";
+				allwinner,pinmux = <2>;
+			};
+		};
+
 		ccu: clock-controller@2002000 {
 			compatible = "allwinner,sun60i-a733-ccu";
 			reg = <0x02002000 0x2000>;
@@ -146,6 +180,12 @@
 			clocks = <&ccu CLK_BUS_UART0>;
 			resets = <&ccu RST_BUS_UART0>;
 			status = "disabled";
+		};
+
+		/* Not an upstream binding yet. */
+		sid: efuse@3006000 {
+			compatible = "allwinner,sun60i-a733-sid";
+			reg = <0x03006000 0x1000>;
 		};
 
 		gic: interrupt-controller@3400000 {
@@ -171,6 +211,39 @@
 			#address-cells = <1>;
 			#size-cells = <0>;
 			status = "disabled";
+		};
+
+		/*
+		 * The compatible string is not an upstream binding yet;
+		 * the Linux driver for the A523 calls its controller
+		 * allwinner,sun55i-a523-gmac200.
+		 */
+		gmac0: ethernet@4500000 {
+			compatible = "allwinner,sun60i-a733-gmac210";
+			reg = <0x04500000 0x8000>;
+			interrupts = <GIC_SPI 172 IRQ_TYPE_LEVEL_HIGH>;
+			interrupt-names = "macirq";
+			clocks = <&ccu CLK_BUS_GMAC0>, <&ccu CLK_MBUS_GMAC0>,
+				 <&ccu CLK_GMAC0_PHY>;
+			clock-names = "stmmaceth", "mbus", "phy";
+			assigned-clocks = <&ccu CLK_GMAC0_PHY>;
+			assigned-clock-rates = <25000000>;
+			resets = <&ccu RST_BUS_GMAC0>, <&ccu RST_BUS_GMAC0_AXI>;
+			reset-names = "stmmaceth", "ahb";
+			syscon = <&gmac0_syscon>;
+			status = "disabled";
+
+			mdio0: mdio {
+				compatible = "snps,dwmac-mdio";
+				#address-cells = <1>;
+				#size-cells = <0>;
+			};
+		};
+
+		gmac0_syscon: syscon@4508000 {
+			compatible = "allwinner,sun60i-a733-gmac-syscon",
+				     "syscon";
+			reg = <0x04508000 0x100>;
 		};
 	};
 };

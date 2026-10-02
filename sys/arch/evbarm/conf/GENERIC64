@@ -255,6 +255,7 @@ plgpio* 	at acpi?
 qcomgpio*	at acpi?		# Qualcomm GPIO
 rkgpio* 	at rkiomux?		# Rockchip GPIO
 sunxigpio*	at fdt? pass 3		# Allwinner GPIO
+sun60ia733gpio*	at fdt? pass 3		# Allwinner A733 GPIO
 tegragpio*	at fdt? pass 2		# NVIDIA Tegra GPIO
 gpio*		at gpiobus?
 

@@ -29,7 +29,34 @@
 	};
 };
 
+/*
+ * The MAC delays both RGMII clocks and the PHY adds nothing. Measured on
+ * the board with 32 MiB of random data per 100 ps step: transmit works
+ * from 0 to 1300 ps, receive from 1200 to 2700 ps. The values below are
+ * the middles of those windows. The vendor's 1200 and 1000 ps sit on the
+ * edge of the first window and outside the second.
+ */
+&gmac0 {
+	phy-mode = "rgmii";
+	phy-handle = <&ext_rgmii_phy>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&gmac0_rgmii_pins>;
+	allwinner,tx-delay-ps = <600>;
+	allwinner,rx-delay-ps = <2000>;
+	status = "okay";
+};
+
+&mdio0 {
+	/* Motorcomm YT8531 */
+	ext_rgmii_phy: ethernet-phy@1 {
+		compatible = "ethernet-phy-ieee802.3-c22";
+		reg = <1>;
+	};
+};
+
 &mmc0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&mmc0_pins>;
 	bus-width = <4>;
 	/* PMIC rails are not described yet: stay at 3.3 V signalling. */
 	max-frequency = <50000000>;
@@ -38,5 +65,7 @@
 };
 
 &uart0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart0_pb_pins>;
 	status = "okay";
 };

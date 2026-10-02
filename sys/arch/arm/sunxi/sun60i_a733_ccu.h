@@ -49,6 +49,7 @@
 #define	A733_CLK_APB0			44
 #define	A733_CLK_APB1			45
 #define	A733_CLK_APB_UART		46
+#define	A733_CLK_MBUS_GMAC0		91
 #define	A733_CLK_MMC0			139
 #define	A733_CLK_BUS_MMC0		140
 #define	A733_CLK_MMC1			141

@@ -1490,7 +1490,7 @@ eqos_attach(struct eqos_softc *sc)
 	    GMAC_MAC_VERSION_USERVER_SHIFT;
 	snpsver = ver & GMAC_MAC_VERSION_SNPSVER_MASK;
 
-	if ((snpsver < 0x51) || (snpsver > 0x52)) {
+	if ((snpsver < 0x51) || (snpsver > 0x53)) {
 		aprint_error(": EQOS version 0x%02x not supported\n",
 		    snpsver);
 		return ENXIO;

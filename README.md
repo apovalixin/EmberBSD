@@ -2,13 +2,36 @@
 
 NetBSD2 is an independent fork of [NetBSD](https://github.com/NetBSD/src),
 based on version 11, for single-board computers and embedded systems.
-Its primary focus is Raspberry Pi 5 hardware support: device drivers,
-kernel fixes, and tools for building the kernel and UEFI firmware.
+It adds hardware support for Raspberry Pi 5 and related boards and for
+the Allwinner A733: device drivers, kernel fixes, device trees, and tools
+for building the kernel and UEFI firmware.
 
-Wi-Fi, Ethernet, cooling, the built-in Bluetooth controller, and WM8960
-Audio HAT microphones have been tested on physical Raspberry Pi 5 hardware.
-The tree also includes Raspberry Pi Zero 2 W adaptations and diagnostic
-changes for Compute Module 5; their validation status differs from Pi 5.
+## Supported boards
+
+Every "Tested" below is a result on physical hardware, on the board
+revision named in the column. "Not validated" means no hardware result is
+claimed, whether or not driver code is present. "No" means there is no
+driver.
+
+| Function | Raspberry Pi 5 (C1) | Compute Module 5 (D0) | Raspberry Pi Zero 2 W | Orange Pi Zero 4 |
+|---|---|---|---|---|
+| SoC | BCM2712 | BCM2712 | BCM2710A1 | Allwinner A733 |
+| Boot path | UEFI and ACPI, firmware built from this tree | UEFI and ACPI | Native firmware and device tree | Vendor boot0 and U-Boot, device tree |
+| Boot storage | microSD: Tested | eMMC: Tested | microSD: Tested | microSD: Tested |
+| Serial console | Tested | Tested | Tested | Tested |
+| All CPU cores | Tested | Not validated | Tested | Tested (8 cores) |
+| Ethernet | Tested | Not validated | No port | Tested (gigabit) |
+| Wi-Fi | Tested | Tested | Tested at 2.4 GHz; large transfers stall | No (AIC8800) |
+| Bluetooth | Classic: Tested; BLE: No | Not validated | Not validated | No |
+| Temperature sensor | Tested | Not validated | Tested | No |
+| Fan control | Tested | Not validated | No fan | No |
+| Watchdog | Tested | Not validated | Not validated | No |
+| I2C | Tested (WM8960 codec) | Not validated | Not validated | No |
+| Audio | WM8960 HAT: Tested | Not validated | Not validated | No |
+| Pin multiplexing and GPIO | Not validated | Not validated | Not validated | Pin multiplexing: Tested; no pin interrupts |
+| Real-time clock | Not validated | Not validated | None on the board | No |
+
+Long-run stability has not been established on any of these boards.
 
 See [hardware support, build instructions, and limitations](README.oxtorg.md)
 for validation details and source provenance. Changes in this fork should

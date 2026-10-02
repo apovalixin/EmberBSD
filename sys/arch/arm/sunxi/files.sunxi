@@ -83,6 +83,15 @@ device	sun60ia733ccu: sunxi_ccu
 attach	sun60ia733ccu at fdt with sunxi_a733_ccu
 file	arch/arm/sunxi/sun60i_a733_ccu.c	sunxi_a733_ccu
 
+# GPIO and pin control (A733)
+device	sun60ia733gpio
+attach	sun60ia733gpio at fdt with sun60i_a733_gpio
+file	arch/arm/sunxi/sun60i_a733_gpio.c	sun60i_a733_gpio
+
+# Gigabit Ethernet (A733)
+attach	eqos at fdt with sun60i_a733_eqos
+file	arch/arm/sunxi/sun60i_a733_eqos.c	sun60i_a733_eqos
+
 # CCU (H6 PRCM)
 device	sun50ih6rccu: sunxi_ccu
 attach	sun50ih6rccu at fdt with sunxi_h6_r_ccu

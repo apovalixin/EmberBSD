@@ -1,8 +1,9 @@
 Origin:
 Allwinner A733 (sun60iw2) and the Orange Pi Zero 4: the clock control unit,
-the SD/MMC controller variant and device trees. With these the board boots
-from microSD to multi-user on the serial console. The register map was read
-on the board and agrees with the vendor kernel. The clock and reset numbers
+the pin controller, an SD/MMC controller variant, Ethernet glue for the
+DesignWare EQOS core and device trees. With these the board boots from
+microSD to multi-user with gigabit Ethernet. The register map was read on
+the board and agrees with the vendor kernel. The clock and reset numbers
 are those of the Linux binding allwinner,sun60i-a733-ccu (v3, September
 2026), whose headers are imported unchanged.
 
@@ -10,9 +11,13 @@ The boot loader leaves the SD card write threshold enabled, and the first
 write through the internal DMA never completes; the A733 variant of
 sunximmc clears it on host reset.
 
+The EQOS core reports version 5.3, which the driver now accepts. The MAC
+address is derived from the chip ID. The RGMII delays in the board tree
+are the middles of the windows measured on the board.
+
 --- sys/arch/arm/sunxi/files.sunxi
 +++ sys/arch/arm/sunxi/files.sunxi
-@@ -78,6 +78,11 @@ device	sun50ih6ccu: sunxi_ccu
+@@ -78,6 +78,20 @@ device	sun50ih6ccu: sunxi_ccu
  attach	sun50ih6ccu at fdt with sunxi_h6_ccu
  file	arch/arm/sunxi/sun50i_h6_ccu.c		sunxi_h6_ccu
  
@@ -21,87 +26,21 @@ sunximmc clears it on host reset.
 +attach	sun60ia733ccu at fdt with sunxi_a733_ccu
 +file	arch/arm/sunxi/sun60i_a733_ccu.c	sunxi_a733_ccu
 +
++# GPIO and pin control (A733)
++device	sun60ia733gpio
++attach	sun60ia733gpio at fdt with sun60i_a733_gpio
++file	arch/arm/sunxi/sun60i_a733_gpio.c	sun60i_a733_gpio
++
++# Gigabit Ethernet (A733)
++attach	eqos at fdt with sun60i_a733_eqos
++file	arch/arm/sunxi/sun60i_a733_eqos.c	sun60i_a733_eqos
++
  # CCU (H6 PRCM)
  device	sun50ih6rccu: sunxi_ccu
  attach	sun50ih6rccu at fdt with sunxi_h6_r_ccu
---- sys/arch/arm/sunxi/sunxi_mmc.c
-+++ sys/arch/arm/sunxi/sunxi_mmc.c
-@@ -141,6 +141,7 @@ struct sunxi_mmc_config {
- #define	SUNXI_MMC_FLAG_NEW_TIMINGS	0x02
- #define	SUNXI_MMC_FLAG_MASK_DATA0	0x04
- #define	SUNXI_MMC_FLAG_HS200		0x08
-+#define	SUNXI_MMC_FLAG_CLEAR_THLDC	0x10
- 	const struct sunxi_mmc_delay *delays;
- 	uint32_t dma_ftrglevel;
- };
-@@ -256,6 +257,21 @@ static const struct sunxi_mmc_config sun20i_d1_mmc_config = {
- 		 SUNXI_MMC_FLAG_MASK_DATA0,
- };
- 
-+/*
-+ * As the D1, but the boot loader leaves the card write threshold enabled,
-+ * which stalls the first write through the internal DMA.
-+ */
-+static const struct sunxi_mmc_config sun60i_a733_mmc_config = {
-+	.idma_xferlen = 0x2000,
-+	.idma_shift = 2,
-+	.dma_ftrglevel = 0x20070008,
-+	.delays = NULL,
-+	.flags = SUNXI_MMC_FLAG_CALIB_REG |
-+		 SUNXI_MMC_FLAG_NEW_TIMINGS |
-+		 SUNXI_MMC_FLAG_MASK_DATA0 |
-+		 SUNXI_MMC_FLAG_CLEAR_THLDC,
-+};
-+
- static const struct sunxi_mmc_config sun50i_a64_mmc_config = {
- 	.idma_xferlen = 0x10000,
- 	.dma_ftrglevel = 0x20070008,
-@@ -301,6 +317,12 @@ static const struct device_compatible_entry compat_data[] = {
- 	  .data = &sun8i_a83t_emmc_config },
- 	{ .compat = "allwinner,sun9i-a80-mmc",
- 	  .data = &sun9i_a80_mmc_config },
-+	/*
-+	 * The first entry of this table that the device names wins, and the
-+	 * A733 names the D1 as its fallback: keep the A733 above it.
-+	 */
-+	{ .compat = "allwinner,sun60i-a733-mmc",
-+	  .data = &sun60i_a733_mmc_config },
- 	{ .compat = "allwinner,sun20i-d1-mmc",
- 	  .data = &sun20i_d1_mmc_config },
- 	{ .compat = "allwinner,sun50i-a64-mmc",
-@@ -736,6 +758,9 @@ sunxi_mmc_host_reset(sdmmc_chipset_handle_t sch)
- 
- 	MMC_WRITE(sc, SUNXI_MMC_TIMEOUT, 0xffffffff);
- 
-+	if (sc->sc_config->flags & SUNXI_MMC_FLAG_CLEAR_THLDC)
-+		MMC_WRITE(sc, SUNXI_MMC_THLDC, 0);
-+
- 	MMC_WRITE(sc, SUNXI_MMC_IMASK, 0);
- 
- 	MMC_WRITE(sc, SUNXI_MMC_RINT, 0xffffffff);
---- sys/arch/arm/sunxi/sunxi_mmc.h
-+++ sys/arch/arm/sunxi/sunxi_mmc.h
-@@ -59,6 +59,7 @@
- #define SUNXI_MMC_IDIE			0x008C
- #define SUNXI_MMC_CHDA			0x0090
- #define SUNXI_MMC_CBDA			0x0094
-+#define SUNXI_MMC_THLDC			0x0100
- #define	SUNXI_MMC_SAMP_DL		0x0144
- 
- #define SUNXI_MMC_GCTRL_ACCESS_BY_AHB	__BIT(31)
---- sys/arch/evbarm/conf/GENERIC64
-+++ sys/arch/evbarm/conf/GENERIC64
-@@ -238,6 +238,7 @@ sun50ia64ccu*	at fdt? pass 2		# Allwinner A64 CCU
- sun50ia64rccu*	at fdt? pass 2		# Allwinner A64 CCU (PRCM)
- sun50ih6ccu*	at fdt? pass 2		# Allwinner H6 CCU
- sun50ih6rccu*	at fdt? pass 2		# Allwinner H6 CCU (PRCM)
-+sun60ia733ccu*	at fdt? pass 2		# Allwinner A733 CCU
- sunxide2ccu*	at fdt? pass 3		# Allwinner DE2 clock controller
- sunxiresets*	at fdt? pass 1		# Allwinner misc. resets
- sunxigates*	at fdt? pass 1		# Allwinner misc. gates
 --- /dev/null
 +++ sys/arch/arm/sunxi/sun60i_a733_ccu.c
-@@ -0,0 +1,270 @@
+@@ -0,0 +1,274 @@
 +/*-
 + * Copyright (c) 2026 Anton and oxtorg contributors
 + * All rights reserved.
@@ -154,6 +93,7 @@ sunximmc clears it on host reset.
 +#define	APB0_CFG_REG		0x510
 +#define	APB1_CFG_REG		0x518
 +#define	APB_UART_CFG_REG	0x538
++#define	MBUS_GATE_REG		0x5e4
 +#define	SMHC0_CLK_REG		0xd00
 +#define	SMHC0_BGR_REG		0xd0c
 +#define	SMHC1_CLK_REG		0xd10
@@ -293,6 +233,9 @@ sunximmc clears it on host reset.
 +	    __BITS(26,24),		/* sel */
 +	    0),
 +
++	SUNXI_CCU_GATE(A733_CLK_MBUS_GMAC0, "mbus-gmac0", "ahb",
++	    MBUS_GATE_REG, 11),
++
 +	A733_MMC(A733_CLK_MMC0, "mmc0", mmc_parents, SMHC0_CLK_REG),
 +	A733_MMC(A733_CLK_MMC1, "mmc1", mmc_parents, SMHC1_CLK_REG),
 +	A733_MMC(A733_CLK_MMC2, "mmc2", emmc_parents, SMHC2_CLK_REG),
@@ -374,7 +317,7 @@ sunximmc clears it on host reset.
 +}
 --- /dev/null
 +++ sys/arch/arm/sunxi/sun60i_a733_ccu.h
-@@ -0,0 +1,91 @@
+@@ -0,0 +1,92 @@
 +/*-
 + * Copyright (c) 2026 Anton and oxtorg contributors
 + * All rights reserved.
@@ -426,6 +369,7 @@ sunximmc clears it on host reset.
 +#define	A733_CLK_APB0			44
 +#define	A733_CLK_APB1			45
 +#define	A733_CLK_APB_UART		46
++#define	A733_CLK_MBUS_GMAC0		91
 +#define	A733_CLK_MMC0			139
 +#define	A733_CLK_BUS_MMC0		140
 +#define	A733_CLK_MMC1			141
@@ -466,9 +410,103 @@ sunximmc clears it on host reset.
 +#define	A733_RST_BUS_GMAC0_AXI		94
 +
 +#endif /* _SUN60I_A733_CCU_H */
+--- sys/arch/arm/sunxi/sunxi_mmc.c
++++ sys/arch/arm/sunxi/sunxi_mmc.c
+@@ -141,6 +141,7 @@ struct sunxi_mmc_config {
+ #define	SUNXI_MMC_FLAG_NEW_TIMINGS	0x02
+ #define	SUNXI_MMC_FLAG_MASK_DATA0	0x04
+ #define	SUNXI_MMC_FLAG_HS200		0x08
++#define	SUNXI_MMC_FLAG_CLEAR_THLDC	0x10
+ 	const struct sunxi_mmc_delay *delays;
+ 	uint32_t dma_ftrglevel;
+ };
+@@ -256,6 +257,21 @@ static const struct sunxi_mmc_config sun20i_d1_mmc_config = {
+ 		 SUNXI_MMC_FLAG_MASK_DATA0,
+ };
+ 
++/*
++ * As the D1, but the boot loader leaves the card write threshold enabled,
++ * which stalls the first write through the internal DMA.
++ */
++static const struct sunxi_mmc_config sun60i_a733_mmc_config = {
++	.idma_xferlen = 0x2000,
++	.idma_shift = 2,
++	.dma_ftrglevel = 0x20070008,
++	.delays = NULL,
++	.flags = SUNXI_MMC_FLAG_CALIB_REG |
++		 SUNXI_MMC_FLAG_NEW_TIMINGS |
++		 SUNXI_MMC_FLAG_MASK_DATA0 |
++		 SUNXI_MMC_FLAG_CLEAR_THLDC,
++};
++
+ static const struct sunxi_mmc_config sun50i_a64_mmc_config = {
+ 	.idma_xferlen = 0x10000,
+ 	.dma_ftrglevel = 0x20070008,
+@@ -301,6 +317,12 @@ static const struct device_compatible_entry compat_data[] = {
+ 	  .data = &sun8i_a83t_emmc_config },
+ 	{ .compat = "allwinner,sun9i-a80-mmc",
+ 	  .data = &sun9i_a80_mmc_config },
++	/*
++	 * The first entry of this table that the device names wins, and the
++	 * A733 names the D1 as its fallback: keep the A733 above it.
++	 */
++	{ .compat = "allwinner,sun60i-a733-mmc",
++	  .data = &sun60i_a733_mmc_config },
+ 	{ .compat = "allwinner,sun20i-d1-mmc",
+ 	  .data = &sun20i_d1_mmc_config },
+ 	{ .compat = "allwinner,sun50i-a64-mmc",
+@@ -736,6 +758,9 @@ sunxi_mmc_host_reset(sdmmc_chipset_handle_t sch)
+ 
+ 	MMC_WRITE(sc, SUNXI_MMC_TIMEOUT, 0xffffffff);
+ 
++	if (sc->sc_config->flags & SUNXI_MMC_FLAG_CLEAR_THLDC)
++		MMC_WRITE(sc, SUNXI_MMC_THLDC, 0);
++
+ 	MMC_WRITE(sc, SUNXI_MMC_IMASK, 0);
+ 
+ 	MMC_WRITE(sc, SUNXI_MMC_RINT, 0xffffffff);
+--- sys/arch/arm/sunxi/sunxi_mmc.h
++++ sys/arch/arm/sunxi/sunxi_mmc.h
+@@ -59,6 +59,7 @@
+ #define SUNXI_MMC_IDIE			0x008C
+ #define SUNXI_MMC_CHDA			0x0090
+ #define SUNXI_MMC_CBDA			0x0094
++#define SUNXI_MMC_THLDC			0x0100
+ #define	SUNXI_MMC_SAMP_DL		0x0144
+ 
+ #define SUNXI_MMC_GCTRL_ACCESS_BY_AHB	__BIT(31)
+--- sys/arch/evbarm/conf/GENERIC64
++++ sys/arch/evbarm/conf/GENERIC64
+@@ -238,6 +238,7 @@ sun50ia64ccu*	at fdt? pass 2		# Allwinner A64 CCU
+ sun50ia64rccu*	at fdt? pass 2		# Allwinner A64 CCU (PRCM)
+ sun50ih6ccu*	at fdt? pass 2		# Allwinner H6 CCU
+ sun50ih6rccu*	at fdt? pass 2		# Allwinner H6 CCU (PRCM)
++sun60ia733ccu*	at fdt? pass 2		# Allwinner A733 CCU
+ sunxide2ccu*	at fdt? pass 3		# Allwinner DE2 clock controller
+ sunxiresets*	at fdt? pass 1		# Allwinner misc. resets
+ sunxigates*	at fdt? pass 1		# Allwinner misc. gates
+@@ -254,6 +255,7 @@ plgpio* 	at acpi?
+ qcomgpio*	at acpi?		# Qualcomm GPIO
+ rkgpio* 	at rkiomux?		# Rockchip GPIO
+ sunxigpio*	at fdt? pass 3		# Allwinner GPIO
++sun60ia733gpio*	at fdt? pass 3		# Allwinner A733 GPIO
+ tegragpio*	at fdt? pass 2		# NVIDIA Tegra GPIO
+ gpio*		at gpiobus?
+ 
+--- sys/dev/ic/dwc_eqos.c
++++ sys/dev/ic/dwc_eqos.c
+@@ -1490,7 +1490,7 @@ eqos_attach(struct eqos_softc *sc)
+ 	    GMAC_MAC_VERSION_USERVER_SHIFT;
+ 	snpsver = ver & GMAC_MAC_VERSION_SNPSVER_MASK;
+ 
+-	if ((snpsver < 0x51) || (snpsver > 0x52)) {
++	if ((snpsver < 0x51) || (snpsver > 0x53)) {
+ 		aprint_error(": EQOS version 0x%02x not supported\n",
+ 		    snpsver);
+ 		return ENXIO;
 --- /dev/null
 +++ sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner/sun60i-a733-orangepi-zero4.dts
-@@ -0,0 +1,42 @@
+@@ -0,0 +1,71 @@
 +// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
 +/*
 + * Orange Pi Zero 4.
@@ -500,7 +538,34 @@ sunximmc clears it on host reset.
 +	};
 +};
 +
++/*
++ * The MAC delays both RGMII clocks and the PHY adds nothing. Measured on
++ * the board with 32 MiB of random data per 100 ps step: transmit works
++ * from 0 to 1300 ps, receive from 1200 to 2700 ps. The values below are
++ * the middles of those windows. The vendor's 1200 and 1000 ps sit on the
++ * edge of the first window and outside the second.
++ */
++&gmac0 {
++	phy-mode = "rgmii";
++	phy-handle = <&ext_rgmii_phy>;
++	pinctrl-names = "default";
++	pinctrl-0 = <&gmac0_rgmii_pins>;
++	allwinner,tx-delay-ps = <600>;
++	allwinner,rx-delay-ps = <2000>;
++	status = "okay";
++};
++
++&mdio0 {
++	/* Motorcomm YT8531 */
++	ext_rgmii_phy: ethernet-phy@1 {
++		compatible = "ethernet-phy-ieee802.3-c22";
++		reg = <1>;
++	};
++};
++
 +&mmc0 {
++	pinctrl-names = "default";
++	pinctrl-0 = <&mmc0_pins>;
 +	bus-width = <4>;
 +	/* PMIC rails are not described yet: stay at 3.3 V signalling. */
 +	max-frequency = <50000000>;
@@ -509,11 +574,13 @@ sunximmc clears it on host reset.
 +};
 +
 +&uart0 {
++	pinctrl-names = "default";
++	pinctrl-0 = <&uart0_pb_pins>;
 +	status = "okay";
 +};
 --- /dev/null
 +++ sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,249 @@
 +// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
 +/*
 + * Allwinner A733 (sun60iw2).
@@ -644,6 +711,40 @@ sunximmc clears it on host reset.
 +		#size-cells = <1>;
 +		ranges = <0x0 0x0 0x0 0x40000000>;
 +
++		pio: pinctrl@2000000 {
++			compatible = "allwinner,sun60i-a733-pinctrl";
++			reg = <0x02000000 0x800>;
++			clocks = <&ccu CLK_APB1>, <&osc24M>, <&osc32k>;
++			clock-names = "apb", "hosc", "losc";
++			gpio-controller;
++			#gpio-cells = <3>;
++
++			gmac0_rgmii_pins: gmac0-rgmii-pins {
++				pins = "PH0", "PH1", "PH2", "PH3",
++				       "PH4", "PH5", "PH6", "PH7",
++				       "PH8", "PH9", "PH10", "PH11",
++				       "PH12", "PH13", "PH14", "PH15";
++				function = "gmac0";
++				allwinner,pinmux = <5>;
++				drive-strength = <20>;
++				bias-pull-up;
++			};
++
++			mmc0_pins: mmc0-pins {
++				pins = "PF0", "PF1", "PF2", "PF3", "PF4", "PF5";
++				function = "mmc0";
++				allwinner,pinmux = <2>;
++				drive-strength = <30>;
++				bias-pull-up;
++			};
++
++			uart0_pb_pins: uart0-pb-pins {
++				pins = "PB9", "PB10";
++				function = "uart0";
++				allwinner,pinmux = <2>;
++			};
++		};
++
 +		ccu: clock-controller@2002000 {
 +			compatible = "allwinner,sun60i-a733-ccu";
 +			reg = <0x02002000 0x2000>;
@@ -662,6 +763,12 @@ sunximmc clears it on host reset.
 +			clocks = <&ccu CLK_BUS_UART0>;
 +			resets = <&ccu RST_BUS_UART0>;
 +			status = "disabled";
++		};
++
++		/* Not an upstream binding yet. */
++		sid: efuse@3006000 {
++			compatible = "allwinner,sun60i-a733-sid";
++			reg = <0x03006000 0x1000>;
 +		};
 +
 +		gic: interrupt-controller@3400000 {
@@ -687,6 +794,39 @@ sunximmc clears it on host reset.
 +			#address-cells = <1>;
 +			#size-cells = <0>;
 +			status = "disabled";
++		};
++
++		/*
++		 * The compatible string is not an upstream binding yet;
++		 * the Linux driver for the A523 calls its controller
++		 * allwinner,sun55i-a523-gmac200.
++		 */
++		gmac0: ethernet@4500000 {
++			compatible = "allwinner,sun60i-a733-gmac210";
++			reg = <0x04500000 0x8000>;
++			interrupts = <GIC_SPI 172 IRQ_TYPE_LEVEL_HIGH>;
++			interrupt-names = "macirq";
++			clocks = <&ccu CLK_BUS_GMAC0>, <&ccu CLK_MBUS_GMAC0>,
++				 <&ccu CLK_GMAC0_PHY>;
++			clock-names = "stmmaceth", "mbus", "phy";
++			assigned-clocks = <&ccu CLK_GMAC0_PHY>;
++			assigned-clock-rates = <25000000>;
++			resets = <&ccu RST_BUS_GMAC0>, <&ccu RST_BUS_GMAC0_AXI>;
++			reset-names = "stmmaceth", "ahb";
++			syscon = <&gmac0_syscon>;
++			status = "disabled";
++
++			mdio0: mdio {
++				compatible = "snps,dwmac-mdio";
++				#address-cells = <1>;
++				#size-cells = <0>;
++			};
++		};
++
++		gmac0_syscon: syscon@4508000 {
++			compatible = "allwinner,sun60i-a733-gmac-syscon",
++				     "syscon";
++			reg = <0x04508000 0x100>;
 +		};
 +	};
 +};
@@ -1183,3 +1323,623 @@ sunximmc clears it on host reset.
 +#define RST_BUS_R_CPUCFG	12
 +
 +#endif /* _DT_BINDINGS_RST_ALLWINNER_SUN60I_A733_R_CCU_H_ */
+--- /dev/null
++++ sys/arch/arm/sunxi/sun60i_a733_eqos.c
+@@ -0,0 +1,273 @@
++/*-
++ * Copyright (c) 2026 Anton and oxtorg contributors
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
++ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
++ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
++ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
++ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
++ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
++ * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
++ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
++ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++ * SUCH DAMAGE.
++ */
++
++/*
++ * Allwinner A733 Gigabit Ethernet: glue for the DesignWare EQOS core.
++ *
++ * The glue selects RGMII and the clock delays in the controller's own
++ * system-control register; the MAC, not the PHY, delays the clocks.
++ */
++
++#include <sys/cdefs.h>
++__KERNEL_RCSID(0, "$NetBSD$");
++
++#include <sys/param.h>
++#include <sys/bus.h>
++#include <sys/cprng.h>
++#include <sys/device.h>
++#include <sys/hash.h>
++#include <sys/rndsource.h>
++#include <sys/systm.h>
++
++#include <net/if.h>
++#include <net/if_ether.h>
++#include <net/if_media.h>
++
++#include <dev/mii/miivar.h>
++
++#include <dev/fdt/fdtvar.h>
++#include <dev/fdt/syscon.h>
++
++#include <dev/ic/dwc_eqos_var.h>
++
++#include <prop/proplib.h>
++
++#define	EMAC_CLK_REG		0x00
++#define	 EMAC_CLK_ETXDC_H	__BITS(17,16)	/* TX delay, high bits */
++#define	 EMAC_CLK_RMII_EN	__BIT(13)
++#define	 EMAC_CLK_ETXDC		__BITS(12,10)	/* TX delay, low bits */
++#define	 EMAC_CLK_ERXDC		__BITS(9,5)	/* RX delay */
++#define	 EMAC_CLK_EPIT		__BIT(2)	/* 1: RGMII */
++#define	 EMAC_CLK_ETCS		__BITS(1,0)
++#define	  EMAC_CLK_ETCS_INT_GMII	2
++
++#define	EMAC_DELAY_STEP_PS	100
++#define	EMAC_DELAY_MAX		31
++
++/* The chip ID inside the security ID block. */
++#define	SID_CHIPID		0x200
++#define	SID_CHIPID_WORDS	4
++
++static const struct device_compatible_entry compat_data[] = {
++	{ .compat = "allwinner,sun60i-a733-gmac210" },
++	DEVICE_COMPAT_EOL
++};
++
++static int
++sun60i_a733_eqos_match(device_t parent, cfdata_t cf, void *aux)
++{
++	struct fdt_attach_args * const faa = aux;
++
++	return of_compatible_match(faa->faa_phandle, compat_data);
++}
++
++/* A delay property in picoseconds as register steps, or -1. */
++static int
++sun60i_a733_eqos_delay(int phandle, const char *prop)
++{
++	u_int ps;
++
++	if (of_getprop_uint32(phandle, prop, &ps) != 0)
++		return 0;
++	if (ps % EMAC_DELAY_STEP_PS != 0 ||
++	    ps / EMAC_DELAY_STEP_PS > EMAC_DELAY_MAX)
++		return -1;
++
++	return ps / EMAC_DELAY_STEP_PS;
++}
++
++/*
++ * The controller holds no address after reset and the boot loader passes
++ * none. Derive one from the chip ID, so that it is the same on every boot.
++ */
++static bool
++sun60i_a733_eqos_chip_address(struct eqos_softc *sc, uint8_t *enaddr)
++{
++	uint32_t id[SID_CHIPID_WORDS], lo, hi;
++	bus_space_handle_t bsh;
++	bus_addr_t addr;
++	bus_size_t size;
++	u_int n;
++
++	const int sid = of_find_bycompat(OF_finddevice("/"),
++	    "allwinner,sun60i-a733-sid");
++	if (sid <= 0 || fdtbus_get_reg(sid, 0, &addr, &size) != 0 ||
++	    size < SID_CHIPID + sizeof(id))
++		return false;
++	if (bus_space_map(sc->sc_bst, addr + SID_CHIPID, sizeof(id), 0,
++	    &bsh) != 0)
++		return false;
++	for (n = 0; n < SID_CHIPID_WORDS; n++)
++		id[n] = bus_space_read_4(sc->sc_bst, bsh, 4 * n);
++	bus_space_unmap(sc->sc_bst, bsh, sizeof(id));
++
++	lo = hash32_buf(id, sizeof(id), HASH32_BUF_INIT);
++	hi = hash32_buf(id, sizeof(id), lo);
++	if (lo == 0 && hi == 0)
++		return false;
++
++	enaddr[0] = 0x02;		/* locally administered, unicast */
++	enaddr[1] = hi & 0xff;
++	enaddr[2] = (lo >> 24) & 0xff;
++	enaddr[3] = (lo >> 16) & 0xff;
++	enaddr[4] = (lo >> 8) & 0xff;
++	enaddr[5] = lo & 0xff;
++
++	return true;
++}
++
++static void
++sun60i_a733_eqos_set_address(struct eqos_softc *sc, int phandle)
++{
++	prop_dictionary_t dict = device_properties(sc->sc_dev);
++	uint8_t enaddr[ETHER_ADDR_LEN];
++	static const uint8_t zero[ETHER_ADDR_LEN];
++	const uint8_t *addr;
++	int len;
++
++	addr = fdtbus_get_prop(phandle, "local-mac-address", &len);
++	if (addr != NULL && len == ETHER_ADDR_LEN &&
++	    memcmp(addr, zero, ETHER_ADDR_LEN) != 0) {
++		memcpy(enaddr, addr, ETHER_ADDR_LEN);
++	} else if (!sun60i_a733_eqos_chip_address(sc, enaddr)) {
++		cprng_strong(kern_cprng, enaddr, sizeof(enaddr), 0);
++		enaddr[0] = (enaddr[0] & ~0x01) | 0x02;
++	}
++	prop_dictionary_set_data(dict, "mac-address", enaddr, sizeof(enaddr));
++}
++
++static void
++sun60i_a733_eqos_attach(device_t parent, device_t self, void *aux)
++{
++	struct eqos_softc * const sc = device_private(self);
++	prop_dictionary_t dict = device_properties(self);
++	struct fdt_attach_args * const faa = aux;
++	const int phandle = faa->faa_phandle;
++	struct syscon *syscon;
++	struct fdtbus_reset *rst;
++	struct clk *clk;
++	char intrstr[128];
++	const char *phy_mode;
++	bus_addr_t addr;
++	bus_size_t size;
++	uint32_t val;
++	int n;
++
++	if (fdtbus_get_reg(phandle, 0, &addr, &size) != 0) {
++		aprint_error(": couldn't get registers\n");
++		return;
++	}
++
++	phy_mode = fdtbus_get_string(phandle, "phy-mode");
++	if (phy_mode == NULL || strncmp(phy_mode, "rgmii", 5) != 0) {
++		aprint_error(": unsupported phy-mode '%s'\n",
++		    phy_mode ? phy_mode : "(none)");
++		return;
++	}
++
++	const int tx_delay = sun60i_a733_eqos_delay(phandle,
++	    "allwinner,tx-delay-ps");
++	const int rx_delay = sun60i_a733_eqos_delay(phandle,
++	    "allwinner,rx-delay-ps");
++	if (tx_delay < 0 || rx_delay < 0) {
++		aprint_error(": delays must be multiples of %d ps up to %d\n",
++		    EMAC_DELAY_STEP_PS, EMAC_DELAY_MAX * EMAC_DELAY_STEP_PS);
++		return;
++	}
++
++	syscon = fdtbus_syscon_acquire(phandle, "syscon");
++	if (syscon == NULL) {
++		aprint_error(": couldn't get syscon\n");
++		return;
++	}
++
++	sc->sc_dev = self;
++	sc->sc_bst = faa->faa_bst;
++	sc->sc_dmat = faa->faa_dmat;
++	if (bus_space_map(sc->sc_bst, addr, size, 0, &sc->sc_bsh) != 0) {
++		aprint_error(": couldn't map registers\n");
++		return;
++	}
++
++	if (!fdtbus_intr_str(phandle, 0, intrstr, sizeof(intrstr))) {
++		aprint_error(": failed to decode interrupt\n");
++		return;
++	}
++
++	fdtbus_clock_assign(phandle);
++	for (n = 0; (clk = fdtbus_clock_get_index(phandle, n)) != NULL; n++) {
++		if (clk_enable(clk) != 0) {
++			aprint_error(": couldn't enable clock #%d\n", n);
++			return;
++		}
++	}
++	for (n = 0; (rst = fdtbus_reset_get_index(phandle, n)) != NULL; n++) {
++		if (fdtbus_reset_deassert(rst) != 0) {
++			aprint_error(": couldn't de-assert reset #%d\n", n);
++			return;
++		}
++	}
++
++	val = EMAC_CLK_EPIT |
++	    __SHIFTIN(EMAC_CLK_ETCS_INT_GMII, EMAC_CLK_ETCS) |
++	    __SHIFTIN(tx_delay & 0x7, EMAC_CLK_ETXDC) |
++	    __SHIFTIN(tx_delay >> 3, EMAC_CLK_ETXDC_H) |
++	    __SHIFTIN(rx_delay, EMAC_CLK_ERXDC);
++	syscon_lock(syscon);
++	syscon_write_4(syscon, EMAC_CLK_REG, val);
++	syscon_unlock(syscon);
++
++	sun60i_a733_eqos_set_address(sc, phandle);
++
++	/* The MAC delays both clocks: the PHY must add nothing. */
++	prop_dictionary_set_uint32(dict, "rx-internal-delay-ps", 0);
++	prop_dictionary_set_uint32(dict, "tx-internal-delay-ps", 0);
++
++	/*
++	 * The PHY also answers at the broadcast address 0: attach only
++	 * the one the device tree names.
++	 */
++	sc->sc_phy_id = MII_PHY_ANY;
++	const int phy = fdtbus_get_phandle(phandle, "phy-handle");
++	if (phy > 0 && of_getprop_uint32(phy, "reg", &val) == 0)
++		sc->sc_phy_id = val;
++	clk = fdtbus_clock_get(phandle, "stmmaceth");
++	sc->sc_csr_clock = clk != NULL ? clk_get_rate(clk) : 0;
++
++	if (eqos_attach(sc) != 0)
++		return;
++
++	if (fdtbus_intr_establish_xname(phandle, 0, IPL_NET, FDT_INTR_MPSAFE,
++	    eqos_intr, sc, device_xname(self)) == NULL) {
++		aprint_error_dev(self, "failed to establish interrupt on %s\n",
++		    intrstr);
++		return;
++	}
++	aprint_normal_dev(self, "interrupting on %s\n", intrstr);
++}
++
++CFATTACH_DECL_NEW(sun60i_a733_eqos, sizeof(struct eqos_softc),
++	sun60i_a733_eqos_match, sun60i_a733_eqos_attach, NULL, NULL);
+--- /dev/null
++++ sys/arch/arm/sunxi/sun60i_a733_gpio.c
+@@ -0,0 +1,341 @@
++/*-
++ * Copyright (c) 2026 Anton and oxtorg contributors
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
++ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
++ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
++ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
++ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
++ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
++ * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
++ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
++ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++ * SUCH DAMAGE.
++ */
++
++/*
++ * Allwinner A733 pin controller: pin multiplexing and GPIO.
++ *
++ * Each bank owns 0x80 bytes, the first at 0x80. A pin's function is four
++ * bits wide and comes straight from the device tree ("allwinner,pinmux"),
++ * so no per-pin table is needed. sunxigpio(4) knows neither.
++ *
++ * Pin interrupts are not handled.
++ */
++
++#include <sys/cdefs.h>
++__KERNEL_RCSID(0, "$NetBSD$");
++
++#include <sys/param.h>
++#include <sys/bus.h>
++#include <sys/device.h>
++#include <sys/gpio.h>
++#include <sys/kmem.h>
++#include <sys/mutex.h>
++#include <sys/systm.h>
++
++#include <dev/fdt/fdtvar.h>
++
++#define	A733_GPIO_PINS_PER_BANK	32
++
++#define	A733_GPIO_BANK(b)	(0x80 + 0x80 * (b))
++#define	A733_GPIO_CFG(b, p)	(A733_GPIO_BANK(b) + 0x00 + 4 * ((p) / 8))
++#define	 A733_GPIO_CFG_MASK(p)	(0xfU << (((p) % 8) * 4))
++#define	  A733_GPIO_CFG_INPUT	0
++#define	  A733_GPIO_CFG_OUTPUT	1
++#define	A733_GPIO_DATA(b)	(A733_GPIO_BANK(b) + 0x10)
++#define	A733_GPIO_DRV(b, p)	(A733_GPIO_BANK(b) + 0x20 + 4 * ((p) / 8))
++#define	 A733_GPIO_DRV_MASK(p)	(0xfU << (((p) % 8) * 4))
++#define	A733_GPIO_PULL(b, p)	(A733_GPIO_BANK(b) + 0x30 + 4 * ((p) / 16))
++#define	 A733_GPIO_PULL_MASK(p)	(0x3U << (((p) % 16) * 2))
++#define	  A733_GPIO_PULL_NONE	0
++#define	  A733_GPIO_PULL_UP	1
++#define	  A733_GPIO_PULL_DOWN	2
++
++struct a733_gpio_config {
++	char	first_bank;	/* letter of the controller's first bank */
++	u_int	nbanks;
++};
++
++static const struct a733_gpio_config a733_pio_config = {
++	.first_bank = 'A',
++	.nbanks = 11,		/* PA to PK */
++};
++
++static const struct a733_gpio_config a733_r_pio_config = {
++	.first_bank = 'L',
++	.nbanks = 2,		/* PL and PM */
++};
++
++static const struct device_compatible_entry compat_data[] = {
++	{ .compat = "allwinner,sun60i-a733-pinctrl",
++	  .data = &a733_pio_config },
++	{ .compat = "allwinner,sun60i-a733-r-pinctrl",
++	  .data = &a733_r_pio_config },
++	DEVICE_COMPAT_EOL
++};
++
++struct a733_gpio_softc {
++	device_t			sc_dev;
++	bus_space_tag_t			sc_bst;
++	bus_space_handle_t		sc_bsh;
++	kmutex_t			sc_lock;
++	const struct a733_gpio_config	*sc_config;
++};
++
++struct a733_gpio_pin {
++	u_int	pin_bank;
++	u_int	pin_num;
++	bool	pin_actlo;
++};
++
++#define	GPIO_READ(sc, reg)		\
++	bus_space_read_4((sc)->sc_bst, (sc)->sc_bsh, (reg))
++#define	GPIO_WRITE(sc, reg, val)	\
++	bus_space_write_4((sc)->sc_bst, (sc)->sc_bsh, (reg), (val))
++
++static void
++a733_gpio_update(struct a733_gpio_softc *sc, bus_size_t reg, uint32_t mask,
++    u_int value)
++{
++	uint32_t val;
++
++	KASSERT(mutex_owned(&sc->sc_lock));
++
++	val = GPIO_READ(sc, reg);
++	val &= ~mask;
++	val |= __SHIFTIN(value, mask);
++	GPIO_WRITE(sc, reg, val);
++}
++
++/* "PH12" on the main controller is bank 7, pin 12. */
++static bool
++a733_gpio_parse_pin(struct a733_gpio_softc *sc, const char *name,
++    u_int *bank, u_int *pin)
++{
++	u_int n;
++
++	if (name[0] != 'P' || name[1] < sc->sc_config->first_bank ||
++	    name[2] < '0' || name[2] > '9')
++		return false;
++	*bank = name[1] - sc->sc_config->first_bank;
++	if (*bank >= sc->sc_config->nbanks)
++		return false;
++	for (n = 0, name += 2; *name >= '0' && *name <= '9'; name++)
++		n = n * 10 + (*name - '0');
++	if (*name != '\0' || n >= A733_GPIO_PINS_PER_BANK)
++		return false;
++	*pin = n;
++
++	return true;
++}
++
++static int
++a733_pinctrl_set_config(device_t dev, const void *data, size_t len)
++{
++	struct a733_gpio_softc * const sc = device_private(dev);
++	u_int bank, pin, mux;
++	int pins_len;
++
++	if (len != 4)
++		return -1;
++
++	const int phandle = fdtbus_get_phandle_from_native(be32dec(data));
++
++	const char *pins = fdtbus_pinctrl_parse_pins(phandle, &pins_len);
++	if (pins == NULL)
++		return -1;
++	if (of_getprop_uint32(phandle, "allwinner,pinmux", &mux) != 0 ||
++	    mux > 0xf)
++		return -1;
++
++	const int bias = fdtbus_pinctrl_parse_bias(phandle, NULL);
++	const int drive_strength = fdtbus_pinctrl_parse_drive_strength(phandle);
++
++	mutex_enter(&sc->sc_lock);
++
++	for (; pins_len > 0;
++	    pins_len -= strlen(pins) + 1, pins += strlen(pins) + 1) {
++		if (!a733_gpio_parse_pin(sc, pins, &bank, &pin)) {
++			aprint_error_dev(dev, "unknown pin name '%s'\n", pins);
++			continue;
++		}
++		a733_gpio_update(sc, A733_GPIO_CFG(bank, pin),
++		    A733_GPIO_CFG_MASK(pin), mux);
++
++		if (bias != -1) {
++			a733_gpio_update(sc, A733_GPIO_PULL(bank, pin),
++			    A733_GPIO_PULL_MASK(pin),
++			    bias == GPIO_PIN_PULLUP ? A733_GPIO_PULL_UP :
++			    bias == GPIO_PIN_PULLDOWN ? A733_GPIO_PULL_DOWN :
++			    A733_GPIO_PULL_NONE);
++		}
++
++		/* Drive strength comes in mA; a level is 10 mA. */
++		if (drive_strength >= 10 && drive_strength <= 40) {
++			a733_gpio_update(sc, A733_GPIO_DRV(bank, pin),
++			    A733_GPIO_DRV_MASK(pin), drive_strength / 10 - 1);
++		}
++	}
++
++	mutex_exit(&sc->sc_lock);
++
++	return 0;
++}
++
++static struct fdtbus_pinctrl_controller_func a733_pinctrl_funcs = {
++	.set_config = a733_pinctrl_set_config,
++};
++
++static void *
++a733_gpio_acquire(device_t dev, const void *data, size_t len, int flags)
++{
++	struct a733_gpio_softc * const sc = device_private(dev);
++	struct a733_gpio_pin *gpin;
++	const u_int *gpio = data;
++
++	/* <&controller bank pin flags> */
++	if (len != 16)
++		return NULL;
++
++	const u_int bank = be32toh(gpio[1]);
++	const u_int pin = be32toh(gpio[2]);
++	const bool actlo = be32toh(gpio[3]) & 1;
++
++	if (bank >= sc->sc_config->nbanks || pin >= A733_GPIO_PINS_PER_BANK)
++		return NULL;
++	if ((flags & (GPIO_PIN_INPUT | GPIO_PIN_OUTPUT)) == 0)
++		return NULL;
++
++	mutex_enter(&sc->sc_lock);
++	a733_gpio_update(sc, A733_GPIO_CFG(bank, pin), A733_GPIO_CFG_MASK(pin),
++	    (flags & GPIO_PIN_INPUT) ? A733_GPIO_CFG_INPUT :
++	    A733_GPIO_CFG_OUTPUT);
++	mutex_exit(&sc->sc_lock);
++
++	gpin = kmem_zalloc(sizeof(*gpin), KM_SLEEP);
++	gpin->pin_bank = bank;
++	gpin->pin_num = pin;
++	gpin->pin_actlo = actlo;
++
++	return gpin;
++}
++
++static void
++a733_gpio_release(device_t dev, void *priv)
++{
++	struct a733_gpio_softc * const sc = device_private(dev);
++	struct a733_gpio_pin *gpin = priv;
++
++	mutex_enter(&sc->sc_lock);
++	a733_gpio_update(sc, A733_GPIO_CFG(gpin->pin_bank, gpin->pin_num),
++	    A733_GPIO_CFG_MASK(gpin->pin_num), A733_GPIO_CFG_INPUT);
++	mutex_exit(&sc->sc_lock);
++
++	kmem_free(gpin, sizeof(*gpin));
++}
++
++static int
++a733_gpio_read(device_t dev, void *priv, bool raw)
++{
++	struct a733_gpio_softc * const sc = device_private(dev);
++	struct a733_gpio_pin *gpin = priv;
++	int val;
++
++	val = __SHIFTOUT(GPIO_READ(sc, A733_GPIO_DATA(gpin->pin_bank)),
++	    __BIT(gpin->pin_num));
++	if (!raw && gpin->pin_actlo)
++		val = !val;
++
++	return val;
++}
++
++static void
++a733_gpio_write(device_t dev, void *priv, int val, bool raw)
++{
++	struct a733_gpio_softc * const sc = device_private(dev);
++	struct a733_gpio_pin *gpin = priv;
++
++	if (!raw && gpin->pin_actlo)
++		val = !val;
++
++	mutex_enter(&sc->sc_lock);
++	a733_gpio_update(sc, A733_GPIO_DATA(gpin->pin_bank),
++	    __BIT(gpin->pin_num), val ? 1 : 0);
++	mutex_exit(&sc->sc_lock);
++}
++
++static struct fdtbus_gpio_controller_func a733_gpio_funcs = {
++	.acquire = a733_gpio_acquire,
++	.release = a733_gpio_release,
++	.read = a733_gpio_read,
++	.write = a733_gpio_write,
++};
++
++static int
++a733_gpio_match(device_t parent, cfdata_t cf, void *aux)
++{
++	struct fdt_attach_args * const faa = aux;
++
++	return of_compatible_match(faa->faa_phandle, compat_data);
++}
++
++static void
++a733_gpio_attach(device_t parent, device_t self, void *aux)
++{
++	struct a733_gpio_softc * const sc = device_private(self);
++	struct fdt_attach_args * const faa = aux;
++	const int phandle = faa->faa_phandle;
++	struct clk *clk;
++	bus_addr_t addr;
++	bus_size_t size;
++	int child;
++
++	if (fdtbus_get_reg(phandle, 0, &addr, &size) != 0) {
++		aprint_error(": couldn't get registers\n");
++		return;
++	}
++
++	if ((clk = fdtbus_clock_get_index(phandle, 0)) != NULL &&
++	    clk_enable(clk) != 0) {
++		aprint_error(": couldn't enable clock\n");
++		return;
++	}
++
++	sc->sc_dev = self;
++	sc->sc_bst = faa->faa_bst;
++	sc->sc_config = of_compatible_lookup(phandle, compat_data)->data;
++	if (bus_space_map(sc->sc_bst, addr, size, 0, &sc->sc_bsh) != 0) {
++		aprint_error(": couldn't map registers\n");
++		return;
++	}
++	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_VM);
++
++	aprint_naive("\n");
++	aprint_normal(": PIO, banks P%c to P%c\n", sc->sc_config->first_bank,
++	    sc->sc_config->first_bank + sc->sc_config->nbanks - 1);
++
++	fdtbus_register_gpio_controller(self, phandle, &a733_gpio_funcs);
++
++	for (child = OF_child(phandle); child; child = OF_peer(child)) {
++		if (!of_hasprop(child, "pins") ||
++		    !of_hasprop(child, "allwinner,pinmux"))
++			continue;
++		fdtbus_register_pinctrl_config(self, child,
++		    &a733_pinctrl_funcs);
++	}
++}
++
++CFATTACH_DECL_NEW(sun60i_a733_gpio, sizeof(struct a733_gpio_softc),
++	a733_gpio_match, a733_gpio_attach, NULL, NULL);
