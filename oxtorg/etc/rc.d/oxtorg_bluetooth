@@ -2,7 +2,8 @@
 # PROVIDE: oxtorg_bluetooth
 # REQUIRE: DAEMON
 # BEFORE: oxtorg_agent oxtorg_voice LOGIN
-# Bootstrap the observed Pi 5 C1 UART. Restart preserves an attached controller.
+# Bootstrap the Bluetooth UART of the observed boards: Pi 5 C1 and Orange Pi
+# Zero 4. Restart preserves an attached controller.
 
 . /etc/rc.subr
 name=oxtorg_bluetooth
@@ -10,10 +11,27 @@ rcvar=$name
 start_cmd=oxtorg_bluetooth_start
 stop_cmd=:
 
+oxtorg_bluetooth_attach()
+{
+	case "$1" in
+	'Raspberry Pi 5 Model B')
+		modstat | awk '{print $1}' | grep -qx bcm2712btcom || \
+		    modload bcm2712btcom || return 1
+		btattach -f -i 115200 bcm43xx /dev/dty00 115200 ;;
+	xunlong,orangepi-zero4)
+		# aicwf(4) uploaded the controller's patches with the baud rate.
+		btattach -f btuart /dev/dty01 1500000 ;;
+	esac
+}
+
 oxtorg_bluetooth_start()
 {
-	[ "$(sysctl -n machdep.dmi.system-product 2>/dev/null)" = \
-	    "Raspberry Pi 5 Model B" ] || return 0
+	board=$(sysctl -n machdep.dmi.system-product 2>/dev/null)
+	[ -n "$board" ] || board=$(sysctl -n hw.model 2>/dev/null)
+	case "$board" in
+	'Raspberry Pi 5 Model B'|xunlong,orangepi-zero4) ;;
+	*) return 0 ;;
+	esac
 	bluetooth_name='Asenta NetBSD'
 	bluetooth_address=
 	bluetooth_class=0x000104
@@ -21,33 +39,37 @@ oxtorg_bluetooth_start()
 	control=/opt/oxtorg/bin/bluetooth-control
 	[ -x "$control" ] || return 1
 	if ! btconfig -l | tr ' ' '\n' | grep -qx btuart0; then
-		modstat | awk '{print $1}' | grep -qx bcm2712btcom || \
-		    modload bcm2712btcom || return 1
-		btattach -f -i 115200 bcm43xx /dev/dty00 115200 || return 1
+		oxtorg_bluetooth_attach "$board" || return 1
 	fi
 	btconfig btuart0 | grep -q '<UP,RUNNING>' || \
 	    btconfig btuart0 enable || return 1
-	if [ -n "$bluetooth_address" ]; then
-		result=$("$control" btuart0 address "$bluetooth_address") || return 1
-	else
-		result=$("$control" btuart0 address) || return 1
+	# The Broadcom controller needs its address set; the AIC8800 has one.
+	if [ "$board" = 'Raspberry Pi 5 Model B' ]; then
+		if [ -n "$bluetooth_address" ]; then
+			result=$("$control" btuart0 address "$bluetooth_address") || return 1
+		else
+			result=$("$control" btuart0 address) || return 1
+		fi
+		# Refresh the kernel's address only when firmware had a placeholder.
+		# SSP/SC must be enabled after this reset, never before it.
+		case "$result" in
+		ADDRESS_CHANGED)
+			btconfig btuart0 disable && btconfig btuart0 enable || return 1 ;;
+		ADDRESS_UNCHANGED) ;;
+		*) return 1 ;;
+		esac
 	fi
-	# Refresh the kernel's address only when firmware had a placeholder.
-	# SSP/SC must be enabled after this reset, never before it.
-	case "$result" in
-	ADDRESS_CHANGED)
-		btconfig btuart0 disable && btconfig btuart0 enable || return 1 ;;
-	ADDRESS_UNCHANGED) ;;
-	*) return 1 ;;
-	esac
 	state=$("$control" btuart0 state) || return 1
 	if [ "$state" != 'SSP=1 SC=1' ]; then
 		# BCM4345C0 refuses SC enable while inquiry/page scanning is active.
 		btconfig btuart0 -pscan -iscan || return 1
 	fi
 	"$control" btuart0 init "$bluetooth_name" || return 1
+	# The AIC8800 no longer has the legacy encryption mode command.
+	encrypt=-encrypt
+	[ "$board" = 'Raspberry Pi 5 Model B' ] || encrypt=
 	btconfig btuart0 name "$bluetooth_name" class "$bluetooth_class" \
-	    pscan iscan -auth -encrypt switch sniff -master || return 1
+	    pscan iscan -auth $encrypt switch sniff -master || return 1
 	[ -n "$(check_pidfile /var/run/bthcid.pid /usr/sbin/bthcid)" ] || \
 	    bthcid || return 1
 	[ -n "$(check_process /usr/sbin/sdpd)" ] || sdpd || return 1

@@ -82,7 +82,7 @@ dw_apb_uart_attach(device_t parent, device_t self, void *aux)
 	char intrstr[128];
 	bus_addr_t addr;
 	bus_size_t size;
-	u_int reg_shift, reg_iowidth;
+	u_int reg_shift, reg_iowidth, fifo_size;
 	int error;
 
 	if (fdtbus_get_reg(phandle, 0, &addr, &size) != 0) {
@@ -133,6 +133,18 @@ dw_apb_uart_attach(device_t parent, device_t self, void *aux)
 	}
 
 	com_init_regs_stride_width(&sc->sc_regs, bst, bsh, addr, reg_shift, reg_iowidth);
+
+	/* Some integrations leave out the register that tells the depth. */
+	if (of_getprop_uint32(phandle, "fifo-size", &fifo_size) == 0)
+		prop_dictionary_set_uint(device_properties(self), "fifolen",
+		    fifo_size);
+
+	/*
+	 * With a deep FIFO only the UART itself can stop sending in time
+	 * when the other side drops CTS.
+	 */
+	if (of_hasprop(phandle, "auto-flow-control"))
+		SET(sc->sc_hwflags, COM_HW_AFE);
 
 	com_attach_subr(sc);
 

@@ -1,0 +1,33 @@
+Origin:
+btuartstart() returned as soon as no packet was left to copy, without
+starting the serial driver. When hardware flow control had stopped the
+driver after a packet was already copied to the output queue, the restart
+on CTS found no packet, returned, and the bytes stayed in the queue until
+the next packet was sent: on an AIC8800D80 the first commands after attach
+went unanswered. The driver is now started whenever the output queue is
+not empty.
+
+--- sys/dev/bluetooth/btuart.c.orig
++++ sys/dev/bluetooth/btuart.c
+@@ -505,7 +505,12 @@ btuartstart(struct tty *tp)
+ 			sc->sc_stats.acl_tx++;
+ 		} else {
+ 			sc->sc_xmit = false;
+-			return 0; /* no more to send */
++			/*
++			 * No more packets, but one may still wait in the
++			 * output queue: flow control stopped the driver
++			 * after it was copied there.
++			 */
++			goto out;
+ 		}
+ 
+ 		sc->sc_txp = m;
+@@ -546,6 +551,7 @@ btuartstart(struct tty *tp)
+ 
+ 	sc->sc_stats.byte_tx += count;
+ 
++out:
+ 	if (tp->t_outq.c_cc != 0 && tp->t_oproc != NULL)
+ 		(*tp->t_oproc)(tp);
+ 

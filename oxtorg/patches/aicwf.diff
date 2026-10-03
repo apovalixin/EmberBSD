@@ -6,7 +6,10 @@ net80211 to it the way bwfm(4) does: scan results, join, CCMP keys,
 Ethernet frames both ways. The message formats and the order of
 initialisation were read from the vendor's Linux driver; no code was taken
 from it. The firmware file fmacfw_8800d80_u02.bin is not part of the tree
-and is read from /libdata/firmware/if_aicwf.
+and is read from /libdata/firmware/if_aicwf. Before starting it the driver
+uploads the patches of the Bluetooth controller in the same chip and
+writes its patch table, so that the controller answers HCI on its UART at
+1.5 Mbaud with RTS/CTS.
 
 Tested on the board: WPA2-PSK with CCMP on 2.4 and 5 GHz, DHCP, SSH and
 eight rounds of 32 MiB each way with matching hashes at 10-17 Mbit/s. The driver announces 802.11a/b/g
@@ -30,7 +33,7 @@ implemented.
  file	dev/sdmmc/if_bwi_sdio.c		bwi_sdio
 --- /dev/null
 +++ sys/dev/sdmmc/if_aicwf.c
-@@ -0,0 +1,1777 @@
+@@ -0,0 +1,1953 @@
 +/*-
 + * Copyright (c) 2026 Anton and oxtorg contributors
 + * All rights reserved.
@@ -272,6 +275,40 @@ implemented.
 +#define	AICWF_FW_PATCH_BUF		(AICWF_FW_ADDR + 0x1a4)
 +#define	AICWF_FW_PATCH_BUF_OLD		0x0016f800
 +#define	AICWF_FW_VERSION_PATCH_BUF	0x06090100
++/*
++ * Bluetooth. The controller half of the chip talks HCI on its own UART,
++ * but its patches go in through the boot ROM, before the wireless
++ * firmware starts. The patch table is a tagged list of entries, each a
++ * name, a type and (address, value) pairs.
++ */
++#define	AICWF_BT_TABLE_NAME		"fw_patch_table_8800d80_u02.bin"
++#define	AICWF_BT_ADID_NAME		"fw_adid_8800d80_u02.bin"
++#define	AICWF_BT_PATCH_NAME		"fw_patch_8800d80_u02.bin"
++#define	AICWF_BT_EXT_NAME		"fw_patch_8800d80_u02_ext%u.bin"
++#define	AICWF_BT_TABLE_TAG		"AICBT_PT_TAG"
++#define	AICWF_BT_TABLE_TAG_LEN		16
++#define	AICWF_BT_ENTRY_HDR		24
++#define	AICWF_BT_ENTRY_TYPE_OFF		16
++#define	AICWF_BT_ENTRY_LEN_OFF		20
++#define	AICWF_BT_PT_INF			0
++#define	AICWF_BT_PT_BTMODE		3
++#define	AICWF_BT_PT_PWRON		4
++#define	AICWF_BT_PT_VER			6
++#define	AICWF_BT_PT_NODATA		1000
++/* Pairs of the information entry. */
++#define	AICWF_BT_INF_ADID		0
++#define	AICWF_BT_INF_PATCH		1
++#define	AICWF_BT_INF_WRITES		4	/* pairs the chip is given */
++#define	AICWF_BT_INF_EXT_COUNT		4
++#define	AICWF_BT_INF_EXT		5
++#define	AICWF_BT_ADID_ADDR		0x00201940
++#define	AICWF_BT_PATCH_ADDR		0x0020b43c
++/* Values of the mode entry, in the order of its pairs. */
++#define	AICWF_BT_MODE_NO_SWITCH		5	/* shares the antenna */
++#define	AICWF_BT_PORT_UART		2
++#define	AICWF_BT_BAUD			1500000
++#define	AICWF_BT_TXPWR			0x00006f2f
++
 +#define	AICWF_PATCH_MAGIC		0x48435450	/* "PTCH" */
 +#define	AICWF_PATCH_MAGIC_2		0x50544348	/* "HCTP" */
 +/* Offsets in the patch descriptor. */
@@ -680,14 +717,13 @@ implemented.
 +	    AICWF_DBG_MEM_WRITE_CFM, cfm, sizeof(cfm));
 +}
 +
-+/* Copy a firmware file into the chip's memory. */
 +static int
-+aicwf_upload(struct aicwf_softc *sc, const char *name, uint32_t addr)
++aicwf_fw_read(struct aicwf_softc *sc, const char *name, uint8_t **datap,
++    size_t *sizep)
 +{
-+	uint8_t req[8 + AICWF_BLOCK_WRITE_MAX], cfm[4];
 +	firmware_handle_t fh;
 +	uint8_t *data;
-+	size_t size, off, n;
++	size_t size;
 +	int error;
 +
 +	error = firmware_open("if_aicwf", name, &fh);
@@ -704,6 +740,23 @@ implemented.
 +		firmware_free(data, size);
 +		return error;
 +	}
++	*datap = data;
++	*sizep = size;
++
++	return 0;
++}
++
++/* Copy a firmware file into the chip's memory. */
++static int
++aicwf_upload(struct aicwf_softc *sc, const char *name, uint32_t addr)
++{
++	uint8_t req[8 + AICWF_BLOCK_WRITE_MAX], cfm[4];
++	uint8_t *data;
++	size_t size, off, n;
++	int error;
++
++	if ((error = aicwf_fw_read(sc, name, &data, &size)) != 0)
++		return error;
 +
 +	for (off = 0; off < size && error == 0; off += n) {
 +		n = MIN(size - off, AICWF_BLOCK_WRITE_MAX);
@@ -718,6 +771,127 @@ implemented.
 +	firmware_free(data, size);
 +	if (error == 0)
 +		aprint_verbose_dev(sc->sc_dev, "%s: %zu bytes\n", name, size);
++
++	return error;
++}
++
++/* The addresses of the Bluetooth patches, then the patches themselves. */
++static int
++aicwf_bt_patches(struct aicwf_softc *sc, const uint8_t *pair, u_int npairs)
++{
++	uint32_t adid = AICWF_BT_ADID_ADDR, patch = AICWF_BT_PATCH_ADDR;
++	char name[sizeof(AICWF_BT_EXT_NAME) + 10];
++	u_int ext = 0, i;
++	int error;
++
++	if (npairs == 0)
++		return EINVAL;
++	adid = le32dec(pair + AICWF_BT_INF_ADID * 8 + 4);
++	if (npairs > AICWF_BT_INF_PATCH)
++		patch = le32dec(pair + AICWF_BT_INF_PATCH * 8 + 4);
++	if (npairs > AICWF_BT_INF_EXT_COUNT)
++		ext = le32dec(pair + AICWF_BT_INF_EXT_COUNT * 8 + 4);
++	if (ext > npairs - MIN(npairs, AICWF_BT_INF_EXT))
++		return EINVAL;
++
++	if ((error = aicwf_upload(sc, AICWF_BT_ADID_NAME, adid)) != 0 ||
++	    (error = aicwf_upload(sc, AICWF_BT_PATCH_NAME, patch)) != 0)
++		return error;
++	for (i = 0; i < ext; i++) {
++		const uint8_t *p = pair + (AICWF_BT_INF_EXT + i) * 8;
++
++		snprintf(name, sizeof(name), AICWF_BT_EXT_NAME, le32dec(p));
++		if ((error = aicwf_upload(sc, name, le32dec(p + 4))) != 0)
++			return error;
++	}
++
++	return 0;
++}
++
++/*
++ * Prepare the Bluetooth controller: upload its patches and write the
++ * patch table, with the mode entry describing how the host reaches it.
++ */
++static int
++aicwf_bt_load(struct aicwf_softc *sc)
++{
++	static const uint32_t mode[] = {
++		1,			/* no hardware information */
++		0xffffffff,
++		0,
++		AICWF_BT_MODE_NO_SWITCH,
++		AICWF_BT_PORT_UART,
++		AICWF_BT_BAUD,
++		1,			/* RTS/CTS */
++		0,			/* no low power mode */
++		AICWF_BT_TXPWR,
++	};
++	uint8_t *tbl;
++	size_t size, off;
++	uint32_t type, value;
++	u_int npairs, pass, i;
++	bool found = false;
++	int error;
++
++	if ((error = aicwf_fw_read(sc, AICWF_BT_TABLE_NAME, &tbl, &size)) != 0)
++		return error;
++	if (size < AICWF_BT_TABLE_TAG_LEN ||
++	    memcmp(tbl, AICWF_BT_TABLE_TAG, sizeof(AICWF_BT_TABLE_TAG)) != 0) {
++		error = EINVAL;
++		goto out;
++	}
++
++	/* The first pass uploads the patches, the second writes the pairs. */
++	for (pass = 0; pass < 2; pass++) {
++		off = AICWF_BT_TABLE_TAG_LEN;
++		while (size - off >= AICWF_BT_ENTRY_HDR) {
++			const uint8_t *pair;
++
++			type = le32dec(tbl + off + AICWF_BT_ENTRY_TYPE_OFF);
++			npairs = le32dec(tbl + off + AICWF_BT_ENTRY_LEN_OFF);
++			off += AICWF_BT_ENTRY_HDR;
++			if (type >= AICWF_BT_PT_NODATA)
++				continue;
++			if (npairs > (size - off) / 8) {
++				error = EINVAL;
++				goto out;
++			}
++			pair = tbl + off;
++			off += npairs * 8;
++
++			if (pass == 0) {
++				if (type != AICWF_BT_PT_INF)
++					continue;
++				error = aicwf_bt_patches(sc, pair, npairs);
++				if (error != 0)
++					goto out;
++				found = true;
++				continue;
++			}
++			if (type == AICWF_BT_PT_VER)
++				continue;
++			if (type == AICWF_BT_PT_INF)
++				npairs = MIN(npairs, AICWF_BT_INF_WRITES);
++			for (i = 0; i < npairs; i++) {
++				value = le32dec(pair + i * 8 + 4);
++				if (type == AICWF_BT_PT_BTMODE &&
++				    i < __arraycount(mode))
++					value = mode[i];
++				error = aicwf_mem_write(sc,
++				    le32dec(pair + i * 8), value);
++				if (error != 0)
++					goto out;
++			}
++			if (type == AICWF_BT_PT_PWRON)
++				kpause("aicwfbt", false, hz / 10, NULL);
++		}
++		if (!found) {
++			error = ENOENT;
++			goto out;
++		}
++	}
++out:
++	firmware_free(tbl, size);
 +
 +	return error;
 +}
@@ -1790,6 +1964,11 @@ implemented.
 +	const bool h = __SHIFTOUT(id, AICWF_CHIP_ID_H) == 3;
 +	aprint_normal_dev(self, "chip ID 0x%08x, revision %u%s\n", id,
 +	    (u_int)__SHIFTOUT(id, AICWF_CHIP_ID_REV), h ? ", H variant" : "");
++
++	/* The wireless network works without the Bluetooth half. */
++	if ((error = aicwf_bt_load(sc)) != 0)
++		aprint_error_dev(self, "Bluetooth is not set up: %d\n",
++		    error);
 +
 +	if ((error = aicwf_upload(sc, h ? AICWF_FW_NAME_H : AICWF_FW_NAME,
 +	    AICWF_FW_ADDR)) != 0 ||

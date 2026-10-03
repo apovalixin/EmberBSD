@@ -505,7 +505,12 @@ btuartstart(struct tty *tp)
 			sc->sc_stats.acl_tx++;
 		} else {
 			sc->sc_xmit = false;
-			return 0; /* no more to send */
+			/*
+			 * No more packets, but one may still wait in the
+			 * output queue: flow control stopped the driver
+			 * after it was copied there.
+			 */
+			goto out;
 		}
 
 		sc->sc_txp = m;
@@ -546,6 +551,7 @@ btuartstart(struct tty *tp)
 
 	sc->sc_stats.byte_tx += count;
 
+out:
 	if (tp->t_outq.c_cc != 0 && tp->t_oproc != NULL)
 		(*tp->t_oproc)(tp);
 

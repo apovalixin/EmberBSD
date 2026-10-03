@@ -1623,6 +1623,13 @@ comparam(struct tty *tp, struct termios *t)
 		sc->sc_msr_cts = MSR_CTS;
 		if (ISSET(sc->sc_hwflags, COM_HW_AFE)) {
 			SET(sc->sc_mcr, MCR_AFE);
+			/*
+			 * The DesignWare UART then holds its transmitter
+			 * itself and no longer interrupts when CTS changes:
+			 * following CTS here too would leave output stopped.
+			 */
+			if (sc->sc_type == COM_TYPE_DW_APB)
+				sc->sc_msr_cts = 0;
 		} else {
 			sc->sc_efr = EFR_AUTORTS | EFR_AUTOCTS;
 		}

@@ -15,9 +15,11 @@ with tempfile.TemporaryDirectory(prefix="bluetooth-rc-") as directory:
     stub.write_text('''#!/bin/sh
 echo "$(basename "$0") $*" >> "$TEST_LOG"
 case "$(basename "$0") $*" in
-"sysctl "*) [ "$TEST_CASE" = foreign ] && echo QEMU || echo 'Raspberry Pi 5 Model B' ;;
-"btconfig -l") [ "$TEST_CASE" = cold ] || echo btuart0 ;;
-"btconfig btuart0") [ "$TEST_CASE" = cold ] || echo '<UP,RUNNING>' ;;
+"sysctl -n hw.model") [ "$TEST_CASE" != orangepi ] || echo xunlong,orangepi-zero4 ;;
+"sysctl "*) case "$TEST_CASE" in
+    foreign) echo QEMU ;; orangepi) : ;; *) echo 'Raspberry Pi 5 Model B' ;; esac ;;
+"btconfig -l") case "$TEST_CASE" in cold|orangepi) : ;; *) echo btuart0 ;; esac ;;
+"btconfig btuart0") case "$TEST_CASE" in cold|orangepi) : ;; *) echo '<UP,RUNNING>' ;; esac ;;
 "modstat "*) : ;;
 "bluetooth-control btuart0 address")
     [ "$TEST_CASE" = cold ] && echo ADDRESS_CHANGED || echo ADDRESS_UNCHANGED ;;
@@ -35,7 +37,7 @@ esac
                       .replace('/etc/oxtorg/bluetooth.conf', str(base / 'absent.conf'))
                       .replace('/opt/oxtorg/bin/bluetooth-control', str(base / 'bluetooth-control')))
     failed = False
-    for case in ("live", "cold", "foreign", "rejected"):
+    for case in ("live", "cold", "orangepi", "foreign", "rejected"):
         log = base / "commands"
         log.write_text("")
         result = subprocess.run(["sh", str(script), "start"], capture_output=True, text=True,
@@ -53,6 +55,10 @@ esac
             good &= "btconfig btuart0 -pscan -iscan" in lines
             configure = "btconfig btuart0 name Asenta NetBSD class 0x000104 pscan iscan -auth -encrypt switch sniff -master"
             good &= lines.index("bluetooth-control btuart0 init Asenta NetBSD") < lines.index(configure)
+        elif case == "orangepi":
+            good &= "btattach -f btuart /dev/dty01 1500000" in lines
+            good &= not any(line.startswith("modload ") for line in lines)
+            good &= "btconfig btuart0 enable" in lines
         else:
             good &= len(lines) == 1
         print(case+": "+("PASS" if good else "FAIL"))

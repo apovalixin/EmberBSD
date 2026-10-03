@@ -1,0 +1,57 @@
+Origin:
+The DesignWare UART of the Allwinner A733 has no component parameter
+register, so com(4) treated it as a UART without a FIFO; at 1.5 Mbaud
+that loses input. The depth now comes from the standard "fifo-size"
+property. With a deep FIFO, following CTS in software is too late: bytes
+already queued keep going after the other side asked to stop, and a
+Bluetooth controller lost part of a long command. The "auto-flow-control"
+property enables the automatic flow control of the UART; in that mode the
+UART no longer interrupts on CTS changes, so com(4) stops tracking CTS
+itself.
+
+--- sys/dev/ic/com.c.orig
++++ sys/dev/ic/com.c
+@@ -1623,6 +1623,13 @@ comparam(struct tty *tp, struct termios *t)
+ 		sc->sc_msr_cts = MSR_CTS;
+ 		if (ISSET(sc->sc_hwflags, COM_HW_AFE)) {
+ 			SET(sc->sc_mcr, MCR_AFE);
++			/*
++			 * The DesignWare UART then holds its transmitter
++			 * itself and no longer interrupts when CTS changes:
++			 * following CTS here too would leave output stopped.
++			 */
++			if (sc->sc_type == COM_TYPE_DW_APB)
++				sc->sc_msr_cts = 0;
+ 		} else {
+ 			sc->sc_efr = EFR_AUTORTS | EFR_AUTOCTS;
+ 		}
+--- sys/dev/fdt/dw_apb_uart.c.orig
++++ sys/dev/fdt/dw_apb_uart.c
+@@ -82,7 +82,7 @@ dw_apb_uart_attach(device_t parent, device_t self, void *aux)
+ 	char intrstr[128];
+ 	bus_addr_t addr;
+ 	bus_size_t size;
+-	u_int reg_shift, reg_iowidth;
++	u_int reg_shift, reg_iowidth, fifo_size;
+ 	int error;
+ 
+ 	if (fdtbus_get_reg(phandle, 0, &addr, &size) != 0) {
+@@ -134,6 +134,18 @@ dw_apb_uart_attach(device_t parent, device_t self, void *aux)
+ 
+ 	com_init_regs_stride_width(&sc->sc_regs, bst, bsh, addr, reg_shift, reg_iowidth);
+ 
++	/* Some integrations leave out the register that tells the depth. */
++	if (of_getprop_uint32(phandle, "fifo-size", &fifo_size) == 0)
++		prop_dictionary_set_uint(device_properties(self), "fifolen",
++		    fifo_size);
++
++	/*
++	 * With a deep FIFO only the UART itself can stop sending in time
++	 * when the other side drops CTS.
++	 */
++	if (of_hasprop(phandle, "auto-flow-control"))
++		SET(sc->sc_hwflags, COM_HW_AFE);
++
+ 	com_attach_subr(sc);
+ 
+ 	if (!fdtbus_intr_str(phandle, 0, intrstr, sizeof(intrstr))) {

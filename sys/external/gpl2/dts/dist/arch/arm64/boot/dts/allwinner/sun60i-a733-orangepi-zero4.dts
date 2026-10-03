@@ -18,16 +18,21 @@
 
 	aliases {
 		serial0 = &uart0;
+		serial1 = &uart1;
 	};
 
 	chosen {
 		stdout-path = "serial0:115200n8";
 	};
 
-	/* The enable pin of the AIC8800 wireless module: PM1. */
+	/*
+	 * The enable pins of the AIC8800 wireless module: PM1 for the
+	 * network half, PM2 for the Bluetooth half.
+	 */
 	wifi_pwrseq: wifi-pwrseq {
 		compatible = "mmc-pwrseq-simple";
-		reset-gpios = <&r_pio 1 1 GPIO_ACTIVE_LOW>;
+		reset-gpios = <&r_pio 1 1 GPIO_ACTIVE_LOW>,
+			      <&r_pio 1 2 GPIO_ACTIVE_LOW>;
 	};
 
 	/* The boot loader replaces the size with what it trained. */
@@ -123,5 +128,14 @@
 &uart0 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&uart0_pb_pins>;
+	status = "okay";
+};
+
+/* The Bluetooth half of the wireless module. */
+&uart1 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart1_pins>, <&uart1_rts_cts_pins>;
+	uart-has-rtscts;
+	auto-flow-control;
 	status = "okay";
 };

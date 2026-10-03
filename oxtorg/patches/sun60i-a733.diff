@@ -607,7 +607,7 @@ which selects the same code silently.
  		return ENXIO;
 --- /dev/null
 +++ sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner/sun60i-a733-orangepi-zero4.dts
-@@ -0,0 +1,127 @@
+@@ -0,0 +1,141 @@
 +// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
 +/*
 + * Orange Pi Zero 4.
@@ -628,16 +628,21 @@ which selects the same code silently.
 +
 +	aliases {
 +		serial0 = &uart0;
++		serial1 = &uart1;
 +	};
 +
 +	chosen {
 +		stdout-path = "serial0:115200n8";
 +	};
 +
-+	/* The enable pin of the AIC8800 wireless module: PM1. */
++	/*
++	 * The enable pins of the AIC8800 wireless module: PM1 for the
++	 * network half, PM2 for the Bluetooth half.
++	 */
 +	wifi_pwrseq: wifi-pwrseq {
 +		compatible = "mmc-pwrseq-simple";
-+		reset-gpios = <&r_pio 1 1 GPIO_ACTIVE_LOW>;
++		reset-gpios = <&r_pio 1 1 GPIO_ACTIVE_LOW>,
++			      <&r_pio 1 2 GPIO_ACTIVE_LOW>;
 +	};
 +
 +	/* The boot loader replaces the size with what it trained. */
@@ -735,9 +740,18 @@ which selects the same code silently.
 +	pinctrl-0 = <&uart0_pb_pins>;
 +	status = "okay";
 +};
++
++/* The Bluetooth half of the wireless module. */
++&uart1 {
++	pinctrl-names = "default";
++	pinctrl-0 = <&uart1_pins>, <&uart1_rts_cts_pins>;
++	uart-has-rtscts;
++	auto-flow-control;
++	status = "okay";
++};
 --- /dev/null
 +++ sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
-@@ -0,0 +1,400 @@
+@@ -0,0 +1,425 @@
 +// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
 +/*
 + * Allwinner A733 (sun60iw2).
@@ -910,6 +924,18 @@ which selects the same code silently.
 +				function = "uart0";
 +				allwinner,pinmux = <2>;
 +			};
++
++			uart1_pins: uart1-pins {
++				pins = "PG6", "PG7";
++				function = "uart1";
++				allwinner,pinmux = <2>;
++			};
++
++			uart1_rts_cts_pins: uart1-rts-cts-pins {
++				pins = "PG8", "PG9";
++				function = "uart1";
++				allwinner,pinmux = <2>;
++			};
 +		};
 +
 +		ccu: clock-controller@2002000 {
@@ -937,8 +963,21 @@ which selects the same code silently.
 +			interrupts = <GIC_SPI 2 IRQ_TYPE_LEVEL_HIGH>;
 +			reg-shift = <2>;
 +			reg-io-width = <4>;
++			fifo-size = <64>;
 +			clocks = <&ccu CLK_BUS_UART0>;
 +			resets = <&ccu RST_BUS_UART0>;
++			status = "disabled";
++		};
++
++		uart1: serial@2501000 {
++			compatible = "snps,dw-apb-uart";
++			reg = <0x02501000 0x400>;
++			interrupts = <GIC_SPI 3 IRQ_TYPE_LEVEL_HIGH>;
++			reg-shift = <2>;
++			reg-io-width = <4>;
++			fifo-size = <256>;
++			clocks = <&ccu CLK_BUS_UART1>;
++			resets = <&ccu RST_BUS_UART1>;
 +			status = "disabled";
 +		};
 +
