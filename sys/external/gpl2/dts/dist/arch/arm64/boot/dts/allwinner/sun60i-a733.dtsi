@@ -377,6 +377,12 @@
 			};
 		};
 
+		rtc: rtc@7090000 {
+			compatible = "allwinner,sun60i-a733-rtc";
+			reg = <0x07090000 0x400>;
+			interrupts = <GIC_SPI 196 IRQ_TYPE_LEVEL_HIGH>;
+		};
+
 		r_i2c0: i2c@7083000 {
 			compatible = "allwinner,sun60i-a733-i2c",
 				     "allwinner,sun6i-a31-i2c";

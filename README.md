@@ -30,7 +30,7 @@ driver.
 | I2C | Tested (WM8960 codec) | Not validated | Not validated | Tested (power management chip) |
 | Audio | WM8960 HAT: Tested | Not validated | Not validated | No |
 | Pin multiplexing and GPIO | Not validated | Not validated | Not validated | Pin multiplexing and GPIO output: Tested; no pin interrupts |
-| Real-time clock | Not validated | Not validated | None on the board | No |
+| Real-time clock | Not validated | Not validated | None on the board | Tested across a reboot |
 
 Long-run stability has not been established on any of these boards.
 

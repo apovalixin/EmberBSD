@@ -89,6 +89,10 @@ __KERNEL_RCSID(0, "$NetBSD: sunxi_rtc.c,v 1.10 2021/01/27 03:10:20 thorpej Exp $
 #define	 SUN6I_RTC_SECOND	__BITS(5,0)
 #define	SUN6I_RTC_BASE_YEAR	2000
 
+/* Newer chips count days from the first day of the base year. */
+#define	 SUN6I_RTC_LINEAR_DAY	__BITS(15,0)
+#define	SUN6I_RTC_LINEAR_BASE_YEAR	1970
+
 #define	SUN6I_RTC_LOSC_OUT_GATING_REG 0x60
 #define	 SUN6I_RTC_LOSC_OUT_EN	__BIT(0)
 
@@ -107,6 +111,7 @@ struct sunxi_rtc_config {
 };
 
 #define	SUNXI_RTC_F_HAS_VAR_PRESCALER	__BIT(0)
+#define	SUNXI_RTC_F_LINEAR_DAY		__BIT(1) /* date is a count of days */
 
 static const struct sunxi_rtc_config sun4i_rtc_config = {
 	.yy_mm_dd_reg = SUN4I_RTC_YY_MM_DD_REG,
@@ -241,6 +246,19 @@ static const struct sunxi_rtc_config sun50i_h6_rtc_config = {
 	.flags = SUNXI_RTC_F_HAS_VAR_PRESCALER,
 };
 
+static const struct sunxi_rtc_config sun60i_a733_rtc_config = {
+	.yy_mm_dd_reg = SUN6I_RTC_YY_MM_DD_REG,
+	.hh_mm_ss_reg = SUN6I_RTC_HH_MM_SS_REG,
+	.hour = SUN6I_RTC_HOUR,
+	.minute = SUN6I_RTC_MINUTE,
+	.second = SUN6I_RTC_SECOND,
+	.base_year = SUN6I_RTC_LINEAR_BASE_YEAR,
+
+	.iosc_rate = 16000000,
+	.fixed_prescaler = 32,
+	.flags = SUNXI_RTC_F_LINEAR_DAY,
+};
+
 static const struct device_compatible_entry compat_data[] = {
 	{ .compat = "allwinner,sun4i-a10-rtc",
 	  .data = &sun4i_rtc_config },
@@ -260,6 +278,8 @@ static const struct device_compatible_entry compat_data[] = {
 	  .data = &sun8i_h3_rtc_config },
 	{ .compat = "allwinner,sun50i-h6-rtc",
 	  .data = &sun50i_h6_rtc_config },
+	{ .compat = "allwinner,sun60i-a733-rtc",
+	  .data = &sun60i_a733_rtc_config },
 
 	DEVICE_COMPAT_EOL
 };
@@ -446,6 +466,18 @@ sunxi_rtc_gettime(todr_chip_handle_t tch, struct clock_ymdhms *dt)
 	const uint32_t yymmdd = RTC_READ(sc, conf->yy_mm_dd_reg);
 	const uint32_t hhmmss = RTC_READ(sc, conf->hh_mm_ss_reg);
 
+	if ((conf->flags & SUNXI_RTC_F_LINEAR_DAY) != 0) {
+		const time_t secs =
+		    (time_t)__SHIFTOUT(yymmdd, SUN6I_RTC_LINEAR_DAY) *
+		    SECS_PER_DAY +
+		    __SHIFTOUT(hhmmss, conf->hour) * SECS_PER_HOUR +
+		    __SHIFTOUT(hhmmss, conf->minute) * SECS_PER_MINUTE +
+		    __SHIFTOUT(hhmmss, conf->second);
+
+		clock_secs_to_ymdhms(secs, dt);
+		return 0;
+	}
+
 	dt->dt_year = __SHIFTOUT(yymmdd, conf->year) + conf->base_year;
 	dt->dt_mon = __SHIFTOUT(yymmdd, conf->month);
 	dt->dt_day = __SHIFTOUT(yymmdd, conf->day);
@@ -463,6 +495,20 @@ sunxi_rtc_settime(todr_chip_handle_t tch, struct clock_ymdhms *dt)
 	struct sunxi_rtc_softc *sc = tch->cookie;
 	const struct sunxi_rtc_config *conf = sc->sc_conf;
 	uint32_t yymmdd, hhmmss, maxyear;
+
+	if ((conf->flags & SUNXI_RTC_F_LINEAR_DAY) != 0) {
+		const time_t secs = clock_ymdhms_to_secs(dt);
+
+		if (secs < 0 || secs / SECS_PER_DAY >
+		    __SHIFTOUT_MASK(SUN6I_RTC_LINEAR_DAY))
+			return EIO;
+		hhmmss = __SHIFTIN(dt->dt_hour, conf->hour) |
+		    __SHIFTIN(dt->dt_min, conf->minute) |
+		    __SHIFTIN(dt->dt_sec, conf->second);
+		RTC_WRITE(sc, conf->yy_mm_dd_reg, secs / SECS_PER_DAY);
+		RTC_WRITE(sc, conf->hh_mm_ss_reg, hhmmss);
+		return 0;
+	}
 
 	/*
 	 * Sanity check the date before writing it back
