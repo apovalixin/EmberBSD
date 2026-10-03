@@ -67,6 +67,16 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define	  A733_GPIO_PULL_UP	1
 #define	  A733_GPIO_PULL_DOWN	2
 
+/*
+ * The chip feeds bank PF, where the card sits, with 3.3 V or 1.8 V by
+ * itself. Bit PF_POW_VAL follows the supply; which level means what
+ * depends on the chip revision, so only its change is watched.
+ */
+#define	A733_PIO_POW_VAL	0x48
+#define	 A733_PIO_POW_VAL_PF	__BIT(10)
+#define	A733_PIO_PF_POW		0x70
+#define	 A733_PIO_PF_POW_3V3	__BIT(0)
+
 struct a733_gpio_config {
 	char		first_bank;	/* letter of the first bank */
 	u_int		nbanks;
@@ -74,6 +84,7 @@ struct a733_gpio_config {
 	bus_size_t	bank_size;
 	bus_size_t	drv_offset;	/* drive strength, inside a bank */
 	bus_size_t	pull_offset;	/* pull-up and pull-down */
+	bool		pf_supply;	/* switches the supply of bank PF */
 };
 
 static const struct a733_gpio_config a733_pio_config = {
@@ -83,6 +94,7 @@ static const struct a733_gpio_config a733_pio_config = {
 	.bank_size = 0x80,
 	.drv_offset = 0x20,
 	.pull_offset = 0x30,
+	.pf_supply = true,
 };
 
 static const struct a733_gpio_config a733_r_pio_config = {
@@ -305,6 +317,85 @@ static struct fdtbus_gpio_controller_func a733_gpio_funcs = {
 	.write = a733_gpio_write,
 };
 
+/*
+ * The supply of bank PF as a regulator, so that the card driver can ask
+ * for 1.8 V signalling.
+ */
+static int
+a733_pf_supply_acquire(device_t dev)
+{
+	return 0;
+}
+
+static void
+a733_pf_supply_release(device_t dev)
+{
+}
+
+static int
+a733_pf_supply_enable(device_t dev, bool enable)
+{
+	return enable ? 0 : EINVAL;
+}
+
+static int
+a733_pf_supply_get_voltage(device_t dev, u_int *puvol)
+{
+	struct a733_gpio_softc * const sc = device_private(dev);
+
+	*puvol = (GPIO_READ(sc, A733_PIO_PF_POW) & A733_PIO_PF_POW_3V3) ?
+	    3300000 : 1800000;
+
+	return 0;
+}
+
+static int
+a733_pf_supply_set_voltage(device_t dev, u_int min_uvol, u_int max_uvol)
+{
+	struct a733_gpio_softc * const sc = device_private(dev);
+	uint32_t before, pow;
+	u_int cur;
+	int retry;
+
+	if (min_uvol <= 1800000 && 1800000 <= max_uvol)
+		pow = 0;
+	else if (min_uvol <= 3300000 && 3300000 <= max_uvol)
+		pow = A733_PIO_PF_POW_3V3;
+	else
+		return ERANGE;
+
+	a733_pf_supply_get_voltage(dev, &cur);
+	if ((pow != 0) == (cur == 3300000))
+		return 0;
+
+	mutex_enter(&sc->sc_lock);
+	before = GPIO_READ(sc, A733_PIO_POW_VAL) & A733_PIO_POW_VAL_PF;
+	GPIO_WRITE(sc, A733_PIO_PF_POW, pow);
+	mutex_exit(&sc->sc_lock);
+
+	for (retry = 100; retry > 0; retry--) {
+		if ((GPIO_READ(sc, A733_PIO_POW_VAL) & A733_PIO_POW_VAL_PF) !=
+		    before)
+			break;
+		delay(100);
+	}
+	if (retry == 0) {
+		device_printf(dev, "supply of bank PF did not change\n");
+		return ETIMEDOUT;
+	}
+	delay(10);
+
+	return 0;
+}
+
+static const struct fdtbus_regulator_controller_func a733_pf_supply_funcs = {
+	.acquire = a733_pf_supply_acquire,
+	.release = a733_pf_supply_release,
+	.enable = a733_pf_supply_enable,
+	.set_voltage = a733_pf_supply_set_voltage,
+	.get_voltage = a733_pf_supply_get_voltage,
+};
+
 static int
 a733_gpio_match(device_t parent, cfdata_t cf, void *aux)
 {
@@ -351,6 +442,17 @@ a733_gpio_attach(device_t parent, device_t self, void *aux)
 	fdtbus_register_gpio_controller(self, phandle, &a733_gpio_funcs);
 
 	for (child = OF_child(phandle); child; child = OF_peer(child)) {
+		if (sc->sc_config->pf_supply &&
+		    of_hasprop(child, "regulator-name")) {
+			aprint_normal_dev(self, "bank PF at %s V "
+			    "(POW_VAL 0x%08x)\n",
+			    (GPIO_READ(sc, A733_PIO_PF_POW) &
+			    A733_PIO_PF_POW_3V3) ? "3.3" : "1.8",
+			    GPIO_READ(sc, A733_PIO_POW_VAL));
+			fdtbus_register_regulator_controller(self, child,
+			    &a733_pf_supply_funcs);
+			continue;
+		}
 		if (!of_hasprop(child, "pins") ||
 		    !of_hasprop(child, "allwinner,pinmux"))
 			continue;

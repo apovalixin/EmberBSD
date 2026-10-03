@@ -71,8 +71,11 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&mmc0_pins>;
 	bus-width = <4>;
-	/* PMIC rails are not described yet: stay at 3.3 V signalling. */
-	max-frequency = <50000000>;
+	/* The chip switches the supply of the card's pins to 1.8 V. */
+	vqmmc-supply = <&reg_pf>;
+	sd-uhs-sdr50;
+	sd-uhs-sdr104;
+	max-frequency = <150000000>;
 	broken-cd;
 	status = "okay";
 };

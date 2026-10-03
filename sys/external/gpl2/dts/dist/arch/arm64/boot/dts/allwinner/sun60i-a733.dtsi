@@ -678,6 +678,13 @@
 				bias-pull-up;
 			};
 
+			/* The chip switches the supply of bank PF itself. */
+			reg_pf: pf-supply {
+				regulator-name = "vcc-pf";
+				regulator-min-microvolt = <1800000>;
+				regulator-max-microvolt = <3300000>;
+			};
+
 			mmc0_pins: mmc0-pins {
 				pins = "PF0", "PF1", "PF2", "PF3", "PF4", "PF5";
 				function = "mmc0";

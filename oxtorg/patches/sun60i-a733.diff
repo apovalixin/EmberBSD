@@ -548,7 +548,15 @@ which selects the same code silently.
  	const struct sunxi_mmc_delay *delays;
  	uint32_t dma_ftrglevel;
  };
-@@ -256,6 +257,21 @@ static const struct sunxi_mmc_config sun20i_d1_mmc_config = {
+@@ -160,6 +161,7 @@ struct sunxi_mmc_softc {
+ 	int sc_mmc_present;
+ 
+ 	u_int sc_max_frequency;
++	bool sc_uhs;		/* 1.8 V modes of SD cards */
+ 
+ 	device_t sc_sdmmc_dev;
+ 
+@@ -256,6 +258,21 @@ static const struct sunxi_mmc_config sun20i_d1_mmc_config = {
  		 SUNXI_MMC_FLAG_MASK_DATA0,
  };
  
@@ -570,7 +578,7 @@ which selects the same code silently.
  static const struct sunxi_mmc_config sun50i_a64_mmc_config = {
  	.idma_xferlen = 0x10000,
  	.dma_ftrglevel = 0x20070008,
-@@ -301,6 +317,12 @@ static const struct device_compatible_entry compat_data[] = {
+@@ -301,6 +318,12 @@ static const struct device_compatible_entry compat_data[] = {
  	  .data = &sun8i_a83t_emmc_config },
  	{ .compat = "allwinner,sun9i-a80-mmc",
  	  .data = &sun9i_a80_mmc_config },
@@ -583,7 +591,23 @@ which selects the same code silently.
  	{ .compat = "allwinner,sun20i-d1-mmc",
  	  .data = &sun20i_d1_mmc_config },
  	{ .compat = "allwinner,sun50i-a64-mmc",
-@@ -736,6 +758,9 @@ sunxi_mmc_host_reset(sdmmc_chipset_handle_t sch)
+@@ -615,6 +638,15 @@ sunxi_mmc_attach_i(device_t self)
+ 	if ((flags & SUNXI_MMC_FLAG_HS200) != 0 && supports_hs200)
+ 		saa.saa_caps |= SMC_CAPS_MMC_HS200;
+ 
++	/* The 1.8 V modes of SD cards need the signalling supply switched. */
++	if (sc->sc_reg_vqmmc != NULL) {
++		if (of_hasprop(sc->sc_phandle, "sd-uhs-sdr50"))
++			saa.saa_caps |= SMC_CAPS_UHS_SDR50;
++		if (of_hasprop(sc->sc_phandle, "sd-uhs-sdr104"))
++			saa.saa_caps |= SMC_CAPS_UHS_SDR104;
++		sc->sc_uhs = (saa.saa_caps & SMC_CAPS_UHS_MASK) != 0;
++	}
++
+ 	if (width == 4)
+ 		saa.saa_caps |= SMC_CAPS_4BIT_MODE;
+ 	if (width == 8)
+@@ -736,6 +768,9 @@ sunxi_mmc_host_reset(sdmmc_chipset_handle_t sch)
  
  	MMC_WRITE(sc, SUNXI_MMC_TIMEOUT, 0xffffffff);
  
@@ -593,6 +617,60 @@ which selects the same code silently.
  	MMC_WRITE(sc, SUNXI_MMC_IMASK, 0);
  
  	MMC_WRITE(sc, SUNXI_MMC_RINT, 0xffffffff);
+@@ -752,7 +787,13 @@ sunxi_mmc_host_reset(sdmmc_chipset_handle_t sch)
+ static uint32_t
+ sunxi_mmc_host_ocr(sdmmc_chipset_handle_t sch)
+ {
+-	return MMC_OCR_3_2V_3_3V | MMC_OCR_3_3V_3_4V | MMC_OCR_HCS;
++	struct sunxi_mmc_softc *sc = sch;
++	uint32_t ocr = MMC_OCR_3_2V_3_3V | MMC_OCR_3_3V_3_4V | MMC_OCR_HCS;
++
++	if (sc->sc_uhs)
++		ocr |= MMC_OCR_S18A;
++
++	return ocr;
+ }
+ 
+ static int
+@@ -866,12 +907,12 @@ sunxi_mmc_bus_clock(sdmmc_chipset_handle_t sch, int freq, bool ddr)
+ 	clkcr = MMC_READ(sc, SUNXI_MMC_CLKCR);
+ 	if (clkcr & SUNXI_MMC_CLKCR_CARDCLKON) {
+ 		clkcr &= ~SUNXI_MMC_CLKCR_CARDCLKON;
+-		if (flags & SUNXI_MMC_CLKCR_MASK_DATA0)
++		if (flags & SUNXI_MMC_FLAG_MASK_DATA0)
+ 			clkcr |= SUNXI_MMC_CLKCR_MASK_DATA0;
+ 		MMC_WRITE(sc, SUNXI_MMC_CLKCR, clkcr);
+ 		if (sunxi_mmc_update_clock(sc) != 0)
+ 			return 1;
+-		if (flags & SUNXI_MMC_CLKCR_MASK_DATA0) {
++		if (flags & SUNXI_MMC_FLAG_MASK_DATA0) {
+ 			clkcr = MMC_READ(sc, SUNXI_MMC_CLKCR);
+ 			clkcr &= ~SUNXI_MMC_CLKCR_MASK_DATA0;
+ 			MMC_WRITE(sc, SUNXI_MMC_CLKCR, clkcr);
+@@ -913,12 +954,12 @@ sunxi_mmc_bus_clock(sdmmc_chipset_handle_t sch, int freq, bool ddr)
+ 			return 1;
+ 
+ 		clkcr |= SUNXI_MMC_CLKCR_CARDCLKON;
+-		if (flags & SUNXI_MMC_CLKCR_MASK_DATA0)
++		if (flags & SUNXI_MMC_FLAG_MASK_DATA0)
+ 			clkcr |= SUNXI_MMC_CLKCR_MASK_DATA0;
+ 		MMC_WRITE(sc, SUNXI_MMC_CLKCR, clkcr);
+ 		if (sunxi_mmc_update_clock(sc) != 0)
+ 			return 1;
+-		if (flags & SUNXI_MMC_CLKCR_MASK_DATA0) {
++		if (flags & SUNXI_MMC_FLAG_MASK_DATA0) {
+ 			clkcr = MMC_READ(sc, SUNXI_MMC_CLKCR);
+ 			clkcr &= ~SUNXI_MMC_CLKCR_MASK_DATA0;
+ 			MMC_WRITE(sc, SUNXI_MMC_CLKCR, clkcr);
+@@ -996,6 +1037,8 @@ static int
+ sunxi_mmc_execute_tuning(sdmmc_chipset_handle_t sch, int timing)
+ {
+ 	switch (timing) {
++	case SDMMC_TIMING_UHS_SDR50:
++	case SDMMC_TIMING_UHS_SDR104:
+ 	case SDMMC_TIMING_MMC_HS200:
+ 		break;
+ 	default:
 --- sys/arch/arm/sunxi/sunxi_mmc.h
 +++ sys/arch/arm/sunxi/sunxi_mmc.h
 @@ -59,6 +59,7 @@
@@ -645,7 +723,7 @@ which selects the same code silently.
  		return ENXIO;
 --- /dev/null
 +++ sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner/sun60i-a733-orangepi-zero4.dts
-@@ -0,0 +1,346 @@
+@@ -0,0 +1,349 @@
 +// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
 +/*
 + * Orange Pi Zero 4.
@@ -719,8 +797,11 @@ which selects the same code silently.
 +	pinctrl-names = "default";
 +	pinctrl-0 = <&mmc0_pins>;
 +	bus-width = <4>;
-+	/* PMIC rails are not described yet: stay at 3.3 V signalling. */
-+	max-frequency = <50000000>;
++	/* The chip switches the supply of the card's pins to 1.8 V. */
++	vqmmc-supply = <&reg_pf>;
++	sd-uhs-sdr50;
++	sd-uhs-sdr104;
++	max-frequency = <150000000>;
 +	broken-cd;
 +	status = "okay";
 +};
@@ -994,7 +1075,7 @@ which selects the same code silently.
 +};
 --- /dev/null
 +++ sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
-@@ -0,0 +1,972 @@
+@@ -0,0 +1,979 @@
 +// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
 +/*
 + * Allwinner A733 (sun60iw2).
@@ -1673,6 +1754,13 @@ which selects the same code silently.
 +				allwinner,pinmux = <5>;
 +				drive-strength = <20>;
 +				bias-pull-up;
++			};
++
++			/* The chip switches the supply of bank PF itself. */
++			reg_pf: pf-supply {
++				regulator-name = "vcc-pf";
++				regulator-min-microvolt = <1800000>;
++				regulator-max-microvolt = <3300000>;
 +			};
 +
 +			mmc0_pins: mmc0-pins {
@@ -2727,7 +2815,7 @@ which selects the same code silently.
 +	sun60i_a733_eqos_match, sun60i_a733_eqos_attach, NULL, NULL);
 --- /dev/null
 +++ sys/arch/arm/sunxi/sun60i_a733_gpio.c
-@@ -0,0 +1,363 @@
+@@ -0,0 +1,465 @@
 +/*-
 + * Copyright (c) 2026 Anton and oxtorg contributors
 + * All rights reserved.
@@ -2797,6 +2885,16 @@ which selects the same code silently.
 +#define	  A733_GPIO_PULL_UP	1
 +#define	  A733_GPIO_PULL_DOWN	2
 +
++/*
++ * The chip feeds bank PF, where the card sits, with 3.3 V or 1.8 V by
++ * itself. Bit PF_POW_VAL follows the supply; which level means what
++ * depends on the chip revision, so only its change is watched.
++ */
++#define	A733_PIO_POW_VAL	0x48
++#define	 A733_PIO_POW_VAL_PF	__BIT(10)
++#define	A733_PIO_PF_POW		0x70
++#define	 A733_PIO_PF_POW_3V3	__BIT(0)
++
 +struct a733_gpio_config {
 +	char		first_bank;	/* letter of the first bank */
 +	u_int		nbanks;
@@ -2804,6 +2902,7 @@ which selects the same code silently.
 +	bus_size_t	bank_size;
 +	bus_size_t	drv_offset;	/* drive strength, inside a bank */
 +	bus_size_t	pull_offset;	/* pull-up and pull-down */
++	bool		pf_supply;	/* switches the supply of bank PF */
 +};
 +
 +static const struct a733_gpio_config a733_pio_config = {
@@ -2813,6 +2912,7 @@ which selects the same code silently.
 +	.bank_size = 0x80,
 +	.drv_offset = 0x20,
 +	.pull_offset = 0x30,
++	.pf_supply = true,
 +};
 +
 +static const struct a733_gpio_config a733_r_pio_config = {
@@ -3035,6 +3135,85 @@ which selects the same code silently.
 +	.write = a733_gpio_write,
 +};
 +
++/*
++ * The supply of bank PF as a regulator, so that the card driver can ask
++ * for 1.8 V signalling.
++ */
++static int
++a733_pf_supply_acquire(device_t dev)
++{
++	return 0;
++}
++
++static void
++a733_pf_supply_release(device_t dev)
++{
++}
++
++static int
++a733_pf_supply_enable(device_t dev, bool enable)
++{
++	return enable ? 0 : EINVAL;
++}
++
++static int
++a733_pf_supply_get_voltage(device_t dev, u_int *puvol)
++{
++	struct a733_gpio_softc * const sc = device_private(dev);
++
++	*puvol = (GPIO_READ(sc, A733_PIO_PF_POW) & A733_PIO_PF_POW_3V3) ?
++	    3300000 : 1800000;
++
++	return 0;
++}
++
++static int
++a733_pf_supply_set_voltage(device_t dev, u_int min_uvol, u_int max_uvol)
++{
++	struct a733_gpio_softc * const sc = device_private(dev);
++	uint32_t before, pow;
++	u_int cur;
++	int retry;
++
++	if (min_uvol <= 1800000 && 1800000 <= max_uvol)
++		pow = 0;
++	else if (min_uvol <= 3300000 && 3300000 <= max_uvol)
++		pow = A733_PIO_PF_POW_3V3;
++	else
++		return ERANGE;
++
++	a733_pf_supply_get_voltage(dev, &cur);
++	if ((pow != 0) == (cur == 3300000))
++		return 0;
++
++	mutex_enter(&sc->sc_lock);
++	before = GPIO_READ(sc, A733_PIO_POW_VAL) & A733_PIO_POW_VAL_PF;
++	GPIO_WRITE(sc, A733_PIO_PF_POW, pow);
++	mutex_exit(&sc->sc_lock);
++
++	for (retry = 100; retry > 0; retry--) {
++		if ((GPIO_READ(sc, A733_PIO_POW_VAL) & A733_PIO_POW_VAL_PF) !=
++		    before)
++			break;
++		delay(100);
++	}
++	if (retry == 0) {
++		device_printf(dev, "supply of bank PF did not change\n");
++		return ETIMEDOUT;
++	}
++	delay(10);
++
++	return 0;
++}
++
++static const struct fdtbus_regulator_controller_func a733_pf_supply_funcs = {
++	.acquire = a733_pf_supply_acquire,
++	.release = a733_pf_supply_release,
++	.enable = a733_pf_supply_enable,
++	.set_voltage = a733_pf_supply_set_voltage,
++	.get_voltage = a733_pf_supply_get_voltage,
++};
++
 +static int
 +a733_gpio_match(device_t parent, cfdata_t cf, void *aux)
 +{
@@ -3081,6 +3260,17 @@ which selects the same code silently.
 +	fdtbus_register_gpio_controller(self, phandle, &a733_gpio_funcs);
 +
 +	for (child = OF_child(phandle); child; child = OF_peer(child)) {
++		if (sc->sc_config->pf_supply &&
++		    of_hasprop(child, "regulator-name")) {
++			aprint_normal_dev(self, "bank PF at %s V "
++			    "(POW_VAL 0x%08x)\n",
++			    (GPIO_READ(sc, A733_PIO_PF_POW) &
++			    A733_PIO_PF_POW_3V3) ? "3.3" : "1.8",
++			    GPIO_READ(sc, A733_PIO_POW_VAL));
++			fdtbus_register_regulator_controller(self, child,
++			    &a733_pf_supply_funcs);
++			continue;
++		}
 +		if (!of_hasprop(child, "pins") ||
 +		    !of_hasprop(child, "allwinner,pinmux"))
 +			continue;
