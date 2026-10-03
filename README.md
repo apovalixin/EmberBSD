@@ -31,6 +31,7 @@ driver.
 | Audio | WM8960 HAT: Tested | Not validated | Not validated | No |
 | Pin multiplexing and GPIO | Not validated | Not validated | Not validated | Pin multiplexing and GPIO output: Tested; no pin interrupts |
 | Real-time clock | Not validated | Not validated | None on the board | Tested across a reboot |
+| Processor frequency control | Tested | Not validated | Not validated | Tested: full or half speed, halved automatically at 85 degC; the supply voltage is not changed |
 | Hardware random numbers | Not validated | Not validated | Not validated | Tested: the crypto engine's generator seeds the kernel at boot |
 
 Long-run stability has not been established on any of these boards.

@@ -17,6 +17,41 @@
 	#address-cells = <2>;
 	#size-cells = <2>;
 
+	/*
+	 * What the divider behind each cluster's PLL offers at the PLL rate
+	 * and the supply voltage the boot loader leaves. No regulator is
+	 * described, so the voltages are placeholders.
+	 */
+	cluster0_opp_table: opp-table-cluster0 {
+		compatible = "operating-points-v2";
+		opp-shared;
+
+		opp-468000000 {
+			opp-hz = /bits/ 64 <468000000>;
+			opp-microvolt = <0>;
+		};
+
+		opp-936000000 {
+			opp-hz = /bits/ 64 <936000000>;
+			opp-microvolt = <0>;
+		};
+	};
+
+	cluster1_opp_table: opp-table-cluster1 {
+		compatible = "operating-points-v2";
+		opp-shared;
+
+		opp-468000000 {
+			opp-hz = /bits/ 64 <468000000>;
+			opp-microvolt = <0>;
+		};
+
+		opp-936000000 {
+			opp-hz = /bits/ 64 <936000000>;
+			opp-microvolt = <0>;
+		};
+	};
+
 	cpus {
 		#address-cells = <1>;
 		#size-cells = <0>;
@@ -26,6 +61,8 @@
 			device_type = "cpu";
 			reg = <0x000>;
 			enable-method = "psci";
+			clocks = <&cpupll 0>;
+			operating-points-v2 = <&cluster0_opp_table>;
 		};
 
 		cpu1: cpu@100 {
@@ -33,6 +70,8 @@
 			device_type = "cpu";
 			reg = <0x100>;
 			enable-method = "psci";
+			clocks = <&cpupll 0>;
+			operating-points-v2 = <&cluster0_opp_table>;
 		};
 
 		cpu2: cpu@200 {
@@ -40,6 +79,8 @@
 			device_type = "cpu";
 			reg = <0x200>;
 			enable-method = "psci";
+			clocks = <&cpupll 0>;
+			operating-points-v2 = <&cluster0_opp_table>;
 		};
 
 		cpu3: cpu@300 {
@@ -47,6 +88,8 @@
 			device_type = "cpu";
 			reg = <0x300>;
 			enable-method = "psci";
+			clocks = <&cpupll 0>;
+			operating-points-v2 = <&cluster0_opp_table>;
 		};
 
 		cpu4: cpu@400 {
@@ -54,6 +97,8 @@
 			device_type = "cpu";
 			reg = <0x400>;
 			enable-method = "psci";
+			clocks = <&cpupll 0>;
+			operating-points-v2 = <&cluster0_opp_table>;
 		};
 
 		cpu5: cpu@500 {
@@ -61,6 +106,8 @@
 			device_type = "cpu";
 			reg = <0x500>;
 			enable-method = "psci";
+			clocks = <&cpupll 0>;
+			operating-points-v2 = <&cluster0_opp_table>;
 		};
 
 		cpu6: cpu@600 {
@@ -68,6 +115,8 @@
 			device_type = "cpu";
 			reg = <0x600>;
 			enable-method = "psci";
+			clocks = <&cpupll 1>;
+			operating-points-v2 = <&cluster1_opp_table>;
 		};
 
 		cpu7: cpu@700 {
@@ -75,6 +124,8 @@
 			device_type = "cpu";
 			reg = <0x700>;
 			enable-method = "psci";
+			clocks = <&cpupll 1>;
+			operating-points-v2 = <&cluster1_opp_table>;
 		};
 	};
 
@@ -387,6 +438,13 @@
 				 <&ccu CLK_MBUS_CE>, <&ccu CLK_BUS_CE_SYS>;
 			clock-names = "bus", "mod", "ram", "sys";
 			resets = <&ccu RST_BUS_CE>;
+		};
+
+		/* Not an upstream binding yet. Clock 0: little cores, 1: big. */
+		cpupll: clock-controller@8870000 {
+			compatible = "allwinner,sun60i-a733-cpupll";
+			reg = <0x08870000 0x4000>;
+			#clock-cells = <1>;
 		};
 
 		r_ccu: clock-controller@7010000 {

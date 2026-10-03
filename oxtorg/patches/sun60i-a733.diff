@@ -40,7 +40,7 @@ which selects the same code silently.
 
 --- sys/arch/arm/sunxi/files.sunxi
 +++ sys/arch/arm/sunxi/files.sunxi
-@@ -78,6 +78,25 @@ device	sun50ih6ccu: sunxi_ccu
+@@ -78,6 +78,30 @@ device	sun50ih6ccu: sunxi_ccu
  attach	sun50ih6ccu at fdt with sunxi_h6_ccu
  file	arch/arm/sunxi/sun50i_h6_ccu.c		sunxi_h6_ccu
  
@@ -54,6 +54,11 @@ which selects the same code silently.
 +attach	sun60ia733rccu at fdt with sunxi_a733_r_ccu
 +file	arch/arm/sunxi/sun60i_a733_r_ccu.c	sunxi_a733_r_ccu
 +
++# A733 processor clocks
++device	sun60icpupll
++attach	sun60icpupll at fdt with sun60i_a733_cpupll
++file	arch/arm/sunxi/sun60i_a733_cpupll.c	sun60i_a733_cpupll
++
 +# GPIO and pin control (A733)
 +device	sun60ia733gpio
 +attach	sun60ia733gpio at fdt with sun60i_a733_gpio
@@ -66,7 +71,7 @@ which selects the same code silently.
  # CCU (H6 PRCM)
  device	sun50ih6rccu: sunxi_ccu
  attach	sun50ih6rccu at fdt with sunxi_h6_r_ccu
-@@ -296,6 +315,16 @@ device	sunxithermal: sysmon_envsys, sysmon_taskq
+@@ -296,6 +320,16 @@ device	sunxithermal: sysmon_envsys, sysmon_taskq
  attach	sunxithermal at fdt with sunxi_thermal
  file	arch/arm/sunxi/sunxi_thermal.c		sunxi_thermal
  
@@ -600,16 +605,17 @@ which selects the same code silently.
  #define SUNXI_MMC_GCTRL_ACCESS_BY_AHB	__BIT(31)
 --- sys/arch/evbarm/conf/GENERIC64
 +++ sys/arch/evbarm/conf/GENERIC64
-@@ -238,6 +238,8 @@ sun50ia64ccu*	at fdt? pass 2		# Allwinner A64 CCU
+@@ -238,6 +238,9 @@ sun50ia64ccu*	at fdt? pass 2		# Allwinner A64 CCU
  sun50ia64rccu*	at fdt? pass 2		# Allwinner A64 CCU (PRCM)
  sun50ih6ccu*	at fdt? pass 2		# Allwinner H6 CCU
  sun50ih6rccu*	at fdt? pass 2		# Allwinner H6 CCU (PRCM)
 +sun60ia733ccu*	at fdt? pass 2		# Allwinner A733 CCU
 +sun60ia733rccu*	at fdt? pass 2		# Allwinner A733 CCU (always-on)
++sun60icpupll*	at fdt? pass 2		# Allwinner A733 processor clocks
  sunxide2ccu*	at fdt? pass 3		# Allwinner DE2 clock controller
  sunxiresets*	at fdt? pass 1		# Allwinner misc. resets
  sunxigates*	at fdt? pass 1		# Allwinner misc. gates
-@@ -254,6 +256,7 @@ plgpio* 	at acpi?
+@@ -254,6 +257,7 @@ plgpio* 	at acpi?
  qcomgpio*	at acpi?		# Qualcomm GPIO
  rkgpio* 	at rkiomux?		# Rockchip GPIO
  sunxigpio*	at fdt? pass 3		# Allwinner GPIO
@@ -617,7 +623,7 @@ which selects the same code silently.
  tegragpio*	at fdt? pass 2		# NVIDIA Tegra GPIO
  gpio*		at gpiobus?
  
-@@ -544,6 +547,8 @@ pwmfan* 	at fdt?			# PWM Fan controls
+@@ -544,6 +548,8 @@ pwmfan* 	at fdt?			# PWM Fan controls
  # Thermal throttling controller
  mesonthermal*	at fdt?			# Amlogic thermal sensor controller
  sunxithermal*	at fdt?			# Allwinner thermal sensor controller
@@ -783,7 +789,7 @@ which selects the same code silently.
 +};
 --- /dev/null
 +++ sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
-@@ -0,0 +1,436 @@
+@@ -0,0 +1,494 @@
 +// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
 +/*
 + * Allwinner A733 (sun60iw2).
@@ -803,6 +809,41 @@ which selects the same code silently.
 +	#address-cells = <2>;
 +	#size-cells = <2>;
 +
++	/*
++	 * What the divider behind each cluster's PLL offers at the PLL rate
++	 * and the supply voltage the boot loader leaves. No regulator is
++	 * described, so the voltages are placeholders.
++	 */
++	cluster0_opp_table: opp-table-cluster0 {
++		compatible = "operating-points-v2";
++		opp-shared;
++
++		opp-468000000 {
++			opp-hz = /bits/ 64 <468000000>;
++			opp-microvolt = <0>;
++		};
++
++		opp-936000000 {
++			opp-hz = /bits/ 64 <936000000>;
++			opp-microvolt = <0>;
++		};
++	};
++
++	cluster1_opp_table: opp-table-cluster1 {
++		compatible = "operating-points-v2";
++		opp-shared;
++
++		opp-468000000 {
++			opp-hz = /bits/ 64 <468000000>;
++			opp-microvolt = <0>;
++		};
++
++		opp-936000000 {
++			opp-hz = /bits/ 64 <936000000>;
++			opp-microvolt = <0>;
++		};
++	};
++
 +	cpus {
 +		#address-cells = <1>;
 +		#size-cells = <0>;
@@ -812,6 +853,8 @@ which selects the same code silently.
 +			device_type = "cpu";
 +			reg = <0x000>;
 +			enable-method = "psci";
++			clocks = <&cpupll 0>;
++			operating-points-v2 = <&cluster0_opp_table>;
 +		};
 +
 +		cpu1: cpu@100 {
@@ -819,6 +862,8 @@ which selects the same code silently.
 +			device_type = "cpu";
 +			reg = <0x100>;
 +			enable-method = "psci";
++			clocks = <&cpupll 0>;
++			operating-points-v2 = <&cluster0_opp_table>;
 +		};
 +
 +		cpu2: cpu@200 {
@@ -826,6 +871,8 @@ which selects the same code silently.
 +			device_type = "cpu";
 +			reg = <0x200>;
 +			enable-method = "psci";
++			clocks = <&cpupll 0>;
++			operating-points-v2 = <&cluster0_opp_table>;
 +		};
 +
 +		cpu3: cpu@300 {
@@ -833,6 +880,8 @@ which selects the same code silently.
 +			device_type = "cpu";
 +			reg = <0x300>;
 +			enable-method = "psci";
++			clocks = <&cpupll 0>;
++			operating-points-v2 = <&cluster0_opp_table>;
 +		};
 +
 +		cpu4: cpu@400 {
@@ -840,6 +889,8 @@ which selects the same code silently.
 +			device_type = "cpu";
 +			reg = <0x400>;
 +			enable-method = "psci";
++			clocks = <&cpupll 0>;
++			operating-points-v2 = <&cluster0_opp_table>;
 +		};
 +
 +		cpu5: cpu@500 {
@@ -847,6 +898,8 @@ which selects the same code silently.
 +			device_type = "cpu";
 +			reg = <0x500>;
 +			enable-method = "psci";
++			clocks = <&cpupll 0>;
++			operating-points-v2 = <&cluster0_opp_table>;
 +		};
 +
 +		cpu6: cpu@600 {
@@ -854,6 +907,8 @@ which selects the same code silently.
 +			device_type = "cpu";
 +			reg = <0x600>;
 +			enable-method = "psci";
++			clocks = <&cpupll 1>;
++			operating-points-v2 = <&cluster1_opp_table>;
 +		};
 +
 +		cpu7: cpu@700 {
@@ -861,6 +916,8 @@ which selects the same code silently.
 +			device_type = "cpu";
 +			reg = <0x700>;
 +			enable-method = "psci";
++			clocks = <&cpupll 1>;
++			operating-points-v2 = <&cluster1_opp_table>;
 +		};
 +	};
 +
@@ -1173,6 +1230,13 @@ which selects the same code silently.
 +				 <&ccu CLK_MBUS_CE>, <&ccu CLK_BUS_CE_SYS>;
 +			clock-names = "bus", "mod", "ram", "sys";
 +			resets = <&ccu RST_BUS_CE>;
++		};
++
++		/* Not an upstream binding yet. Clock 0: little cores, 1: big. */
++		cpupll: clock-controller@8870000 {
++			compatible = "allwinner,sun60i-a733-cpupll";
++			reg = <0x08870000 0x4000>;
++			#clock-cells = <1>;
 +		};
 +
 +		r_ccu: clock-controller@7010000 {
@@ -2346,7 +2410,7 @@ which selects the same code silently.
 +	a733_gpio_match, a733_gpio_attach, NULL, NULL);
 --- /dev/null
 +++ sys/arch/arm/sunxi/sun60i_a733_ths.c
-@@ -0,0 +1,288 @@
+@@ -0,0 +1,327 @@
 +/*-
 + * Copyright (c) 2026 Anton and oxtorg contributors
 + * All rights reserved.
@@ -2387,6 +2451,7 @@ which selects the same code silently.
 +
 +#include <sys/param.h>
 +#include <sys/bus.h>
++#include <sys/callout.h>
 +#include <sys/device.h>
 +#include <sys/systm.h>
 +
@@ -2440,6 +2505,12 @@ which selects the same code silently.
 +/* The vendor's trip points for this chip. */
 +#define	THS_WARN_MC		90000
 +#define	THS_CRIT_MC		110000
++/*
++ * Between these two the processor clocks are held down: slowing starts
++ * before the warning limit and ends once the chip has cooled off.
++ */
++#define	THS_THROTTLE_ON_MC	85000
++#define	THS_THROTTLE_OFF_MC	75000
 +
 +#define	THS_MC_TO_UK(mc)	((mc) * 1000 + 273150000)
 +
@@ -2463,6 +2534,9 @@ which selects the same code silently.
 +
 +	struct sysmon_envsys	*sc_sme;
 +	envsys_data_t		sc_data[THS_NSENSORS];
++
++	callout_t		sc_tick;
++	bool			sc_throttled;
 +};
 +
 +#define	RD4(sc, reg)		\
@@ -2535,6 +2609,31 @@ which selects the same code silently.
 +
 +	edata->value_cur = THS_MC_TO_UK(sun60i_a733_ths_to_mc(code));
 +	edata->state = ENVSYS_SVALID;
++}
++
++/* Once a second: ask for slower clocks while the hottest sensor is hot. */
++static void
++sun60i_a733_ths_tick(void *arg)
++{
++	struct sun60i_a733_ths_softc * const sc = arg;
++	int hottest = INT_MIN;
++	u_int n;
++
++	for (n = 0; n < THS_NSENSORS; n++) {
++		const uint32_t code = RD4(sc, THS_DATA(n)) & THS_CODE_MASK;
++
++		if (code != 0)
++			hottest = MAX(hottest, sun60i_a733_ths_to_mc(code));
++	}
++	if (!sc->sc_throttled && hottest >= THS_THROTTLE_ON_MC) {
++		sc->sc_throttled = true;
++		pmf_event_inject(NULL, PMFE_THROTTLE_ENABLE);
++	} else if (sc->sc_throttled && hottest != INT_MIN &&
++	    hottest <= THS_THROTTLE_OFF_MC) {
++		sc->sc_throttled = false;
++		pmf_event_inject(NULL, PMFE_THROTTLE_DISABLE);
++	}
++	callout_schedule(&sc->sc_tick, hz);
 +}
 +
 +static void
@@ -2625,6 +2724,10 @@ which selects the same code silently.
 +	}
 +	if (sysmon_envsys_register(sc->sc_sme) != 0)
 +		goto fail;
++
++	callout_init(&sc->sc_tick, CALLOUT_MPSAFE);
++	callout_setfunc(&sc->sc_tick, sun60i_a733_ths_tick, sc);
++	callout_schedule(&sc->sc_tick, hz);
 +
 +	return;
 +
@@ -3618,3 +3721,244 @@ which selects the same code silently.
 +
 +CFATTACH_DECL_NEW(sun60i_a733_crypto, sizeof(struct sun60i_a733_crypto_softc),
 +    sun60i_a733_crypto_match, sun60i_a733_crypto_attach, NULL, NULL);
+--- /dev/null
++++ sys/arch/arm/sunxi/sun60i_a733_cpupll.c
+@@ -0,0 +1,238 @@
++/*-
++ * Copyright (c) 2026 Anton and oxtorg contributors
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
++ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
++ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
++ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
++ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
++ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
++ * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
++ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
++ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++ * SUCH DAMAGE.
++ */
++
++
++/*
++ * Allwinner A733 processor clocks.
++ *
++ * Each of the two core clusters runs from its own PLL: 24 MHz times N,
++ * then divided by a power of two in the cluster's clock register. The
++ * boot loader leaves the PLLs locked. This driver only moves the
++ * divider, which needs no relock and no change of the supply voltage:
++ * a cluster can be slowed to a half, a quarter or an eighth of what the
++ * boot loader set, and brought back.
++ */
++
++#include <sys/cdefs.h>
++__KERNEL_RCSID(0, "$NetBSD$");
++
++#include <sys/param.h>
++#include <sys/bus.h>
++#include <sys/device.h>
++#include <sys/systm.h>
++
++#include <dev/clk/clk_backend.h>
++#include <dev/fdt/fdtvar.h>
++
++#define	CPUPLL_REF_HZ		24000000
++
++/* Offsets within a cluster's block. */
++#define	PLL_CTRL_REG		0x00
++#define	 PLL_CTRL_N		__BITS(15,8)
++#define	CPU_CLK_REG		0x1c
++#define	 CPU_CLK_SRC		__BITS(26,24)
++#define	 CPU_CLK_SRC_PLL	3
++#define	 CPU_CLK_P		__BITS(17,16)
++
++#define	CPUPLL_NCLUSTERS	2
++
++struct sun60i_a733_cpupll_softc;
++
++struct sun60i_a733_cpupll_clk {
++	struct clk		base;
++	bus_size_t		reg;
++};
++
++struct sun60i_a733_cpupll_softc {
++	device_t		sc_dev;
++	bus_space_tag_t		sc_bst;
++	bus_space_handle_t	sc_bsh;
++	struct clk_domain	sc_clkdom;
++	struct sun60i_a733_cpupll_clk sc_clk[CPUPLL_NCLUSTERS];
++};
++
++static const struct {
++	const char	*name;
++	bus_size_t	reg;
++} sun60i_a733_cpupll_clusters[CPUPLL_NCLUSTERS] = {
++	{ "cpu-l", 0x1000 },
++	{ "cpu-b", 0x2000 },
++};
++
++static const struct device_compatible_entry compat_data[] = {
++	{ .compat = "allwinner,sun60i-a733-cpupll" },
++	DEVICE_COMPAT_EOL
++};
++
++#define	RD4(sc, reg)							\
++	bus_space_read_4((sc)->sc_bst, (sc)->sc_bsh, (reg))
++#define	WR4(sc, reg, val)						\
++	bus_space_write_4((sc)->sc_bst, (sc)->sc_bsh, (reg), (val))
++
++static u_int
++sun60i_a733_cpupll_pll_rate(struct sun60i_a733_cpupll_softc *sc,
++    struct sun60i_a733_cpupll_clk *clk)
++{
++	return CPUPLL_REF_HZ *
++	    __SHIFTOUT(RD4(sc, clk->reg + PLL_CTRL_REG), PLL_CTRL_N);
++}
++
++static struct clk *
++sun60i_a733_cpupll_get(void *priv, const char *name)
++{
++	struct sun60i_a733_cpupll_softc * const sc = priv;
++
++	for (u_int i = 0; i < CPUPLL_NCLUSTERS; i++) {
++		if (strcmp(name, sc->sc_clk[i].base.name) == 0)
++			return &sc->sc_clk[i].base;
++	}
++
++	return NULL;
++}
++
++static void
++sun60i_a733_cpupll_put(void *priv, struct clk *clk)
++{
++}
++
++static u_int
++sun60i_a733_cpupll_get_rate(void *priv, struct clk *clkp)
++{
++	struct sun60i_a733_cpupll_softc * const sc = priv;
++	struct sun60i_a733_cpupll_clk *clk =
++	    (struct sun60i_a733_cpupll_clk *)clkp;
++	const uint32_t val = RD4(sc, clk->reg + CPU_CLK_REG);
++
++	/* The other sources are for the boot loader. */
++	if (__SHIFTOUT(val, CPU_CLK_SRC) != CPU_CLK_SRC_PLL)
++		return 0;
++
++	return sun60i_a733_cpupll_pll_rate(sc, clk) >>
++	    __SHIFTOUT(val, CPU_CLK_P);
++}
++
++static int
++sun60i_a733_cpupll_set_rate(void *priv, struct clk *clkp, u_int rate)
++{
++	struct sun60i_a733_cpupll_softc * const sc = priv;
++	struct sun60i_a733_cpupll_clk *clk =
++	    (struct sun60i_a733_cpupll_clk *)clkp;
++	const u_int pll = sun60i_a733_cpupll_pll_rate(sc, clk);
++	uint32_t val;
++	u_int p;
++
++	val = RD4(sc, clk->reg + CPU_CLK_REG);
++	if (__SHIFTOUT(val, CPU_CLK_SRC) != CPU_CLK_SRC_PLL)
++		return ENXIO;
++	for (p = 0; p <= __SHIFTOUT_MASK(CPU_CLK_P); p++) {
++		if (pll >> p == rate)
++			break;
++	}
++	if (p > __SHIFTOUT_MASK(CPU_CLK_P))
++		return EINVAL;
++
++	val &= ~CPU_CLK_P;
++	val |= __SHIFTIN(p, CPU_CLK_P);
++	WR4(sc, clk->reg + CPU_CLK_REG, val);
++
++	return 0;
++}
++
++static const struct clk_funcs sun60i_a733_cpupll_clk_funcs = {
++	.get = sun60i_a733_cpupll_get,
++	.put = sun60i_a733_cpupll_put,
++	.get_rate = sun60i_a733_cpupll_get_rate,
++	.set_rate = sun60i_a733_cpupll_set_rate,
++};
++
++static struct clk *
++sun60i_a733_cpupll_decode(device_t dev, int cc_phandle, const void *data,
++    size_t len)
++{
++	struct sun60i_a733_cpupll_softc * const sc = device_private(dev);
++
++	if (len != 4)
++		return NULL;
++	const u_int id = be32dec(data);
++	if (id >= CPUPLL_NCLUSTERS)
++		return NULL;
++
++	return &sc->sc_clk[id].base;
++}
++
++static const struct fdtbus_clock_controller_func sun60i_a733_cpupll_funcs = {
++	.decode = sun60i_a733_cpupll_decode,
++};
++
++static int
++sun60i_a733_cpupll_match(device_t parent, cfdata_t cf, void *aux)
++{
++	struct fdt_attach_args * const faa = aux;
++
++	return of_compatible_match(faa->faa_phandle, compat_data);
++}
++
++static void
++sun60i_a733_cpupll_attach(device_t parent, device_t self, void *aux)
++{
++	struct sun60i_a733_cpupll_softc * const sc = device_private(self);
++	struct fdt_attach_args * const faa = aux;
++	const int phandle = faa->faa_phandle;
++	bus_addr_t addr;
++	bus_size_t size;
++
++	sc->sc_dev = self;
++	sc->sc_bst = faa->faa_bst;
++	if (fdtbus_get_reg(phandle, 0, &addr, &size) != 0 ||
++	    bus_space_map(sc->sc_bst, addr, size, 0, &sc->sc_bsh) != 0) {
++		aprint_error(": couldn't map registers\n");
++		return;
++	}
++
++	sc->sc_clkdom.name = device_xname(self);
++	sc->sc_clkdom.funcs = &sun60i_a733_cpupll_clk_funcs;
++	sc->sc_clkdom.priv = sc;
++
++	aprint_naive("\n");
++	aprint_normal(": Processor clocks");
++	for (u_int i = 0; i < CPUPLL_NCLUSTERS; i++) {
++		struct sun60i_a733_cpupll_clk *clk = &sc->sc_clk[i];
++
++		clk->base.domain = &sc->sc_clkdom;
++		clk->base.name = sun60i_a733_cpupll_clusters[i].name;
++		clk->reg = sun60i_a733_cpupll_clusters[i].reg;
++		clk_attach(&clk->base);
++		aprint_normal("%s %s %u MHz", i == 0 ? ":" : ",",
++		    clk->base.name, clk_get_rate(&clk->base) / 1000000);
++	}
++	aprint_normal("\n");
++
++	fdtbus_register_clock_controller(self, phandle,
++	    &sun60i_a733_cpupll_funcs);
++}
++
++CFATTACH_DECL_NEW(sun60i_a733_cpupll, sizeof(struct sun60i_a733_cpupll_softc),
++    sun60i_a733_cpupll_match, sun60i_a733_cpupll_attach, NULL, NULL);

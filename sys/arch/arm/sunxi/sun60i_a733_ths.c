@@ -38,6 +38,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 
 #include <sys/param.h>
 #include <sys/bus.h>
+#include <sys/callout.h>
 #include <sys/device.h>
 #include <sys/systm.h>
 
@@ -91,6 +92,12 @@ __KERNEL_RCSID(0, "$NetBSD$");
 /* The vendor's trip points for this chip. */
 #define	THS_WARN_MC		90000
 #define	THS_CRIT_MC		110000
+/*
+ * Between these two the processor clocks are held down: slowing starts
+ * before the warning limit and ends once the chip has cooled off.
+ */
+#define	THS_THROTTLE_ON_MC	85000
+#define	THS_THROTTLE_OFF_MC	75000
 
 #define	THS_MC_TO_UK(mc)	((mc) * 1000 + 273150000)
 
@@ -114,6 +121,9 @@ struct sun60i_a733_ths_softc {
 
 	struct sysmon_envsys	*sc_sme;
 	envsys_data_t		sc_data[THS_NSENSORS];
+
+	callout_t		sc_tick;
+	bool			sc_throttled;
 };
 
 #define	RD4(sc, reg)		\
@@ -186,6 +196,31 @@ sun60i_a733_ths_refresh(struct sysmon_envsys *sme, envsys_data_t *edata)
 
 	edata->value_cur = THS_MC_TO_UK(sun60i_a733_ths_to_mc(code));
 	edata->state = ENVSYS_SVALID;
+}
+
+/* Once a second: ask for slower clocks while the hottest sensor is hot. */
+static void
+sun60i_a733_ths_tick(void *arg)
+{
+	struct sun60i_a733_ths_softc * const sc = arg;
+	int hottest = INT_MIN;
+	u_int n;
+
+	for (n = 0; n < THS_NSENSORS; n++) {
+		const uint32_t code = RD4(sc, THS_DATA(n)) & THS_CODE_MASK;
+
+		if (code != 0)
+			hottest = MAX(hottest, sun60i_a733_ths_to_mc(code));
+	}
+	if (!sc->sc_throttled && hottest >= THS_THROTTLE_ON_MC) {
+		sc->sc_throttled = true;
+		pmf_event_inject(NULL, PMFE_THROTTLE_ENABLE);
+	} else if (sc->sc_throttled && hottest != INT_MIN &&
+	    hottest <= THS_THROTTLE_OFF_MC) {
+		sc->sc_throttled = false;
+		pmf_event_inject(NULL, PMFE_THROTTLE_DISABLE);
+	}
+	callout_schedule(&sc->sc_tick, hz);
 }
 
 static void
@@ -276,6 +311,10 @@ sun60i_a733_ths_attach(device_t parent, device_t self, void *aux)
 	}
 	if (sysmon_envsys_register(sc->sc_sme) != 0)
 		goto fail;
+
+	callout_init(&sc->sc_tick, CALLOUT_MPSAFE);
+	callout_setfunc(&sc->sc_tick, sun60i_a733_ths_tick, sc);
+	callout_schedule(&sc->sc_tick, hz);
 
 	return;
 
