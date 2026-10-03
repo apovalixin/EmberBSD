@@ -66,7 +66,7 @@ which selects the same code silently.
  # CCU (H6 PRCM)
  device	sun50ih6rccu: sunxi_ccu
  attach	sun50ih6rccu at fdt with sunxi_h6_r_ccu
-@@ -296,6 +315,11 @@ device	sunxithermal: sysmon_envsys, sysmon_taskq
+@@ -296,6 +315,16 @@ device	sunxithermal: sysmon_envsys, sysmon_taskq
  attach	sunxithermal at fdt with sunxi_thermal
  file	arch/arm/sunxi/sunxi_thermal.c		sunxi_thermal
  
@@ -75,12 +75,17 @@ which selects the same code silently.
 +attach	sun60ia733ths at fdt with sun60i_a733_ths
 +file	arch/arm/sunxi/sun60i_a733_ths.c	sun60i_a733_ths
 +
++# A733 crypto engine (random numbers)
++device	sun60icrypto
++attach	sun60icrypto at fdt with sun60i_a733_crypto
++file	arch/arm/sunxi/sun60i_a733_crypto.c	sun60i_a733_crypto
++
  # SATA
  attach	ahcisata at fdt with sunxi_sata
  file	arch/arm/sunxi/sunxi_sata.c		sunxi_sata
 --- /dev/null
 +++ sys/arch/arm/sunxi/sun60i_a733_ccu.c
-@@ -0,0 +1,311 @@
+@@ -0,0 +1,331 @@
 +/*-
 + * Copyright (c) 2026 Anton and oxtorg contributors
 + * All rights reserved.
@@ -134,6 +139,8 @@ which selects the same code silently.
 +#define	APB1_CFG_REG		0x518
 +#define	APB_UART_CFG_REG	0x538
 +#define	MBUS_GATE_REG		0x5e4
++#define	CE_CLK_REG		0xac0
++#define	CE_BGR_REG		0xac4
 +#define	SMHC0_CLK_REG		0xd00
 +#define	SMHC0_BGR_REG		0xd0c
 +#define	SMHC1_CLK_REG		0xd10
@@ -163,6 +170,9 @@ which selects the same code silently.
 +	sun60i_a733_ccu_match, sun60i_a733_ccu_attach, NULL, NULL);
 +
 +static struct sunxi_ccu_reset sun60i_a733_ccu_resets[] = {
++	SUNXI_CCU_RESET(A733_RST_BUS_CE, CE_BGR_REG, 16),
++	SUNXI_CCU_RESET(A733_RST_BUS_CE_SYS, CE_BGR_REG, 17),
++
 +	SUNXI_CCU_RESET(A733_RST_BUS_MMC0, SMHC0_BGR_REG, 16),
 +	SUNXI_CCU_RESET(A733_RST_BUS_MMC1, SMHC1_BGR_REG, 16),
 +	SUNXI_CCU_RESET(A733_RST_BUS_MMC2, SMHC2_BGR_REG, 16),
@@ -205,6 +215,9 @@ which selects the same code silently.
 +static const char *mmc_parents[] = {
 +	"sys-24M", "pll-periph0-400M", "pll-periph0-300M",
 +	"pll-periph1-400M", "pll-periph1-300M"
++};
++static const char *ce_parents[] = {
++	"sys-24M", "pll-periph0-400M", "pll-periph0-600M"
 +};
 +static const char *gpadc_24m_parents[] = { "sys-24M", "hosc" };
 +static const char *emmc_parents[] = {
@@ -289,6 +302,18 @@ which selects the same code silently.
 +
 +	SUNXI_CCU_GATE(A733_CLK_MBUS_GMAC0, "mbus-gmac0", "ahb",
 +	    MBUS_GATE_REG, 11),
++
++	SUNXI_CCU_GATE(A733_CLK_MBUS_CE, "mbus-ce", "ahb",
++	    MBUS_GATE_REG, 2),
++	SUNXI_CCU_DIV_GATE(A733_CLK_CE, "ce", ce_parents, CE_CLK_REG,
++	    __BITS(4,0),		/* div */
++	    __BITS(26,24),		/* sel */
++	    __BIT(31),			/* enable */
++	    0),
++	SUNXI_CCU_GATE(A733_CLK_BUS_CE, "bus-ce", "ahb",
++	    CE_BGR_REG, 0),
++	SUNXI_CCU_GATE(A733_CLK_BUS_CE_SYS, "bus-ce-sys", "ahb",
++	    CE_BGR_REG, 1),
 +
 +	A733_MMC(A733_CLK_MMC0, "mmc0", mmc_parents, SMHC0_CLK_REG),
 +	A733_MMC(A733_CLK_MMC1, "mmc1", mmc_parents, SMHC1_CLK_REG),
@@ -394,7 +419,7 @@ which selects the same code silently.
 +}
 --- /dev/null
 +++ sys/arch/arm/sunxi/sun60i_a733_ccu.h
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,113 @@
 +/*-
 + * Copyright (c) 2026 Anton and oxtorg contributors
 + * All rights reserved.
@@ -446,7 +471,11 @@ which selects the same code silently.
 +#define	A733_CLK_APB0			44
 +#define	A733_CLK_APB1			45
 +#define	A733_CLK_APB_UART		46
++#define	A733_CLK_MBUS_CE		86
 +#define	A733_CLK_MBUS_GMAC0		91
++#define	A733_CLK_CE			127
++#define	A733_CLK_BUS_CE		128
++#define	A733_CLK_BUS_CE_SYS		129
 +#define	A733_CLK_MMC0			139
 +#define	A733_CLK_BUS_MMC0		140
 +#define	A733_CLK_MMC1			141
@@ -476,6 +505,8 @@ which selects the same code silently.
 +#define	A733_CLK_GMAC0_PHY		227
 +#define	A733_CLK_BUS_GMAC0		228
 +
++#define	A733_RST_BUS_CE		25
++#define	A733_RST_BUS_CE_SYS		26
 +#define	A733_RST_BUS_MMC0		34
 +#define	A733_RST_BUS_MMC1		35
 +#define	A733_RST_BUS_MMC2		36
@@ -586,11 +617,12 @@ which selects the same code silently.
  tegragpio*	at fdt? pass 2		# NVIDIA Tegra GPIO
  gpio*		at gpiobus?
  
-@@ -544,6 +547,7 @@ pwmfan* 	at fdt?			# PWM Fan controls
+@@ -544,6 +547,8 @@ pwmfan* 	at fdt?			# PWM Fan controls
  # Thermal throttling controller
  mesonthermal*	at fdt?			# Amlogic thermal sensor controller
  sunxithermal*	at fdt?			# Allwinner thermal sensor controller
 +sun60ia733ths*	at fdt?			# Allwinner A733 thermal sensors
++sun60icrypto* at fdt?		# Allwinner A733 crypto engine (RNG)
  tegrasoctherm*	at fdt?			# NVIDIA Tegra SOC_THERM
  rktsadc*	at fdt?			# RockChip TSASC
  
@@ -751,7 +783,7 @@ which selects the same code silently.
 +};
 --- /dev/null
 +++ sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
-@@ -0,0 +1,425 @@
+@@ -0,0 +1,436 @@
 +// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
 +/*
 + * Allwinner A733 (sun60iw2).
@@ -1130,6 +1162,17 @@ which selects the same code silently.
 +			compatible = "allwinner,sun60i-a733-gmac-syscon",
 +				     "syscon";
 +			reg = <0x04508000 0x100>;
++		};
++
++		/* Not an upstream binding yet. */
++		crypto: crypto@4603000 {
++			compatible = "allwinner,sun60i-a733-crypto";
++			reg = <0x04603000 0x800>;
++			interrupts = <GIC_SPI 168 IRQ_TYPE_EDGE_RISING>;
++			clocks = <&ccu CLK_BUS_CE>, <&ccu CLK_CE>,
++				 <&ccu CLK_MBUS_CE>, <&ccu CLK_BUS_CE_SYS>;
++			clock-names = "bus", "mod", "ram", "sys";
++			resets = <&ccu RST_BUS_CE>;
 +		};
 +
 +		r_ccu: clock-controller@7010000 {
@@ -3312,3 +3355,266 @@ which selects the same code silently.
  	/*
  	 * Sanity check the date before writing it back
  	 */
+--- /dev/null
++++ sys/arch/arm/sunxi/sun60i_a733_crypto.c
+@@ -0,0 +1,260 @@
++/*-
++ * Copyright (c) 2026 Anton and oxtorg contributors
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
++ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
++ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
++ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
++ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
++ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
++ * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
++ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
++ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++ * SUCH DAMAGE.
++ */
++
++
++/*
++ * Allwinner A733 crypto engine, as a source of random numbers.
++ *
++ * The engine takes a task descriptor in memory and writes the result to
++ * the address the descriptor names. Only the true random number generator
++ * is used here: each task returns 32 bytes. The descriptor format differs
++ * from the one sun8icrypto(4) drives: addresses are 40 bits wide and
++ * stored unaligned.
++ */
++
++#include <sys/cdefs.h>
++__KERNEL_RCSID(0, "$NetBSD$");
++
++#include <sys/param.h>
++#include <sys/bus.h>
++#include <sys/device.h>
++#include <sys/endian.h>
++#include <sys/mutex.h>
++#include <sys/rndsource.h>
++#include <sys/systm.h>
++
++#include <dev/fdt/fdtvar.h>
++
++#define	CE_TSK0_REG		0x00	/* task descriptor address, low */
++#define	CE_TSK1_REG		0x04	/* task descriptor address, high */
++#define	CE_ICR_REG		0x08
++#define	 CE_ICR_CHAN0		__BIT(0)
++#define	CE_ISR_REG		0x0c
++#define	 CE_ISR_CHAN0		__BITS(1,0)
++#define	CE_TLR_REG		0x10
++#define	 CE_TLR_HASH_RNG	__BIT(10)
++#define	CE_ERR_REG		0x18
++#define	 CE_ERR_CHAN0		__BITS(7,0)
++#define	CE_LPC_REG		0xd0
++#define	 CE_LPC_TRNG_TWO_SOURCES	__BIT(1)
++
++/* The task descriptor of hash and random number tasks. */
++#define	CE_TASK_COMM_CTL	0	/* 32 bits */
++#define	 CE_COMM_CTL_LAST	__BIT(12)
++#define	 CE_COMM_CTL_INTR	__BIT(16)
++#define	CE_TASK_MAIN_CMD	4	/* 32 bits */
++#define	 CE_MAIN_CMD_SHA256	3
++#define	 CE_MAIN_CMD_TRNG	(2 << 8)
++#define	CE_TASK_DST_ADDR	29	/* 40 bits, first output segment */
++#define	CE_TASK_DST_LEN		40	/* 32 bits */
++#define	CE_TASK_SIZE		208
++
++#define	CE_RNG_BYTES		32
++#define	CE_BUF_OFFSET		256
++#define	CE_MEM_SIZE		PAGE_SIZE
++#define	CE_TIMEOUT_US		100000
++/* Tasks per request for entropy. */
++#define	CE_RNG_ROUNDS		4
++
++static const struct device_compatible_entry compat_data[] = {
++	{ .compat = "allwinner,sun60i-a733-crypto" },
++	DEVICE_COMPAT_EOL
++};
++
++struct sun60i_a733_crypto_softc {
++	device_t		sc_dev;
++	bus_space_tag_t		sc_bst;
++	bus_space_handle_t	sc_bsh;
++	bus_dma_tag_t		sc_dmat;
++	bus_dmamap_t		sc_map;
++	bus_dma_segment_t	sc_seg;
++	uint8_t			*sc_mem;
++	kmutex_t		sc_lock;
++	krndsource_t		sc_rndsource;
++};
++
++#define	CE_READ(sc, reg)						\
++	bus_space_read_4((sc)->sc_bst, (sc)->sc_bsh, (reg))
++#define	CE_WRITE(sc, reg, val)						\
++	bus_space_write_4((sc)->sc_bst, (sc)->sc_bsh, (reg), (val))
++
++/* Run one task; the random bytes are then at CE_BUF_OFFSET. */
++static int
++sun60i_a733_crypto_rng(struct sun60i_a733_crypto_softc *sc)
++{
++	const bus_addr_t task = sc->sc_map->dm_segs[0].ds_addr;
++	const bus_addr_t buf = task + CE_BUF_OFFSET;
++	uint8_t *desc = sc->sc_mem;
++	u_int waited;
++	uint32_t err;
++
++	memset(desc, 0, CE_TASK_SIZE);
++	le32enc(desc + CE_TASK_COMM_CTL, CE_COMM_CTL_LAST | CE_COMM_CTL_INTR);
++	le32enc(desc + CE_TASK_MAIN_CMD,
++	    CE_MAIN_CMD_TRNG | CE_MAIN_CMD_SHA256);
++	le32enc(desc + CE_TASK_DST_ADDR, (uint32_t)buf);
++	desc[CE_TASK_DST_ADDR + 4] = (uint64_t)buf >> 32;
++	le32enc(desc + CE_TASK_DST_LEN, CE_RNG_BYTES);
++	bus_dmamap_sync(sc->sc_dmat, sc->sc_map, 0, CE_MEM_SIZE,
++	    BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
++
++	CE_WRITE(sc, CE_ISR_REG, CE_ISR_CHAN0);
++	CE_WRITE(sc, CE_TSK0_REG, (uint32_t)task);
++	CE_WRITE(sc, CE_TSK1_REG, (uint64_t)task >> 32);
++	CE_WRITE(sc, CE_TLR_REG, CE_TLR_HASH_RNG);
++
++	for (waited = 0; (CE_READ(sc, CE_ISR_REG) & CE_ISR_CHAN0) == 0;
++	    waited += 10) {
++		if (waited >= CE_TIMEOUT_US)
++			return ETIMEDOUT;
++		delay(10);
++	}
++	err = CE_READ(sc, CE_ERR_REG) & CE_ERR_CHAN0;
++	CE_WRITE(sc, CE_ISR_REG, CE_ISR_CHAN0);
++	bus_dmamap_sync(sc->sc_dmat, sc->sc_map, 0, CE_MEM_SIZE,
++	    BUS_DMASYNC_POSTWRITE | BUS_DMASYNC_POSTREAD);
++
++	return err != 0 ? EIO : 0;
++}
++
++static void
++sun60i_a733_crypto_rng_get(size_t bytes, void *priv)
++{
++	struct sun60i_a733_crypto_softc * const sc = priv;
++	uint8_t data[CE_RNG_BYTES];
++	u_int n;
++
++	for (n = 0; n < CE_RNG_ROUNDS && bytes > 0; n++) {
++		mutex_enter(&sc->sc_lock);
++		const int error = sun60i_a733_crypto_rng(sc);
++		memcpy(data, sc->sc_mem + CE_BUF_OFFSET, sizeof(data));
++		explicit_memset(sc->sc_mem + CE_BUF_OFFSET, 0, sizeof(data));
++		mutex_exit(&sc->sc_lock);
++		if (error != 0)
++			break;
++		/* The output is conditioned; count half of it as entropy. */
++		rnd_add_data(&sc->sc_rndsource, data, sizeof(data),
++		    sizeof(data) * NBBY / 2);
++		bytes -= MIN(bytes, sizeof(data) / 2);
++	}
++	explicit_memset(data, 0, sizeof(data));
++}
++
++static int
++sun60i_a733_crypto_match(device_t parent, cfdata_t cf, void *aux)
++{
++	struct fdt_attach_args * const faa = aux;
++
++	return of_compatible_match(faa->faa_phandle, compat_data);
++}
++
++static void
++sun60i_a733_crypto_attach(device_t parent, device_t self, void *aux)
++{
++	struct sun60i_a733_crypto_softc * const sc = device_private(self);
++	struct fdt_attach_args * const faa = aux;
++	const int phandle = faa->faa_phandle;
++	struct fdtbus_reset *rst;
++	struct clk *clk;
++	bus_addr_t addr;
++	bus_size_t size;
++	static const uint8_t zero[CE_RNG_BYTES];
++	uint8_t first[CE_RNG_BYTES];
++	int error, nsegs;
++	u_int i;
++
++	sc->sc_dev = self;
++	sc->sc_bst = faa->faa_bst;
++	sc->sc_dmat = faa->faa_dmat;
++	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_VM);
++
++	if (fdtbus_get_reg(phandle, 0, &addr, &size) != 0) {
++		aprint_error(": couldn't get registers\n");
++		return;
++	}
++	for (i = 0; (clk = fdtbus_clock_get_index(phandle, i)) != NULL; i++) {
++		if (clk_enable(clk) != 0) {
++			aprint_error(": couldn't enable clock %u\n", i);
++			return;
++		}
++	}
++	if ((rst = fdtbus_reset_get_index(phandle, 0)) != NULL &&
++	    fdtbus_reset_deassert(rst) != 0) {
++		aprint_error(": couldn't de-assert reset\n");
++		return;
++	}
++	if (bus_space_map(sc->sc_bst, addr, size, 0, &sc->sc_bsh) != 0) {
++		aprint_error(": couldn't map registers\n");
++		return;
++	}
++
++	aprint_naive("\n");
++	aprint_normal(": Crypto engine (random numbers)\n");
++
++	error = bus_dmamem_alloc(sc->sc_dmat, CE_MEM_SIZE, PAGE_SIZE, 0,
++	    &sc->sc_seg, 1, &nsegs, BUS_DMA_WAITOK);
++	if (error == 0)
++		error = bus_dmamem_map(sc->sc_dmat, &sc->sc_seg, 1,
++		    CE_MEM_SIZE, (void **)&sc->sc_mem, BUS_DMA_WAITOK);
++	if (error == 0)
++		error = bus_dmamap_create(sc->sc_dmat, CE_MEM_SIZE, 1,
++		    CE_MEM_SIZE, 0, BUS_DMA_WAITOK, &sc->sc_map);
++	if (error == 0)
++		error = bus_dmamap_load(sc->sc_dmat, sc->sc_map, sc->sc_mem,
++		    CE_MEM_SIZE, NULL, BUS_DMA_WAITOK);
++	if (error != 0) {
++		aprint_error_dev(self, "couldn't set up memory: %d\n", error);
++		return;
++	}
++
++	/* The generator mixes two noise sources when told so. */
++	CE_WRITE(sc, CE_LPC_REG,
++	    CE_READ(sc, CE_LPC_REG) | CE_LPC_TRNG_TWO_SOURCES);
++	/* Completion is polled; the flag still has to be let through. */
++	CE_WRITE(sc, CE_ICR_REG, CE_READ(sc, CE_ICR_REG) | CE_ICR_CHAN0);
++
++	/* Two answers in a row must be there and must differ. */
++	if ((error = sun60i_a733_crypto_rng(sc)) != 0) {
++		aprint_error_dev(self, "the generator does not answer: %d\n",
++		    error);
++		return;
++	}
++	memcpy(first, sc->sc_mem + CE_BUF_OFFSET, sizeof(first));
++	if ((error = sun60i_a733_crypto_rng(sc)) != 0 ||
++	    memcmp(first, sc->sc_mem + CE_BUF_OFFSET, sizeof(first)) == 0 ||
++	    memcmp(first, zero, sizeof(first)) == 0) {
++		aprint_error_dev(self, "the generator repeats itself\n");
++		return;
++	}
++	explicit_memset(first, 0, sizeof(first));
++
++	rndsource_setcb(&sc->sc_rndsource, sun60i_a733_crypto_rng_get, sc);
++	rnd_attach_source(&sc->sc_rndsource, device_xname(self),
++	    RND_TYPE_RNG, RND_FLAG_COLLECT_VALUE | RND_FLAG_HASCB);
++}
++
++CFATTACH_DECL_NEW(sun60i_a733_crypto, sizeof(struct sun60i_a733_crypto_softc),
++    sun60i_a733_crypto_match, sun60i_a733_crypto_attach, NULL, NULL);

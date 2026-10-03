@@ -378,6 +378,17 @@
 			reg = <0x04508000 0x100>;
 		};
 
+		/* Not an upstream binding yet. */
+		crypto: crypto@4603000 {
+			compatible = "allwinner,sun60i-a733-crypto";
+			reg = <0x04603000 0x800>;
+			interrupts = <GIC_SPI 168 IRQ_TYPE_EDGE_RISING>;
+			clocks = <&ccu CLK_BUS_CE>, <&ccu CLK_CE>,
+				 <&ccu CLK_MBUS_CE>, <&ccu CLK_BUS_CE_SYS>;
+			clock-names = "bus", "mod", "ram", "sys";
+			resets = <&ccu RST_BUS_CE>;
+		};
+
 		r_ccu: clock-controller@7010000 {
 			compatible = "allwinner,sun60i-a733-r-ccu";
 			reg = <0x07010000 0x400>;

@@ -22,7 +22,7 @@ driver.
 | All CPU cores | Tested | Not validated | Tested | Tested (8 cores) |
 | Ethernet | Tested | Not validated | No port | Tested (gigabit) |
 | Wi-Fi | Tested | Tested | Tested at 2.4 GHz; large transfers stall | Tested: WPA2 on 2.4 and 5 GHz at 802.11a/g rates; needs the vendor firmware file |
-| Bluetooth | Classic: Tested; BLE: No | Not validated | Not validated | Classic: controller start, inquiry and a service query to another computer tested, pairing not tried; BLE: No; needs the vendor patch files |
+| Bluetooth | Classic: Tested; BLE: No | Not validated | Not validated | Classic: Tested (inquiry, service query, pairing with Secure Connections and reconnection to a MacBook); BLE: No; needs the vendor patch files |
 | Temperature sensor | Tested | Not validated | Tested | Tested (five sensors, factory calibration) |
 | Fan control | Tested | Not validated | No fan | No |
 | Watchdog | Tested | Not validated | Not validated | Tested |
@@ -31,6 +31,7 @@ driver.
 | Audio | WM8960 HAT: Tested | Not validated | Not validated | No |
 | Pin multiplexing and GPIO | Not validated | Not validated | Not validated | Pin multiplexing and GPIO output: Tested; no pin interrupts |
 | Real-time clock | Not validated | Not validated | None on the board | Tested across a reboot |
+| Hardware random numbers | Not validated | Not validated | Not validated | Tested: the crypto engine's generator seeds the kernel at boot |
 
 Long-run stability has not been established on any of these boards.
 

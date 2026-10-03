@@ -51,6 +51,8 @@ __KERNEL_RCSID(1, "$NetBSD$");
 #define	APB1_CFG_REG		0x518
 #define	APB_UART_CFG_REG	0x538
 #define	MBUS_GATE_REG		0x5e4
+#define	CE_CLK_REG		0xac0
+#define	CE_BGR_REG		0xac4
 #define	SMHC0_CLK_REG		0xd00
 #define	SMHC0_BGR_REG		0xd0c
 #define	SMHC1_CLK_REG		0xd10
@@ -80,6 +82,9 @@ CFATTACH_DECL_NEW(sunxi_a733_ccu, sizeof(struct sunxi_ccu_softc),
 	sun60i_a733_ccu_match, sun60i_a733_ccu_attach, NULL, NULL);
 
 static struct sunxi_ccu_reset sun60i_a733_ccu_resets[] = {
+	SUNXI_CCU_RESET(A733_RST_BUS_CE, CE_BGR_REG, 16),
+	SUNXI_CCU_RESET(A733_RST_BUS_CE_SYS, CE_BGR_REG, 17),
+
 	SUNXI_CCU_RESET(A733_RST_BUS_MMC0, SMHC0_BGR_REG, 16),
 	SUNXI_CCU_RESET(A733_RST_BUS_MMC1, SMHC1_BGR_REG, 16),
 	SUNXI_CCU_RESET(A733_RST_BUS_MMC2, SMHC2_BGR_REG, 16),
@@ -122,6 +127,9 @@ static const char *apb_uart_parents[] = {
 static const char *mmc_parents[] = {
 	"sys-24M", "pll-periph0-400M", "pll-periph0-300M",
 	"pll-periph1-400M", "pll-periph1-300M"
+};
+static const char *ce_parents[] = {
+	"sys-24M", "pll-periph0-400M", "pll-periph0-600M"
 };
 static const char *gpadc_24m_parents[] = { "sys-24M", "hosc" };
 static const char *emmc_parents[] = {
@@ -206,6 +214,18 @@ static struct sunxi_ccu_clk sun60i_a733_ccu_clks[] = {
 
 	SUNXI_CCU_GATE(A733_CLK_MBUS_GMAC0, "mbus-gmac0", "ahb",
 	    MBUS_GATE_REG, 11),
+
+	SUNXI_CCU_GATE(A733_CLK_MBUS_CE, "mbus-ce", "ahb",
+	    MBUS_GATE_REG, 2),
+	SUNXI_CCU_DIV_GATE(A733_CLK_CE, "ce", ce_parents, CE_CLK_REG,
+	    __BITS(4,0),		/* div */
+	    __BITS(26,24),		/* sel */
+	    __BIT(31),			/* enable */
+	    0),
+	SUNXI_CCU_GATE(A733_CLK_BUS_CE, "bus-ce", "ahb",
+	    CE_BGR_REG, 0),
+	SUNXI_CCU_GATE(A733_CLK_BUS_CE_SYS, "bus-ce-sys", "ahb",
+	    CE_BGR_REG, 1),
 
 	A733_MMC(A733_CLK_MMC0, "mmc0", mmc_parents, SMHC0_CLK_REG),
 	A733_MMC(A733_CLK_MMC1, "mmc1", mmc_parents, SMHC1_CLK_REG),

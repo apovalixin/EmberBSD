@@ -548,6 +548,7 @@ pwmfan* 	at fdt?			# PWM Fan controls
 mesonthermal*	at fdt?			# Amlogic thermal sensor controller
 sunxithermal*	at fdt?			# Allwinner thermal sensor controller
 sun60ia733ths*	at fdt?			# Allwinner A733 thermal sensors
+sun60icrypto* at fdt?		# Allwinner A733 crypto engine (RNG)
 tegrasoctherm*	at fdt?			# NVIDIA Tegra SOC_THERM
 rktsadc*	at fdt?			# RockChip TSASC
 
