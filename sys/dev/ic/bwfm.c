@@ -1825,9 +1825,9 @@ bwfm_proto_bcdc_set_dcmd(struct bwfm_softc *sc, int ifidx,
 	}
 
 	if (dcmd->hdr.flags & BWFM_BCDC_DCMD_ERROR)
-		return dcmd->hdr.status;
-
-	ret = 0;
+		ret = dcmd->hdr.status;
+	else
+		ret = 0;
 err:
 	kmem_free(dcmd, sizeof(*dcmd));
 	return ret;
