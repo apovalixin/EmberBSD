@@ -645,7 +645,7 @@ which selects the same code silently.
  		return ENXIO;
 --- /dev/null
 +++ sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner/sun60i-a733-orangepi-zero4.dts
-@@ -0,0 +1,141 @@
+@@ -0,0 +1,346 @@
 +// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
 +/*
 + * Orange Pi Zero 4.
@@ -770,7 +770,212 @@ which selects the same code silently.
 +	pmic@36 {
 +		compatible = "x-powers,axp8191";
 +		reg = <0x36>;
++
++		regulators {
++			reg_dcdc1: dcdc1 {
++				regulator-name = "dcdc1";
++			};
++
++			reg_dcdc2: dcdc2 {
++				regulator-name = "dcdc2";
++			};
++
++			/* The big cores. */
++			reg_dcdc3: dcdc3 {
++				regulator-name = "dcdc3";
++				regulator-min-microvolt = <800000>;
++				regulator-max-microvolt = <1050000>;
++			};
++
++			reg_dcdc4: dcdc4 {
++				regulator-name = "dcdc4";
++			};
++
++			/* The little cores. */
++			reg_dcdc5: dcdc5 {
++				regulator-name = "dcdc5";
++				regulator-min-microvolt = <800000>;
++				regulator-max-microvolt = <1050000>;
++			};
++
++			reg_dcdc6: dcdc6 {
++				regulator-name = "dcdc6";
++			};
++
++			reg_dcdc7: dcdc7 {
++				regulator-name = "dcdc7";
++			};
++
++			reg_dcdc8: dcdc8 {
++				regulator-name = "dcdc8";
++			};
++
++			reg_dcdc9: dcdc9 {
++				regulator-name = "dcdc9";
++			};
++
++			reg_dc1sw1: dc1sw1 {
++				regulator-name = "dc1sw1";
++			};
++
++			reg_dc1sw2: dc1sw2 {
++				regulator-name = "dc1sw2";
++			};
++
++			reg_aldo1: aldo1 {
++				regulator-name = "aldo1";
++			};
++
++			reg_aldo2: aldo2 {
++				regulator-name = "aldo2";
++			};
++
++			reg_aldo3: aldo3 {
++				regulator-name = "aldo3";
++			};
++
++			reg_aldo4: aldo4 {
++				regulator-name = "aldo4";
++			};
++
++			reg_aldo5: aldo5 {
++				regulator-name = "aldo5";
++			};
++
++			reg_aldo6: aldo6 {
++				regulator-name = "aldo6";
++			};
++
++			reg_bldo1: bldo1 {
++				regulator-name = "bldo1";
++			};
++
++			reg_bldo2: bldo2 {
++				regulator-name = "bldo2";
++			};
++
++			reg_bldo3: bldo3 {
++				regulator-name = "bldo3";
++			};
++
++			reg_bldo4: bldo4 {
++				regulator-name = "bldo4";
++			};
++
++			reg_bldo5: bldo5 {
++				regulator-name = "bldo5";
++			};
++
++			reg_cldo1: cldo1 {
++				regulator-name = "cldo1";
++			};
++
++			reg_cldo2: cldo2 {
++				regulator-name = "cldo2";
++			};
++
++			reg_cldo3: cldo3 {
++				regulator-name = "cldo3";
++			};
++
++			reg_cldo4: cldo4 {
++				regulator-name = "cldo4";
++			};
++
++			reg_cldo5: cldo5 {
++				regulator-name = "cldo5";
++			};
++
++			reg_dldo1: dldo1 {
++				regulator-name = "dldo1";
++			};
++
++			reg_dldo2: dldo2 {
++				regulator-name = "dldo2";
++			};
++
++			reg_dldo3: dldo3 {
++				regulator-name = "dldo3";
++			};
++
++			reg_dldo4: dldo4 {
++				regulator-name = "dldo4";
++			};
++
++			reg_dldo5: dldo5 {
++				regulator-name = "dldo5";
++			};
++
++			reg_dldo6: dldo6 {
++				regulator-name = "dldo6";
++			};
++
++			reg_eldo1: eldo1 {
++				regulator-name = "eldo1";
++			};
++
++			reg_eldo2: eldo2 {
++				regulator-name = "eldo2";
++			};
++
++			reg_eldo3: eldo3 {
++				regulator-name = "eldo3";
++			};
++
++			reg_eldo4: eldo4 {
++				regulator-name = "eldo4";
++			};
++
++			reg_eldo5: eldo5 {
++				regulator-name = "eldo5";
++			};
++
++			reg_eldo6: eldo6 {
++				regulator-name = "eldo6";
++			};
++		};
 +	};
++};
++
++/* Six little cores on one supply, two big ones on another. */
++&cpu0 {
++	operating-points-v2 = <&cluster0_opp_table>;
++	cpu-supply = <&reg_dcdc5>;
++};
++
++&cpu1 {
++	operating-points-v2 = <&cluster0_opp_table>;
++	cpu-supply = <&reg_dcdc5>;
++};
++
++&cpu2 {
++	operating-points-v2 = <&cluster0_opp_table>;
++	cpu-supply = <&reg_dcdc5>;
++};
++
++&cpu3 {
++	operating-points-v2 = <&cluster0_opp_table>;
++	cpu-supply = <&reg_dcdc5>;
++};
++
++&cpu4 {
++	operating-points-v2 = <&cluster0_opp_table>;
++	cpu-supply = <&reg_dcdc5>;
++};
++
++&cpu5 {
++	operating-points-v2 = <&cluster0_opp_table>;
++	cpu-supply = <&reg_dcdc5>;
++};
++
++&cpu6 {
++	operating-points-v2 = <&cluster1_opp_table>;
++	cpu-supply = <&reg_dcdc3>;
++};
++
++&cpu7 {
++	operating-points-v2 = <&cluster1_opp_table>;
++	cpu-supply = <&reg_dcdc3>;
 +};
 +
 +&uart0 {
@@ -789,7 +994,7 @@ which selects the same code silently.
 +};
 --- /dev/null
 +++ sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
-@@ -0,0 +1,494 @@
+@@ -0,0 +1,972 @@
 +// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
 +/*
 + * Allwinner A733 (sun60iw2).
@@ -810,37 +1015,523 @@ which selects the same code silently.
 +	#size-cells = <2>;
 +
 +	/*
-+	 * What the divider behind each cluster's PLL offers at the PLL rate
-+	 * and the supply voltage the boot loader leaves. No regulator is
-+	 * described, so the voltages are placeholders.
++	 * Rates and supply voltages per speed grade. Bit n of
++	 * "opp-supported-hw" stands for the n-th of the grades 0x00, 0x01,
++	 * 0x02, 0x03, 0x04, 0x05, 0x06, 0x14 and 0x15 in the EFUSE. A board
++	 * points its cores here together with their supplies: without a
++	 * supply the higher rates must not be used.
 +	 */
 +	cluster0_opp_table: opp-table-cluster0 {
-+		compatible = "operating-points-v2";
++		compatible = "allwinner,sun60i-a733-operating-points";
 +		opp-shared;
 +
-+		opp-468000000 {
-+			opp-hz = /bits/ 64 <468000000>;
-+			opp-microvolt = <0>;
++		opp-408-800 {
++			opp-hz = /bits/ 64 <408000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x1ff>;
++			clock-latency-ns = <2000000>;
 +		};
 +
-+		opp-936000000 {
-+			opp-hz = /bits/ 64 <936000000>;
-+			opp-microvolt = <0>;
++		opp-720-800 {
++			opp-hz = /bits/ 64 <720000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x001>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-792-800 {
++			opp-hz = /bits/ 64 <792000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x1fe>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1008-800 {
++			opp-hz = /bits/ 64 <1008000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x1ff>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1104-800 {
++			opp-hz = /bits/ 64 <1104000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x002>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1200-800 {
++			opp-hz = /bits/ 64 <1200000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x1fd>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1200-850 {
++			opp-hz = /bits/ 64 <1200000000>;
++			opp-microvolt = <850000>;
++			opp-supported-hw = <0x002>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1296-800 {
++			opp-hz = /bits/ 64 <1296000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x004>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1296-900 {
++			opp-hz = /bits/ 64 <1296000000>;
++			opp-microvolt = <900000>;
++			opp-supported-hw = <0x002>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1392-800 {
++			opp-hz = /bits/ 64 <1392000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x1a0>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1392-840 {
++			opp-hz = /bits/ 64 <1392000000>;
++			opp-microvolt = <840000>;
++			opp-supported-hw = <0x050>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1392-850 {
++			opp-hz = /bits/ 64 <1392000000>;
++			opp-microvolt = <850000>;
++			opp-supported-hw = <0x004>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1392-860 {
++			opp-hz = /bits/ 64 <1392000000>;
++			opp-microvolt = <860000>;
++			opp-supported-hw = <0x008>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1392-950 {
++			opp-hz = /bits/ 64 <1392000000>;
++			opp-microvolt = <950000>;
++			opp-supported-hw = <0x002>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1416-800 {
++			opp-hz = /bits/ 64 <1416000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x001>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1512-820 {
++			opp-hz = /bits/ 64 <1512000000>;
++			opp-microvolt = <820000>;
++			opp-supported-hw = <0x1a0>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1512-880 {
++			opp-hz = /bits/ 64 <1512000000>;
++			opp-microvolt = <880000>;
++			opp-supported-hw = <0x010>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1512-900 {
++			opp-hz = /bits/ 64 <1512000000>;
++			opp-microvolt = <900000>;
++			opp-supported-hw = <0x004>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1512-1000 {
++			opp-hz = /bits/ 64 <1512000000>;
++			opp-microvolt = <1000000>;
++			opp-supported-hw = <0x002>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1608-840 {
++			opp-hz = /bits/ 64 <1608000000>;
++			opp-microvolt = <840000>;
++			opp-supported-hw = <0x100>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1608-860 {
++			opp-hz = /bits/ 64 <1608000000>;
++			opp-microvolt = <860000>;
++			opp-supported-hw = <0x0a0>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1608-900 {
++			opp-hz = /bits/ 64 <1608000000>;
++			opp-microvolt = <900000>;
++			opp-supported-hw = <0x001>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1608-920 {
++			opp-hz = /bits/ 64 <1608000000>;
++			opp-microvolt = <920000>;
++			opp-supported-hw = <0x010>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1608-950 {
++			opp-hz = /bits/ 64 <1608000000>;
++			opp-microvolt = <950000>;
++			opp-supported-hw = <0x004>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1608-1050 {
++			opp-hz = /bits/ 64 <1608000000>;
++			opp-microvolt = <1050000>;
++			opp-supported-hw = <0x002>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1704-860 {
++			opp-hz = /bits/ 64 <1704000000>;
++			opp-microvolt = <860000>;
++			opp-supported-hw = <0x100>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1704-900 {
++			opp-hz = /bits/ 64 <1704000000>;
++			opp-microvolt = <900000>;
++			opp-supported-hw = <0x0a0>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1704-960 {
++			opp-hz = /bits/ 64 <1704000000>;
++			opp-microvolt = <960000>;
++			opp-supported-hw = <0x010>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1704-1000 {
++			opp-hz = /bits/ 64 <1704000000>;
++			opp-microvolt = <1000000>;
++			opp-supported-hw = <0x004>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1800-900 {
++			opp-hz = /bits/ 64 <1800000000>;
++			opp-microvolt = <900000>;
++			opp-supported-hw = <0x100>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1800-950 {
++			opp-hz = /bits/ 64 <1800000000>;
++			opp-microvolt = <950000>;
++			opp-supported-hw = <0x0a0>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1800-1000 {
++			opp-hz = /bits/ 64 <1800000000>;
++			opp-microvolt = <1000000>;
++			opp-supported-hw = <0x011>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1800-1050 {
++			opp-hz = /bits/ 64 <1800000000>;
++			opp-microvolt = <1050000>;
++			opp-supported-hw = <0x004>;
++			clock-latency-ns = <2000000>;
 +		};
 +	};
 +
 +	cluster1_opp_table: opp-table-cluster1 {
-+		compatible = "operating-points-v2";
++		compatible = "allwinner,sun60i-a733-operating-points";
 +		opp-shared;
 +
-+		opp-468000000 {
-+			opp-hz = /bits/ 64 <468000000>;
-+			opp-microvolt = <0>;
++		opp-408-800 {
++			opp-hz = /bits/ 64 <408000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x1ff>;
++			clock-latency-ns = <2000000>;
 +		};
 +
-+		opp-936000000 {
-+			opp-hz = /bits/ 64 <936000000>;
-+			opp-microvolt = <0>;
++		opp-720-800 {
++			opp-hz = /bits/ 64 <720000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x001>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-792-800 {
++			opp-hz = /bits/ 64 <792000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x1fe>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1008-800 {
++			opp-hz = /bits/ 64 <1008000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x1ff>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1200-800 {
++			opp-hz = /bits/ 64 <1200000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x1ff>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1296-800 {
++			opp-hz = /bits/ 64 <1296000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x002>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1392-800 {
++			opp-hz = /bits/ 64 <1392000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x1f5>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1392-820 {
++			opp-hz = /bits/ 64 <1392000000>;
++			opp-microvolt = <820000>;
++			opp-supported-hw = <0x008>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1392-850 {
++			opp-hz = /bits/ 64 <1392000000>;
++			opp-microvolt = <850000>;
++			opp-supported-hw = <0x002>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1512-800 {
++			opp-hz = /bits/ 64 <1512000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x1e5>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1512-820 {
++			opp-hz = /bits/ 64 <1512000000>;
++			opp-microvolt = <820000>;
++			opp-supported-hw = <0x010>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1512-860 {
++			opp-hz = /bits/ 64 <1512000000>;
++			opp-microvolt = <860000>;
++			opp-supported-hw = <0x008>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1512-900 {
++			opp-hz = /bits/ 64 <1512000000>;
++			opp-microvolt = <900000>;
++			opp-supported-hw = <0x002>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1608-820 {
++			opp-hz = /bits/ 64 <1608000000>;
++			opp-microvolt = <820000>;
++			opp-supported-hw = <0x1a0>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1608-840 {
++			opp-hz = /bits/ 64 <1608000000>;
++			opp-microvolt = <840000>;
++			opp-supported-hw = <0x010>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1608-850 {
++			opp-hz = /bits/ 64 <1608000000>;
++			opp-microvolt = <850000>;
++			opp-supported-hw = <0x045>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1608-900 {
++			opp-hz = /bits/ 64 <1608000000>;
++			opp-microvolt = <900000>;
++			opp-supported-hw = <0x008>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1608-950 {
++			opp-hz = /bits/ 64 <1608000000>;
++			opp-microvolt = <950000>;
++			opp-supported-hw = <0x002>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1704-840 {
++			opp-hz = /bits/ 64 <1704000000>;
++			opp-microvolt = <840000>;
++			opp-supported-hw = <0x100>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1704-850 {
++			opp-hz = /bits/ 64 <1704000000>;
++			opp-microvolt = <850000>;
++			opp-supported-hw = <0x0a0>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1704-870 {
++			opp-hz = /bits/ 64 <1704000000>;
++			opp-microvolt = <870000>;
++			opp-supported-hw = <0x010>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1704-900 {
++			opp-hz = /bits/ 64 <1704000000>;
++			opp-microvolt = <900000>;
++			opp-supported-hw = <0x005>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1704-1000 {
++			opp-hz = /bits/ 64 <1704000000>;
++			opp-microvolt = <1000000>;
++			opp-supported-hw = <0x002>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1800-870 {
++			opp-hz = /bits/ 64 <1800000000>;
++			opp-microvolt = <870000>;
++			opp-supported-hw = <0x100>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1800-900 {
++			opp-hz = /bits/ 64 <1800000000>;
++			opp-microvolt = <900000>;
++			opp-supported-hw = <0x0a0>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1800-920 {
++			opp-hz = /bits/ 64 <1800000000>;
++			opp-microvolt = <920000>;
++			opp-supported-hw = <0x010>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1800-950 {
++			opp-hz = /bits/ 64 <1800000000>;
++			opp-microvolt = <950000>;
++			opp-supported-hw = <0x005>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1800-1050 {
++			opp-hz = /bits/ 64 <1800000000>;
++			opp-microvolt = <1050000>;
++			opp-supported-hw = <0x002>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1896-900 {
++			opp-hz = /bits/ 64 <1896000000>;
++			opp-microvolt = <900000>;
++			opp-supported-hw = <0x100>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1896-940 {
++			opp-hz = /bits/ 64 <1896000000>;
++			opp-microvolt = <940000>;
++			opp-supported-hw = <0x0a0>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1896-970 {
++			opp-hz = /bits/ 64 <1896000000>;
++			opp-microvolt = <970000>;
++			opp-supported-hw = <0x010>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1896-1000 {
++			opp-hz = /bits/ 64 <1896000000>;
++			opp-microvolt = <1000000>;
++			opp-supported-hw = <0x004>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1920-1000 {
++			opp-hz = /bits/ 64 <1920000000>;
++			opp-microvolt = <1000000>;
++			opp-supported-hw = <0x001>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1944-930 {
++			opp-hz = /bits/ 64 <1944000000>;
++			opp-microvolt = <930000>;
++			opp-supported-hw = <0x100>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1944-970 {
++			opp-hz = /bits/ 64 <1944000000>;
++			opp-microvolt = <970000>;
++			opp-supported-hw = <0x0a0>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1944-1000 {
++			opp-hz = /bits/ 64 <1944000000>;
++			opp-microvolt = <1000000>;
++			opp-supported-hw = <0x010>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1992-960 {
++			opp-hz = /bits/ 64 <1992000000>;
++			opp-microvolt = <960000>;
++			opp-supported-hw = <0x100>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1992-1000 {
++			opp-hz = /bits/ 64 <1992000000>;
++			opp-microvolt = <1000000>;
++			opp-supported-hw = <0x0a0>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1992-1050 {
++			opp-hz = /bits/ 64 <1992000000>;
++			opp-microvolt = <1050000>;
++			opp-supported-hw = <0x011>;
++			clock-latency-ns = <2000000>;
 +		};
 +	};
 +
@@ -854,7 +1545,6 @@ which selects the same code silently.
 +			reg = <0x000>;
 +			enable-method = "psci";
 +			clocks = <&cpupll 0>;
-+			operating-points-v2 = <&cluster0_opp_table>;
 +		};
 +
 +		cpu1: cpu@100 {
@@ -863,7 +1553,6 @@ which selects the same code silently.
 +			reg = <0x100>;
 +			enable-method = "psci";
 +			clocks = <&cpupll 0>;
-+			operating-points-v2 = <&cluster0_opp_table>;
 +		};
 +
 +		cpu2: cpu@200 {
@@ -872,7 +1561,6 @@ which selects the same code silently.
 +			reg = <0x200>;
 +			enable-method = "psci";
 +			clocks = <&cpupll 0>;
-+			operating-points-v2 = <&cluster0_opp_table>;
 +		};
 +
 +		cpu3: cpu@300 {
@@ -881,7 +1569,6 @@ which selects the same code silently.
 +			reg = <0x300>;
 +			enable-method = "psci";
 +			clocks = <&cpupll 0>;
-+			operating-points-v2 = <&cluster0_opp_table>;
 +		};
 +
 +		cpu4: cpu@400 {
@@ -890,7 +1577,6 @@ which selects the same code silently.
 +			reg = <0x400>;
 +			enable-method = "psci";
 +			clocks = <&cpupll 0>;
-+			operating-points-v2 = <&cluster0_opp_table>;
 +		};
 +
 +		cpu5: cpu@500 {
@@ -899,7 +1585,6 @@ which selects the same code silently.
 +			reg = <0x500>;
 +			enable-method = "psci";
 +			clocks = <&cpupll 0>;
-+			operating-points-v2 = <&cluster0_opp_table>;
 +		};
 +
 +		cpu6: cpu@600 {
@@ -908,7 +1593,6 @@ which selects the same code silently.
 +			reg = <0x600>;
 +			enable-method = "psci";
 +			clocks = <&cpupll 1>;
-+			operating-points-v2 = <&cluster1_opp_table>;
 +		};
 +
 +		cpu7: cpu@700 {
@@ -917,7 +1601,6 @@ which selects the same code silently.
 +			reg = <0x700>;
 +			enable-method = "psci";
 +			clocks = <&cpupll 1>;
-+			operating-points-v2 = <&cluster1_opp_table>;
 +		};
 +	};
 +
@@ -3170,7 +3853,7 @@ which selects the same code silently.
 +#endif /* _SUN60I_A733_R_CCU_H */
 --- /dev/null
 +++ sys/dev/i2c/axp8191.c
-@@ -0,0 +1,183 @@
+@@ -0,0 +1,447 @@
 +/*-
 + * Copyright (c) 2026 Anton and oxtorg contributors
 + * All rights reserved.
@@ -3232,6 +3915,88 @@ which selects the same code silently.
 +
 +#define	AXP8191_POLL_MS		500
 +
++/*
++ * Regulators. Nine switching converters, two switches behind the first
++ * of them and 28 linear regulators. A converter's voltage code runs
++ * through up to four ranges with their own steps.
++ */
++#define	AXP8191_DCDC_CTL1	0x10	/* enable bits of DCDC1-8 */
++#define	AXP8191_DCDC_CTL2	0x11	/* DCDC9 and the switches */
++#define	AXP8191_DCDC_VOL(n)	(0x12 + (n))
++#define	AXP8191_LDO_CTL(n)	(0x20 + (n) / NBBY)
++#define	AXP8191_LDO_VOL(n)	(0x24 + (n))
++#define	AXP8191_NRANGES		4
++/* How fast an output follows a new setting, and a margin on top. */
++#define	AXP8191_RAMP_UV_PER_US	250
++#define	AXP8191_RAMP_MARGIN_US	200
++
++struct axp8191_range {
++	u_int			r_uv;		/* at the first code */
++	uint8_t			r_first;
++	uint8_t			r_last;
++	u_int			r_step;
++};
++
++struct axp8191_ctrl {
++	const char		*c_name;
++	uint8_t			c_enable_reg;
++	uint8_t			c_enable_mask;
++	uint8_t			c_vol_reg;	/* 0: a switch */
++	uint8_t			c_vol_mask;
++	struct axp8191_range	c_ranges[AXP8191_NRANGES];
++};
++
++#define	AXP8191_LOW_RANGES							{ 500000, 0x00, 0x46, 10000 }, { 1220000, 0x47, 0x57, 20000 }
++#define	AXP8191_DCDC(_n, ...)							{ .c_name = "dcdc" #_n,							  .c_enable_reg = (_n) < 9 ? AXP8191_DCDC_CTL1 : AXP8191_DCDC_CTL2, 	  .c_enable_mask = __BIT(((_n) - 1) % NBBY),				  .c_vol_reg = AXP8191_DCDC_VOL((_n) - 1), .c_vol_mask = 0x7f,		  .c_ranges = { __VA_ARGS__ } }
++#define	AXP8191_SWITCH(_name, _bit)						{ .c_name = (_name), .c_enable_reg = AXP8191_DCDC_CTL2,		  .c_enable_mask = __BIT(_bit) }
++/* _k counts the linear regulators through all five groups. */
++#define	AXP8191_LDO(_name, _k, _mask, _last, _step)				{ .c_name = (_name), .c_enable_reg = AXP8191_LDO_CTL(_k),		  .c_enable_mask = __BIT((_k) % NBBY),					  .c_vol_reg = AXP8191_LDO_VOL(_k), .c_vol_mask = (_mask),		  .c_ranges = { { 500000, 0x00, (_last), (_step) } } }
++#define	AXP8191_LDO_100MV(_name, _k)						AXP8191_LDO(_name, _k, 0x1f, 0x1d, 100000)
++#define	AXP8191_LDO_25MV(_name, _k)						AXP8191_LDO(_name, _k, 0x3f, 0x28, 25000)
++
++static const struct axp8191_ctrl axp8191_ctrls[] = {
++	AXP8191_DCDC(1, { 1000000, 0x00, 0x1c, 100000 }),
++	AXP8191_DCDC(2, AXP8191_LOW_RANGES),
++	AXP8191_DCDC(3, AXP8191_LOW_RANGES),
++	AXP8191_DCDC(4, AXP8191_LOW_RANGES),
++	AXP8191_DCDC(5, AXP8191_LOW_RANGES),
++	AXP8191_DCDC(6, AXP8191_LOW_RANGES, { 1800000, 0x58, 0x67, 20000 },
++	    { 2440000, 0x68, 0x70, 40000 }),
++	AXP8191_DCDC(7, AXP8191_LOW_RANGES),
++	AXP8191_DCDC(8, AXP8191_LOW_RANGES, { 1900000, 0x58, 0x67, 100000 }),
++	AXP8191_DCDC(9, AXP8191_LOW_RANGES, { 1900000, 0x58, 0x67, 100000 }),
++	AXP8191_SWITCH("dc1sw1", 3),
++	AXP8191_SWITCH("dc1sw2", 4),
++	AXP8191_LDO_100MV("aldo1", 0),
++	AXP8191_LDO_100MV("aldo2", 1),
++	AXP8191_LDO_100MV("aldo3", 2),
++	AXP8191_LDO_100MV("aldo4", 3),
++	AXP8191_LDO_100MV("aldo5", 4),
++	AXP8191_LDO_100MV("aldo6", 5),
++	AXP8191_LDO_100MV("bldo1", 6),
++	AXP8191_LDO_100MV("bldo2", 7),
++	AXP8191_LDO_100MV("bldo3", 8),
++	AXP8191_LDO_100MV("bldo4", 9),
++	AXP8191_LDO_100MV("bldo5", 10),
++	AXP8191_LDO_100MV("cldo1", 11),
++	AXP8191_LDO_100MV("cldo2", 12),
++	AXP8191_LDO_100MV("cldo3", 13),
++	AXP8191_LDO_100MV("cldo4", 14),
++	AXP8191_LDO_100MV("cldo5", 15),
++	AXP8191_LDO_100MV("dldo1", 16),
++	AXP8191_LDO_100MV("dldo2", 17),
++	AXP8191_LDO_100MV("dldo3", 18),
++	AXP8191_LDO_100MV("dldo4", 19),
++	AXP8191_LDO_100MV("dldo5", 20),
++	AXP8191_LDO_100MV("dldo6", 21),
++	AXP8191_LDO_25MV("eldo1", 22),
++	AXP8191_LDO_25MV("eldo2", 23),
++	AXP8191_LDO_25MV("eldo3", 24),
++	AXP8191_LDO_25MV("eldo4", 25),
++	AXP8191_LDO_25MV("eldo5", 26),
++	AXP8191_LDO_25MV("eldo6", 27),
++};
++
 +struct axp8191_softc {
 +	device_t		sc_dev;
 +	i2c_tag_t		sc_i2c;
@@ -3239,6 +4004,20 @@ which selects the same code silently.
 +
 +	struct sysmon_pswitch	sc_smpsw;
 +	callout_t		sc_tick;
++};
++
++struct axp8191reg_softc {
++	device_t		sc_dev;
++	struct axp8191_softc	*sc_pmic;
++	const struct axp8191_ctrl *sc_ctrl;
++	/* Limits from the device tree; zero when it gives none. */
++	u_int			sc_min_uvol;
++	u_int			sc_max_uvol;
++};
++
++struct axp8191reg_attach_args {
++	const struct axp8191_ctrl *reg_ctrl;
++	int			reg_phandle;
 +};
 +
 +static const struct device_compatible_entry compat_data[] = {
@@ -3297,6 +4076,157 @@ which selects the same code silently.
 +}
 +
 +static int
++axp8191reg_acquire(device_t dev)
++{
++	return 0;
++}
++
++static void
++axp8191reg_release(device_t dev)
++{
++}
++
++static int
++axp8191reg_enable(device_t dev, bool enable)
++{
++	struct axp8191reg_softc * const sc = device_private(dev);
++	const struct axp8191_ctrl *c = sc->sc_ctrl;
++	uint8_t val;
++	int error;
++
++	if ((error = axp8191_read(sc->sc_pmic, c->c_enable_reg, &val)) != 0)
++		return error;
++	if (enable)
++		val |= c->c_enable_mask;
++	else
++		val &= ~c->c_enable_mask;
++
++	return axp8191_write(sc->sc_pmic, c->c_enable_reg, val);
++}
++
++static int
++axp8191reg_get_voltage(device_t dev, u_int *uvol)
++{
++	struct axp8191reg_softc * const sc = device_private(dev);
++	const struct axp8191_ctrl *c = sc->sc_ctrl;
++	uint8_t val;
++	int error;
++	u_int i;
++
++	if (c->c_vol_reg == 0)
++		return ENXIO;
++	if ((error = axp8191_read(sc->sc_pmic, c->c_vol_reg, &val)) != 0)
++		return error;
++	val &= c->c_vol_mask;
++	for (i = 0; i < AXP8191_NRANGES; i++) {
++		const struct axp8191_range *r = &c->c_ranges[i];
++
++		if (r->r_step != 0 && val >= r->r_first && val <= r->r_last) {
++			*uvol = r->r_uv + (val - r->r_first) * r->r_step;
++			return 0;
++		}
++	}
++
++	return EIO;
++}
++
++/* The lowest voltage the regulator offers within the limits. */
++static int
++axp8191reg_set_voltage(device_t dev, u_int min_uvol, u_int max_uvol)
++{
++	struct axp8191reg_softc * const sc = device_private(dev);
++	const struct axp8191_ctrl *c = sc->sc_ctrl;
++	uint8_t val;
++	int error;
++	u_int i, old_uvol, new_uvol;
++
++	if (c->c_vol_reg == 0)
++		return ENXIO;
++	if (sc->sc_max_uvol != 0 &&
++	    (min_uvol < sc->sc_min_uvol || min_uvol > sc->sc_max_uvol))
++		return ERANGE;
++	if ((error = axp8191reg_get_voltage(dev, &old_uvol)) != 0)
++		return error;
++	for (i = 0; i < AXP8191_NRANGES; i++) {
++		const struct axp8191_range *r = &c->c_ranges[i];
++		const u_int last = r->r_uv +
++		    (r->r_last - r->r_first) * r->r_step;
++		u_int code = r->r_first;
++
++		if (r->r_step == 0 || min_uvol > last)
++			continue;
++		if (min_uvol > r->r_uv)
++			code += howmany(min_uvol - r->r_uv, r->r_step);
++		new_uvol = r->r_uv + (code - r->r_first) * r->r_step;
++		if (new_uvol > max_uvol)
++			return ERANGE;
++
++		error = axp8191_read(sc->sc_pmic, c->c_vol_reg, &val);
++		if (error != 0)
++			return error;
++		val = (val & ~c->c_vol_mask) | code;
++		error = axp8191_write(sc->sc_pmic, c->c_vol_reg, val);
++		/* A consumer about to draw more must find the voltage up. */
++		if (error == 0 && new_uvol > old_uvol)
++			delay(howmany(new_uvol - old_uvol,
++			    AXP8191_RAMP_UV_PER_US) + AXP8191_RAMP_MARGIN_US);
++		return error;
++	}
++
++	return ERANGE;
++}
++
++static const struct fdtbus_regulator_controller_func axp8191reg_funcs = {
++	.acquire = axp8191reg_acquire,
++	.release = axp8191reg_release,
++	.enable = axp8191reg_enable,
++	.set_voltage = axp8191reg_set_voltage,
++	.get_voltage = axp8191reg_get_voltage,
++};
++
++static int
++axp8191reg_match(device_t parent, cfdata_t match, void *aux)
++{
++	return 1;
++}
++
++/*
++ * A regulator is registered as the boot loader left it: nothing is
++ * switched and no voltage is moved until a consumer asks.
++ */
++static void
++axp8191reg_attach(device_t parent, device_t self, void *aux)
++{
++	struct axp8191reg_softc * const sc = device_private(self);
++	struct axp8191reg_attach_args * const aaa = aux;
++	const struct axp8191_ctrl *c = aaa->reg_ctrl;
++	uint8_t val = 0;
++	u_int uvol;
++
++	sc->sc_dev = self;
++	sc->sc_pmic = device_private(parent);
++	sc->sc_ctrl = c;
++	if (of_getprop_uint32(aaa->reg_phandle, "regulator-min-microvolt",
++	    &sc->sc_min_uvol) != 0 ||
++	    of_getprop_uint32(aaa->reg_phandle, "regulator-max-microvolt",
++	    &sc->sc_max_uvol) != 0)
++		sc->sc_min_uvol = sc->sc_max_uvol = 0;
++
++	(void)axp8191_read(sc->sc_pmic, c->c_enable_reg, &val);
++	const bool on = (val & c->c_enable_mask) != 0;
++
++	aprint_naive("\n");
++	if (axp8191reg_get_voltage(self, &uvol) == 0)
++		aprint_normal(": %s, %u.%03u V, %s\n", c->c_name,
++		    uvol / 1000000, uvol / 1000 % 1000, on ? "on" : "off");
++	else
++		aprint_normal(": %s, %s\n", c->c_name, on ? "on" : "off");
++
++	fdtbus_register_regulator_controller(self, aaa->reg_phandle,
++	    &axp8191reg_funcs);
++}
++
++static int
 +axp8191_match(device_t parent, cfdata_t match, void *aux)
 +{
 +	struct i2c_attach_args * const ia = aux;
@@ -3313,7 +4243,10 @@ which selects the same code silently.
 +{
 +	struct axp8191_softc * const sc = device_private(self);
 +	struct i2c_attach_args * const ia = aux;
++	struct axp8191reg_attach_args aaa;
 +	uint8_t type, id, ver, enable;
++	int regulators, child;
++	u_int i;
 +
 +	sc->sc_dev = self;
 +	sc->sc_i2c = ia->ia_tag;
@@ -3328,6 +4261,17 @@ which selects the same code silently.
 +	}
 +	aprint_normal(": AXP8191, type 0x%02x, ID 0x%02x, version 0x%02x\n",
 +	    type, id, ver);
++
++	regulators = of_find_firstchild_byname(ia->ia_cookie, "regulators");
++	for (i = 0; regulators > 0 && i < __arraycount(axp8191_ctrls); i++) {
++		child = of_find_firstchild_byname(regulators,
++		    axp8191_ctrls[i].c_name);
++		if (child <= 0)
++			continue;
++		aaa.reg_ctrl = &axp8191_ctrls[i];
++		aaa.reg_phandle = child;
++		config_found(self, &aaa, NULL, CFARGS_NONE);
++	}
 +
 +	/* Let the chip record a short press and drop what is recorded. */
 +	if (axp8191_read(sc, AXP8191_IRQ_ENABLE2, &enable) != 0 ||
@@ -3354,15 +4298,20 @@ which selects the same code silently.
 +
 +CFATTACH_DECL_NEW(axp8191pm, sizeof(struct axp8191_softc),
 +    axp8191_match, axp8191_attach, NULL, NULL);
++
++CFATTACH_DECL_NEW(axp8191reg, sizeof(struct axp8191reg_softc),
++    axp8191reg_match, axp8191reg_attach, NULL, NULL);
 --- sys/dev/i2c/files.i2c
 +++ sys/dev/i2c/files.i2c
-@@ -242,6 +242,11 @@ attach	axppmic at iic
+@@ -242,6 +242,13 @@ attach	axppmic at iic
  attach	axpreg at axppmic
  file	dev/i2c/axppmic.c			axppmic
  
 +# AXP8191 Power Management Unit: the power key
-+device	axp8191pm: sysmon_power, sysmon_taskq
++device	axp8191pm { }: sysmon_power, sysmon_taskq
++device	axp8191reg
 +attach	axp8191pm at iic
++attach	axp8191reg at axp8191pm
 +file	dev/i2c/axp8191.c			axp8191pm
 +
  # AXP809 Power Management Unit
@@ -3723,7 +4672,7 @@ which selects the same code silently.
 +    sun60i_a733_crypto_match, sun60i_a733_crypto_attach, NULL, NULL);
 --- /dev/null
 +++ sys/arch/arm/sunxi/sun60i_a733_cpupll.c
-@@ -0,0 +1,238 @@
+@@ -0,0 +1,397 @@
 +/*-
 + * Copyright (c) 2026 Anton and oxtorg contributors
 + * All rights reserved.
@@ -3756,10 +4705,12 @@ which selects the same code silently.
 + *
 + * Each of the two core clusters runs from its own PLL: 24 MHz times N,
 + * then divided by a power of two in the cluster's clock register. The
-+ * boot loader leaves the PLLs locked. This driver only moves the
-+ * divider, which needs no relock and no change of the supply voltage:
-+ * a cluster can be slowed to a half, a quarter or an eighth of what the
-+ * boot loader set, and brought back.
++ * PLLs are put into the mode in which a new N is approached as a ramp,
++ * so the cores keep running from their PLL while it moves.
++ *
++ * Which rates a chip may use, and at what supply voltage, depends on
++ * its speed grade in the EFUSE; the operating point tables in the
++ * device tree carry a mask of grades per entry.
 + */
 +
 +#include <sys/cdefs.h>
@@ -3773,17 +4724,42 @@ which selects the same code silently.
 +#include <dev/clk/clk_backend.h>
 +#include <dev/fdt/fdtvar.h>
 +
++#include <arm/sunxi/sunxi_sid.h>
++
 +#define	CPUPLL_REF_HZ		24000000
 +
 +/* Offsets within a cluster's block. */
 +#define	PLL_CTRL_REG		0x00
++#define	 PLL_CTRL_ENABLE	__BIT(31)
++#define	 PLL_CTRL_LDO_EN	__BIT(30)
++#define	 PLL_CTRL_LOCK_EN	__BIT(29)
++#define	 PLL_CTRL_LOCK		__BIT(28)
++#define	 PLL_CTRL_OUTPUT	__BIT(27)
++#define	 PLL_CTRL_UPDATE	__BIT(26)	/* clears itself */
 +#define	 PLL_CTRL_N		__BITS(15,8)
++#define	PLL_PAT0_REG		0x04
++#define	 PLL_PAT0_TRIANGULAR	__BITS(30,29)
++#define	PLL_PAT1_REG		0x08
++#define	 PLL_PAT1_RAMP_EN	__BIT(31)
++#define	PLL_RAMP_REG		0x18
++#define	 PLL_RAMP_ENABLE	__BIT(31)
++#define	 PLL_RAMP_STEP		__BIT(8)	/* 1.125 MHz per microsecond */
++#define	 PLL_RAMP_BYPASS	__BIT(0)
 +#define	CPU_CLK_REG		0x1c
 +#define	 CPU_CLK_SRC		__BITS(26,24)
 +#define	 CPU_CLK_SRC_PLL	3
 +#define	 CPU_CLK_P		__BITS(17,16)
 +
 +#define	CPUPLL_NCLUSTERS	2
++/* The range of N the PLL locks in, and how long to wait for it. */
++#define	CPUPLL_N_MIN		28
++#define	CPUPLL_N_MAX		94
++#define	CPUPLL_TIMEOUT_US	70000
++
++/* The speed grade: a byte of the EFUSE, with a spare copy that wins. */
++#define	CPUPLL_GRADE_OFFSET	0x4c
++#define	 CPUPLL_GRADE		__BITS(15,8)
++#define	 CPUPLL_GRADE_SPARE	__BITS(23,16)
 +
 +struct sun60i_a733_cpupll_softc;
 +
@@ -3861,30 +4837,129 @@ which selects the same code silently.
 +}
 +
 +static int
++sun60i_a733_cpupll_wait(struct sun60i_a733_cpupll_softc *sc, bus_size_t reg,
++    uint32_t mask, uint32_t want)
++{
++	u_int waited;
++
++	for (waited = 0; (RD4(sc, reg) & mask) != want; waited += 10) {
++		if (waited >= CPUPLL_TIMEOUT_US)
++			return ETIMEDOUT;
++		delay(10);
++	}
++
++	return 0;
++}
++
++/*
++ * Write the PLL's control register and tell the PLL to take the new
++ * settings over. Until it has, the register reads back the old ones.
++ */
++static int
++sun60i_a733_cpupll_update(struct sun60i_a733_cpupll_softc *sc,
++    struct sun60i_a733_cpupll_clk *clk, uint32_t val)
++{
++	const bus_size_t reg = clk->reg + PLL_CTRL_REG;
++
++	WR4(sc, reg, val);
++	WR4(sc, reg, val | PLL_CTRL_UPDATE);
++
++	return sun60i_a733_cpupll_wait(sc, reg, PLL_CTRL_UPDATE, 0);
++}
++
++static void
++sun60i_a733_cpupll_set_p(struct sun60i_a733_cpupll_softc *sc,
++    struct sun60i_a733_cpupll_clk *clk, u_int p)
++{
++	uint32_t val;
++
++	val = RD4(sc, clk->reg + CPU_CLK_REG);
++	val &= ~CPU_CLK_P;
++	val |= __SHIFTIN(p, CPU_CLK_P);
++	WR4(sc, clk->reg + CPU_CLK_REG, val);
++}
++
++static int
 +sun60i_a733_cpupll_set_rate(void *priv, struct clk *clkp, u_int rate)
 +{
 +	struct sun60i_a733_cpupll_softc * const sc = priv;
 +	struct sun60i_a733_cpupll_clk *clk =
 +	    (struct sun60i_a733_cpupll_clk *)clkp;
-+	const u_int pll = sun60i_a733_cpupll_pll_rate(sc, clk);
 +	uint32_t val;
-+	u_int p;
++	u_int n, p, old_p;
++	int error;
 +
 +	val = RD4(sc, clk->reg + CPU_CLK_REG);
 +	if (__SHIFTOUT(val, CPU_CLK_SRC) != CPU_CLK_SRC_PLL)
 +		return ENXIO;
++	old_p = __SHIFTOUT(val, CPU_CLK_P);
++
++	/* The smallest divider that keeps N in the PLL's range. */
 +	for (p = 0; p <= __SHIFTOUT_MASK(CPU_CLK_P); p++) {
-+		if (pll >> p == rate)
++		n = ((uint64_t)rate << p) / CPUPLL_REF_HZ;
++		if (n >= CPUPLL_N_MIN && n <= CPUPLL_N_MAX &&
++		    (CPUPLL_REF_HZ * n) >> p == rate)
 +			break;
 +	}
 +	if (p > __SHIFTOUT_MASK(CPU_CLK_P))
 +		return EINVAL;
 +
-+	val &= ~CPU_CLK_P;
-+	val |= __SHIFTIN(p, CPU_CLK_P);
-+	WR4(sc, clk->reg + CPU_CLK_REG, val);
++	/*
++	 * A larger divider goes in before the PLL moves and a smaller
++	 * one after, so the cores never see more than either rate.
++	 */
++	if (p > old_p)
++		sun60i_a733_cpupll_set_p(sc, clk, p);
++
++	val = RD4(sc, clk->reg + PLL_CTRL_REG);
++	if (__SHIFTOUT(val, PLL_CTRL_N) != n) {
++		val &= ~PLL_CTRL_N;
++		val |= __SHIFTIN(n, PLL_CTRL_N);
++		error = sun60i_a733_cpupll_update(sc, clk, val);
++		if (error == 0)
++			error = sun60i_a733_cpupll_wait(sc,
++			    clk->reg + PLL_CTRL_REG, PLL_CTRL_LOCK,
++			    PLL_CTRL_LOCK);
++		if (error != 0) {
++			device_printf(sc->sc_dev, "%s: PLL did not settle\n",
++			    clk->base.name);
++			return error;
++		}
++	}
++
++	if (p < old_p)
++		sun60i_a733_cpupll_set_p(sc, clk, p);
 +
 +	return 0;
++}
++
++/* Switch a running PLL to ramping between rates. */
++static int
++sun60i_a733_cpupll_ramp_enable(struct sun60i_a733_cpupll_softc *sc,
++    struct sun60i_a733_cpupll_clk *clk)
++{
++	uint32_t val;
++	int error;
++
++	WR4(sc, clk->reg + PLL_PAT0_REG,
++	    RD4(sc, clk->reg + PLL_PAT0_REG) | PLL_PAT0_TRIANGULAR);
++	WR4(sc, clk->reg + PLL_PAT1_REG,
++	    RD4(sc, clk->reg + PLL_PAT1_REG) | PLL_PAT1_RAMP_EN);
++	val = RD4(sc, clk->reg + PLL_RAMP_REG);
++	val &= ~PLL_RAMP_BYPASS;
++	val |= PLL_RAMP_ENABLE | PLL_RAMP_STEP;
++	WR4(sc, clk->reg + PLL_RAMP_REG, val);
++	val = RD4(sc, clk->reg + PLL_CTRL_REG);
++	if ((error = sun60i_a733_cpupll_update(sc, clk, val)) != 0)
++		return error;
++
++	val |= PLL_CTRL_ENABLE | PLL_CTRL_LDO_EN | PLL_CTRL_LOCK_EN |
++	    PLL_CTRL_OUTPUT;
++	if ((error = sun60i_a733_cpupll_update(sc, clk, val)) != 0)
++		return error;
++
++	return sun60i_a733_cpupll_wait(sc, clk->reg + PLL_CTRL_REG,
++	    PLL_CTRL_LOCK, PLL_CTRL_LOCK);
 +}
 +
 +static const struct clk_funcs sun60i_a733_cpupll_clk_funcs = {
@@ -3950,6 +5025,8 @@ which selects the same code silently.
 +		clk->base.domain = &sc->sc_clkdom;
 +		clk->base.name = sun60i_a733_cpupll_clusters[i].name;
 +		clk->reg = sun60i_a733_cpupll_clusters[i].reg;
++		if (sun60i_a733_cpupll_ramp_enable(sc, clk) != 0)
++			aprint_error(" (%s: no ramp)", clk->base.name);
 +		clk_attach(&clk->base);
 +		aprint_normal("%s %s %u MHz", i == 0 ? ":" : ",",
 +		    clk->base.name, clk_get_rate(&clk->base) / 1000000);
@@ -3962,3 +5039,34 @@ which selects the same code silently.
 +
 +CFATTACH_DECL_NEW(sun60i_a733_cpupll, sizeof(struct sun60i_a733_cpupll_softc),
 +    sun60i_a733_cpupll_match, sun60i_a733_cpupll_attach, NULL, NULL);
++
++/*
++ * An operating point lists the speed grades it is for as bits of
++ * "opp-supported-hw", numbered in the order of this table.
++ */
++static const uint8_t sun60i_a733_grades[] = {
++	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x14, 0x15
++};
++
++static bool
++sun60i_a733_opp_supported(const int opp_table, const int opp_node)
++{
++	uint32_t word, mask;
++	u_int grade, i;
++
++	if (of_getprop_uint32(opp_node, "opp-supported-hw", &mask) != 0 ||
++	    sunxi_sid_read(CPUPLL_GRADE_OFFSET, &word, 1) != 0)
++		return false;
++	grade = __SHIFTOUT(word, CPUPLL_GRADE_SPARE);
++	if (grade == 0)
++		grade = __SHIFTOUT(word, CPUPLL_GRADE);
++	for (i = 0; i < __arraycount(sun60i_a733_grades); i++) {
++		if (sun60i_a733_grades[i] == grade)
++			return (mask & __BIT(i)) != 0;
++	}
++
++	return false;
++}
++
++FDT_OPP(sun60i_a733, "allwinner,sun60i-a733-operating-points",
++    sun60i_a733_opp_supported);

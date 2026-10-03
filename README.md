@@ -31,7 +31,8 @@ driver.
 | Audio | WM8960 HAT: Tested | Not validated | Not validated | No |
 | Pin multiplexing and GPIO | Not validated | Not validated | Not validated | Pin multiplexing and GPIO output: Tested; no pin interrupts |
 | Real-time clock | Not validated | Not validated | None on the board | Tested across a reboot |
-| Processor frequency control | Tested | Not validated | Not validated | Tested: full or half speed, halved automatically at 85 degC; the supply voltage is not changed |
+| Processor frequency control | Tested | Not validated | Not validated | Tested: 408 MHz to 1.8 GHz (little cores) and 2.0 GHz (big cores) with the supply voltage following, by the chip's speed grade; drops to 408 MHz at 85 degC |
+| Voltage regulators | Not validated | Not validated | None on the board | Tested: all outputs of the AXP8191 read; the two core supplies are driven |
 | Hardware random numbers | Not validated | Not validated | Not validated | Tested: the crypto engine's generator seeds the kernel at boot |
 
 Long-run stability has not been established on any of these boards.

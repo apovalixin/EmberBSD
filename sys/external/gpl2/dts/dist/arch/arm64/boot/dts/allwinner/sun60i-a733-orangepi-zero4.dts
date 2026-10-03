@@ -122,7 +122,212 @@
 	pmic@36 {
 		compatible = "x-powers,axp8191";
 		reg = <0x36>;
+
+		regulators {
+			reg_dcdc1: dcdc1 {
+				regulator-name = "dcdc1";
+			};
+
+			reg_dcdc2: dcdc2 {
+				regulator-name = "dcdc2";
+			};
+
+			/* The big cores. */
+			reg_dcdc3: dcdc3 {
+				regulator-name = "dcdc3";
+				regulator-min-microvolt = <800000>;
+				regulator-max-microvolt = <1050000>;
+			};
+
+			reg_dcdc4: dcdc4 {
+				regulator-name = "dcdc4";
+			};
+
+			/* The little cores. */
+			reg_dcdc5: dcdc5 {
+				regulator-name = "dcdc5";
+				regulator-min-microvolt = <800000>;
+				regulator-max-microvolt = <1050000>;
+			};
+
+			reg_dcdc6: dcdc6 {
+				regulator-name = "dcdc6";
+			};
+
+			reg_dcdc7: dcdc7 {
+				regulator-name = "dcdc7";
+			};
+
+			reg_dcdc8: dcdc8 {
+				regulator-name = "dcdc8";
+			};
+
+			reg_dcdc9: dcdc9 {
+				regulator-name = "dcdc9";
+			};
+
+			reg_dc1sw1: dc1sw1 {
+				regulator-name = "dc1sw1";
+			};
+
+			reg_dc1sw2: dc1sw2 {
+				regulator-name = "dc1sw2";
+			};
+
+			reg_aldo1: aldo1 {
+				regulator-name = "aldo1";
+			};
+
+			reg_aldo2: aldo2 {
+				regulator-name = "aldo2";
+			};
+
+			reg_aldo3: aldo3 {
+				regulator-name = "aldo3";
+			};
+
+			reg_aldo4: aldo4 {
+				regulator-name = "aldo4";
+			};
+
+			reg_aldo5: aldo5 {
+				regulator-name = "aldo5";
+			};
+
+			reg_aldo6: aldo6 {
+				regulator-name = "aldo6";
+			};
+
+			reg_bldo1: bldo1 {
+				regulator-name = "bldo1";
+			};
+
+			reg_bldo2: bldo2 {
+				regulator-name = "bldo2";
+			};
+
+			reg_bldo3: bldo3 {
+				regulator-name = "bldo3";
+			};
+
+			reg_bldo4: bldo4 {
+				regulator-name = "bldo4";
+			};
+
+			reg_bldo5: bldo5 {
+				regulator-name = "bldo5";
+			};
+
+			reg_cldo1: cldo1 {
+				regulator-name = "cldo1";
+			};
+
+			reg_cldo2: cldo2 {
+				regulator-name = "cldo2";
+			};
+
+			reg_cldo3: cldo3 {
+				regulator-name = "cldo3";
+			};
+
+			reg_cldo4: cldo4 {
+				regulator-name = "cldo4";
+			};
+
+			reg_cldo5: cldo5 {
+				regulator-name = "cldo5";
+			};
+
+			reg_dldo1: dldo1 {
+				regulator-name = "dldo1";
+			};
+
+			reg_dldo2: dldo2 {
+				regulator-name = "dldo2";
+			};
+
+			reg_dldo3: dldo3 {
+				regulator-name = "dldo3";
+			};
+
+			reg_dldo4: dldo4 {
+				regulator-name = "dldo4";
+			};
+
+			reg_dldo5: dldo5 {
+				regulator-name = "dldo5";
+			};
+
+			reg_dldo6: dldo6 {
+				regulator-name = "dldo6";
+			};
+
+			reg_eldo1: eldo1 {
+				regulator-name = "eldo1";
+			};
+
+			reg_eldo2: eldo2 {
+				regulator-name = "eldo2";
+			};
+
+			reg_eldo3: eldo3 {
+				regulator-name = "eldo3";
+			};
+
+			reg_eldo4: eldo4 {
+				regulator-name = "eldo4";
+			};
+
+			reg_eldo5: eldo5 {
+				regulator-name = "eldo5";
+			};
+
+			reg_eldo6: eldo6 {
+				regulator-name = "eldo6";
+			};
+		};
 	};
+};
+
+/* Six little cores on one supply, two big ones on another. */
+&cpu0 {
+	operating-points-v2 = <&cluster0_opp_table>;
+	cpu-supply = <&reg_dcdc5>;
+};
+
+&cpu1 {
+	operating-points-v2 = <&cluster0_opp_table>;
+	cpu-supply = <&reg_dcdc5>;
+};
+
+&cpu2 {
+	operating-points-v2 = <&cluster0_opp_table>;
+	cpu-supply = <&reg_dcdc5>;
+};
+
+&cpu3 {
+	operating-points-v2 = <&cluster0_opp_table>;
+	cpu-supply = <&reg_dcdc5>;
+};
+
+&cpu4 {
+	operating-points-v2 = <&cluster0_opp_table>;
+	cpu-supply = <&reg_dcdc5>;
+};
+
+&cpu5 {
+	operating-points-v2 = <&cluster0_opp_table>;
+	cpu-supply = <&reg_dcdc5>;
+};
+
+&cpu6 {
+	operating-points-v2 = <&cluster1_opp_table>;
+	cpu-supply = <&reg_dcdc3>;
+};
+
+&cpu7 {
+	operating-points-v2 = <&cluster1_opp_table>;
+	cpu-supply = <&reg_dcdc3>;
 };
 
 &uart0 {
