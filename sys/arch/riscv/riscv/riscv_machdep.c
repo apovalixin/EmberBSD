@@ -616,6 +616,27 @@ cpu_kernel_vm_init(paddr_t memory_start, paddr_t memory_end)
 		    pbmt_flag;
 		VPRINTF("dm:   %p :  %#" PRIxPADDR "\n", &l2_pte[i], l2_pte[i]);
 	}
+#else
+	/*
+	 * Sv32: map RAM with megapages into the direct map window.  Memory
+	 * beyond the window is not usable and has to be left out by the
+	 * caller.
+	 */
+	extern pd_entry_t l1_pte[PAGE_SIZE / sizeof(pd_entry_t)];
+	paddr_t pa = MEGAPAGE_TRUNC(memory_start);
+
+	riscv_directmap_pbase = pa;
+	pmap_direct_base = RISCV_DIRECTMAP_START;
+	for (vaddr_t va = RISCV_DIRECTMAP_START;
+	    va < RISCV_DIRECTMAP_END && pa < memory_end;
+	    va += NBSEG, pa += NBSEG) {
+		const size_t i = va >> SEGSHIFT;
+
+		l1_pte[i] = PA_TO_PTE(pa) | PTE_KERN | PTE_HARDWIRED | PTE_RW;
+		VPRINTF("dm:   %p :  %#" PRIxPTE "\n", &l1_pte[i], l1_pte[i]);
+	}
+	pmap_direct_end = RISCV_DIRECTMAP_START + (pa - riscv_directmap_pbase);
+	tlb_invalidate_all();
 #endif
 //	pt_dump(printf);
 }
@@ -844,20 +865,13 @@ init_riscv(register_t hartid, paddr_t dtb)
 	 */
 	paddr_t msgbufaddr = 0;
 
-#ifdef _LP64
 	/* XXX check all ranges for last one with a big enough hole */
 	msgbufaddr = memory_end - MSGBUFSIZE;
 	KASSERT(msgbufaddr != 0);	/* no space for msgbuf */
-	fdt_memory_remove_range(msgbufaddr, msgbufaddr + MSGBUFSIZE);
-	msgbufaddr = RISCV_PA_TO_KVA(msgbufaddr);
-	VPRINTF("msgbufaddr = %#lx\n", msgbufaddr);
-	initmsgbuf((void *)msgbufaddr, MSGBUFSIZE);
-#endif
-
-	KASSERT(msgbufaddr != 0);	/* no space for msgbuf */
-#ifdef _LP64
-	initmsgbuf((void *)RISCV_PA_TO_KVA(msgbufaddr), MSGBUFSIZE);
-#endif
+	fdt_memory_remove_range(msgbufaddr, MSGBUFSIZE);
+	const vaddr_t msgbufva = RISCV_PA_TO_KVA(msgbufaddr);
+	VPRINTF("msgbufaddr = %#lx\n", (unsigned long)msgbufva);
+	initmsgbuf((void *)msgbufva, MSGBUFSIZE);
 
 #define	DPRINTF(v)	VPRINTF("%24s = 0x%16lx\n", #v, (unsigned long)v);
 
@@ -882,9 +896,7 @@ init_riscv(register_t hartid, paddr_t dtb)
 #endif
 #endif
 	DPRINTF(VM_MAX_KERNEL_ADDRESS);
-#ifdef _LP64
 	DPRINTF(pmap_direct_base);
-#endif
 	VPRINTF("------------------------------------------\n");
 
 #undef DPRINTF
@@ -919,12 +931,8 @@ init_riscv(register_t hartid, paddr_t dtb)
 #ifdef __HAVE_MM_MD_KERNACC
 
 #define IN_RANGE_P(addr, start, end)	(start) <= (addr) && (addr) < (end)
-#ifdef _LP64
 #define IN_DIRECTMAP_P(va) \
 	IN_RANGE_P(va, RISCV_DIRECTMAP_START, RISCV_DIRECTMAP_END)
-#else
-#define IN_DIRECTMAP_P(va) false
-#endif
 
 int
 mm_md_kernacc(void *ptr, vm_prot_t prot, bool *handled)

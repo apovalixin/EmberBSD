@@ -169,7 +169,7 @@
 
 #define VM_MAXUSER_ADDRESS	((vaddr_t)-0x7fffffff-1)/* 0xffff_ffff_8000_0000 */
 #define VM_MIN_KERNEL_ADDRESS	((vaddr_t)-0x7fffffff-1)/* 0xffff_ffff_8000_0000 */
-#define VM_MAX_KERNEL_ADDRESS	((vaddr_t)-0x10000000)	/* 0xffff_ffff_f000_0000 */
+#define VM_MAX_KERNEL_ADDRESS	((vaddr_t)0xc0000000)
 
 #endif
 
@@ -200,6 +200,29 @@
 #define RISCV_DIRECTMAP_P(va)	(((vaddr_t) (va) & RISCV_DIRECTMAP_MASK) == RISCV_DIRECTMAP_MASK)
 #define RISCV_PA_TO_KVA(pa)	((vaddr_t) ((pa) | RISCV_DIRECTMAP_START))
 #define RISCV_KVA_TO_PA(va)	((paddr_t) ((va) & ~RISCV_DIRECTMAP_MASK))
+#else
+/*
+ * Sv32 has no room to map every possible physical address, so the direct
+ * map covers 768MiB of RAM with megapages, starting at the megapage that
+ * holds the first byte of memory.
+ *
+ *   0x8000_0000 - kernel text/data/bss, DTB, early IO
+ *   0x8400_0000 - kernel VM space
+ *   0xc000_0000 - direct map
+ *   0xf000_0000 - unused
+ */
+#define RISCV_DIRECTMAP_START	((vaddr_t)0xc0000000)
+#define RISCV_DIRECTMAP_SIZE	((vsize_t)0x30000000)
+#define RISCV_DIRECTMAP_END	(RISCV_DIRECTMAP_START + RISCV_DIRECTMAP_SIZE)
+#define RISCV_DIRECTMAP_P(va)	\
+	((vaddr_t)(va) - RISCV_DIRECTMAP_START < RISCV_DIRECTMAP_SIZE)
+#if defined(_KERNEL) && !defined(_LOCORE)
+extern unsigned long riscv_directmap_pbase;
+#endif
+#define RISCV_PA_TO_KVA(pa)	\
+	((vaddr_t)((pa) - riscv_directmap_pbase) + RISCV_DIRECTMAP_START)
+#define RISCV_KVA_TO_PA(va)	\
+	((paddr_t)((vaddr_t)(va) - RISCV_DIRECTMAP_START) + riscv_directmap_pbase)
 #endif
 
 /*

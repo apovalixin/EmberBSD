@@ -56,6 +56,9 @@ __RCSID("$NetBSD: pmap_machdep.c,v 1.21.2.3 2026/06/03 18:17:02 martin Exp $");
 
 vaddr_t pmap_direct_base __read_mostly;
 vaddr_t pmap_direct_end __read_mostly;
+#ifndef _LP64
+unsigned long riscv_directmap_pbase __read_mostly;
+#endif
 
 #ifdef _LP64
 static pt_entry_t pmap_pte_pbmt_mask __read_mostly;
@@ -67,30 +70,14 @@ static pt_entry_t pmap_pte_io __read_mostly;
 void
 pmap_zero_page(paddr_t pa)
 {
-#ifdef _LP64
-#ifdef PMAP_DIRECT_MAP
 	memset((void *)PMAP_DIRECT_MAP(pa), 0, PAGE_SIZE);
-#else
-#error "no direct map"
-#endif
-#else
-	KASSERT(false);
-#endif
 }
 
 void
 pmap_copy_page(paddr_t src, paddr_t dst)
 {
-#ifdef _LP64
-#ifdef PMAP_DIRECT_MAP
 	memcpy((void *)PMAP_DIRECT_MAP(dst), (const void *)PMAP_DIRECT_MAP(src),
 	    PAGE_SIZE);
-#else
-#error "no direct map"
-#endif
-#else
-	KASSERT(false);
-#endif
 }
 
 #ifdef _LP64
@@ -116,11 +103,7 @@ pmap_md_alloc_poolpage(int flags)
 vaddr_t
 pmap_md_map_poolpage(paddr_t pa, vsize_t len)
 {
-#ifdef _LP64
 	return PMAP_DIRECT_MAP(pa);
-#else
-	panic("not supported");
-#endif
 }
 
 void
@@ -133,11 +116,7 @@ pmap_md_unmap_poolpage(vaddr_t pa, vsize_t len)
 bool
 pmap_md_direct_mapped_vaddr_p(vaddr_t va)
 {
-#ifdef _LP64
 	return RISCV_DIRECTMAP_P(va);
-#else
-	return false;
-#endif
 }
 
 bool
@@ -149,27 +128,13 @@ pmap_md_io_vaddr_p(vaddr_t va)
 paddr_t
 pmap_md_direct_mapped_vaddr_to_paddr(vaddr_t va)
 {
-#ifdef _LP64
-#ifdef PMAP_DIRECT_MAP
 	return PMAP_DIRECT_UNMAP(va);
-#else
-	KASSERT(false);
-	return 0;
-#endif
-#else
-	KASSERT(false);
-	return 0;
-#endif
 }
 
 vaddr_t
 pmap_md_direct_map_paddr(paddr_t pa)
 {
-#ifdef _LP64
 	return PMAP_DIRECT_MAP(pa);
-#else
-	panic("not supported");
-#endif
 }
 
 void
@@ -282,7 +247,6 @@ pmap_md_grow(pmap_pdetab_t *ptb, vaddr_t va, vsize_t vshift,
     vsize_t *remaining)
 {
 	KASSERT((va & (NBSEG - 1)) == 0);
-#ifdef _LP64
 	const vaddr_t pdetab_mask = PMAP_PDETABSIZE - 1;
 	const vsize_t vinc = 1UL << vshift;
 
@@ -317,7 +281,6 @@ pmap_md_grow(pmap_pdetab_t *ptb, vaddr_t va, vsize_t vshift,
 		if (*remaining == 0)
 			return;
 	}
-#endif
 }
 
 void

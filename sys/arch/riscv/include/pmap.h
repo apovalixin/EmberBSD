@@ -158,7 +158,6 @@ void	pmap_bootstrap(vaddr_t, vaddr_t);
 
 vsize_t	pmap_kenter_range(vaddr_t, paddr_t, vsize_t, vm_prot_t, u_int);
 
-#ifdef _LP64
 extern vaddr_t pmap_direct_base;
 extern vaddr_t pmap_direct_end;
 #define	PMAP_DIRECT_MAP(pa)	RISCV_PA_TO_KVA(pa)
@@ -169,8 +168,6 @@ extern vaddr_t pmap_direct_end;
  */
 #define	POOL_PHYSTOV(pa)	RISCV_PA_TO_KVA((paddr_t)(pa))
 #define	POOL_VTOPHYS(va)	RISCV_KVA_TO_PA((vaddr_t)(va))
-
-#endif	/* _LP64 */
 
 #define	MEGAPAGE_TRUNC(x)	((x) & ~SEGOFSET)
 #define	MEGAPAGE_ROUND(x)	MEGAPAGE_TRUNC((x) + SEGOFSET)
