@@ -40,7 +40,7 @@ which selects the same code silently.
 
 --- sys/arch/arm/sunxi/files.sunxi
 +++ sys/arch/arm/sunxi/files.sunxi
-@@ -78,6 +78,20 @@ device	sun50ih6ccu: sunxi_ccu
+@@ -78,6 +78,25 @@ device	sun50ih6ccu: sunxi_ccu
  attach	sun50ih6ccu at fdt with sunxi_h6_ccu
  file	arch/arm/sunxi/sun50i_h6_ccu.c		sunxi_h6_ccu
  
@@ -48,6 +48,11 @@ which selects the same code silently.
 +device	sun60ia733ccu: sunxi_ccu
 +attach	sun60ia733ccu at fdt with sunxi_a733_ccu
 +file	arch/arm/sunxi/sun60i_a733_ccu.c	sunxi_a733_ccu
++
++# CCU (A733 always-on domain)
++device	sun60ia733rccu: sunxi_ccu
++attach	sun60ia733rccu at fdt with sunxi_a733_r_ccu
++file	arch/arm/sunxi/sun60i_a733_r_ccu.c	sunxi_a733_r_ccu
 +
 +# GPIO and pin control (A733)
 +device	sun60ia733gpio
@@ -61,7 +66,7 @@ which selects the same code silently.
  # CCU (H6 PRCM)
  device	sun50ih6rccu: sunxi_ccu
  attach	sun50ih6rccu at fdt with sunxi_h6_r_ccu
-@@ -296,6 +310,11 @@ device	sunxithermal: sysmon_envsys, sysmon_taskq
+@@ -296,6 +315,11 @@ device	sunxithermal: sysmon_envsys, sysmon_taskq
  attach	sunxithermal at fdt with sunxi_thermal
  file	arch/arm/sunxi/sunxi_thermal.c		sunxi_thermal
  
@@ -564,15 +569,16 @@ which selects the same code silently.
  #define SUNXI_MMC_GCTRL_ACCESS_BY_AHB	__BIT(31)
 --- sys/arch/evbarm/conf/GENERIC64
 +++ sys/arch/evbarm/conf/GENERIC64
-@@ -238,6 +238,7 @@ sun50ia64ccu*	at fdt? pass 2		# Allwinner A64 CCU
+@@ -238,6 +238,8 @@ sun50ia64ccu*	at fdt? pass 2		# Allwinner A64 CCU
  sun50ia64rccu*	at fdt? pass 2		# Allwinner A64 CCU (PRCM)
  sun50ih6ccu*	at fdt? pass 2		# Allwinner H6 CCU
  sun50ih6rccu*	at fdt? pass 2		# Allwinner H6 CCU (PRCM)
 +sun60ia733ccu*	at fdt? pass 2		# Allwinner A733 CCU
++sun60ia733rccu*	at fdt? pass 2		# Allwinner A733 CCU (always-on)
  sunxide2ccu*	at fdt? pass 3		# Allwinner DE2 clock controller
  sunxiresets*	at fdt? pass 1		# Allwinner misc. resets
  sunxigates*	at fdt? pass 1		# Allwinner misc. gates
-@@ -254,6 +255,7 @@ plgpio* 	at acpi?
+@@ -254,6 +256,7 @@ plgpio* 	at acpi?
  qcomgpio*	at acpi?		# Qualcomm GPIO
  rkgpio* 	at rkiomux?		# Rockchip GPIO
  sunxigpio*	at fdt? pass 3		# Allwinner GPIO
@@ -580,7 +586,7 @@ which selects the same code silently.
  tegragpio*	at fdt? pass 2		# NVIDIA Tegra GPIO
  gpio*		at gpiobus?
  
-@@ -544,6 +546,7 @@ pwmfan* 	at fdt?			# PWM Fan controls
+@@ -544,6 +547,7 @@ pwmfan* 	at fdt?			# PWM Fan controls
  # Thermal throttling controller
  mesonthermal*	at fdt?			# Amlogic thermal sensor controller
  sunxithermal*	at fdt?			# Allwinner thermal sensor controller
@@ -601,7 +607,7 @@ which selects the same code silently.
  		return ENXIO;
 --- /dev/null
 +++ sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner/sun60i-a733-orangepi-zero4.dts
-@@ -0,0 +1,114 @@
+@@ -0,0 +1,127 @@
 +// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
 +/*
 + * Orange Pi Zero 4.
@@ -711,6 +717,19 @@ which selects the same code silently.
 +	status = "okay";
 +};
 +
++/*
++ * The power management chip. The vendor tree also lists an AXP515 at
++ * 0x34; this board does not carry one.
++ */
++&r_i2c0 {
++	status = "okay";
++
++	pmic@36 {
++		compatible = "x-powers,axp8191";
++		reg = <0x36>;
++	};
++};
++
 +&uart0 {
 +	pinctrl-names = "default";
 +	pinctrl-0 = <&uart0_pb_pins>;
@@ -718,7 +737,7 @@ which selects the same code silently.
 +};
 --- /dev/null
 +++ sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
-@@ -0,0 +1,365 @@
+@@ -0,0 +1,394 @@
 +// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
 +/*
 + * Allwinner A733 (sun60iw2).
@@ -729,7 +748,9 @@ which selects the same code silently.
 +
 +#include <dt-bindings/interrupt-controller/arm-gic.h>
 +#include <dt-bindings/clock/allwinner,sun60i-a733-ccu.h>
++#include <dt-bindings/clock/allwinner,sun60i-a733-r-ccu.h>
 +#include <dt-bindings/reset/allwinner,sun60i-a733-ccu.h>
++#include <dt-bindings/reset/allwinner,sun60i-a733-r-ccu.h>
 +
 +/ {
 +	interrupt-parent = <&gic>;
@@ -1072,15 +1093,42 @@ which selects the same code silently.
 +			reg = <0x04508000 0x100>;
 +		};
 +
-+		/*
-+		 * Pins of the always-on domain. Its clock controller has
-+		 * no driver yet; the boot loader leaves the bus clock on.
-+		 */
++		r_ccu: clock-controller@7010000 {
++			compatible = "allwinner,sun60i-a733-r-ccu";
++			reg = <0x07010000 0x400>;
++			clocks = <&osc24M>, <&osc32k>, <&iosc>;
++			clock-names = "hosc", "losc", "iosc";
++			#clock-cells = <1>;
++			#reset-cells = <1>;
++		};
++
++		/* Pins of the always-on domain. */
 +		r_pio: pinctrl@7025000 {
 +			compatible = "allwinner,sun60i-a733-r-pinctrl";
 +			reg = <0x07025000 0x400>;
 +			gpio-controller;
 +			#gpio-cells = <3>;
++
++			r_i2c0_pins: r-i2c0-pins {
++				pins = "PL0", "PL1";
++				function = "s_twi0";
++				allwinner,pinmux = <2>;
++				bias-pull-up;
++			};
++		};
++
++		r_i2c0: i2c@7083000 {
++			compatible = "allwinner,sun60i-a733-i2c",
++				     "allwinner,sun6i-a31-i2c";
++			reg = <0x07083000 0x400>;
++			interrupts = <GIC_SPI 203 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&r_ccu CLK_BUS_R_I2C0>;
++			resets = <&r_ccu RST_BUS_R_I2C0>;
++			pinctrl-names = "default";
++			pinctrl-0 = <&r_i2c0_pins>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			status = "disabled";
 +		};
 +	};
 +};
@@ -2733,3 +2781,399 @@ which selects the same code silently.
  			break;
  		default:
  			if (phy->phy_index == 0)
+--- /dev/null
++++ sys/arch/arm/sunxi/sun60i_a733_r_ccu.c
+@@ -0,0 +1,142 @@
++/*-
++ * Copyright (c) 2026 Anton and oxtorg contributors
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
++ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
++ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
++ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
++ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
++ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
++ * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
++ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
++ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++ * SUCH DAMAGE.
++ */
++
++/*
++ * Clocks and resets of the Allwinner A733 always-on domain: the buses
++ * of the devices that stay powered, among them the I2C controller the
++ * power management chips sit on.
++ */
++
++#include <sys/cdefs.h>
++__KERNEL_RCSID(1, "$NetBSD$");
++
++#include <sys/param.h>
++#include <sys/bus.h>
++#include <sys/device.h>
++#include <sys/systm.h>
++
++#include <dev/fdt/fdtvar.h>
++
++#include <arm/sunxi/sunxi_ccu.h>
++#include <arm/sunxi/sun60i_a733_r_ccu.h>
++
++#define	R_AHB_CFG_REG		0x000
++#define	R_APB0_CFG_REG		0x00c
++#define	R_APB1_CFG_REG		0x010
++#define	R_UART_BGR_REG		0x18c
++#define	R_I2C_BGR_REG		0x19c
++#define	R_RTC_BGR_REG		0x20c
++
++static int sun60i_a733_r_ccu_match(device_t, cfdata_t, void *);
++static void sun60i_a733_r_ccu_attach(device_t, device_t, void *);
++
++static const struct device_compatible_entry compat_data[] = {
++	{ .compat = "allwinner,sun60i-a733-r-ccu" },
++	DEVICE_COMPAT_EOL
++};
++
++CFATTACH_DECL_NEW(sunxi_a733_r_ccu, sizeof(struct sunxi_ccu_softc),
++	sun60i_a733_r_ccu_match, sun60i_a733_r_ccu_attach, NULL, NULL);
++
++static struct sunxi_ccu_reset sun60i_a733_r_ccu_resets[] = {
++	SUNXI_CCU_RESET(A733_R_RST_BUS_UART0, R_UART_BGR_REG, 16),
++	SUNXI_CCU_RESET(A733_R_RST_BUS_UART1, R_UART_BGR_REG, 17),
++	SUNXI_CCU_RESET(A733_R_RST_BUS_I2C0, R_I2C_BGR_REG, 16),
++	SUNXI_CCU_RESET(A733_R_RST_BUS_I2C1, R_I2C_BGR_REG, 17),
++	SUNXI_CCU_RESET(A733_R_RST_BUS_I2C2, R_I2C_BGR_REG, 18),
++	SUNXI_CCU_RESET(A733_R_RST_BUS_RTC, R_RTC_BGR_REG, 16),
++};
++
++static const char *r_ahb_parents[] = {
++	"hosc", "losc", "iosc", "pll-periph0-200M", "pll-periph0-300M"
++};
++static const char *r_apb_parents[] = {
++	"hosc", "losc", "iosc", "pll-periph0-200M", "pll-ref"
++};
++
++static struct sunxi_ccu_clk sun60i_a733_r_ccu_clks[] = {
++	SUNXI_CCU_DIV(A733_R_CLK_AHB, "r-ahb", r_ahb_parents,
++	    R_AHB_CFG_REG,
++	    __BITS(4,0),		/* div */
++	    __BITS(26,24),		/* sel */
++	    0),
++	SUNXI_CCU_DIV(A733_R_CLK_APB0, "r-apb0", r_apb_parents,
++	    R_APB0_CFG_REG,
++	    __BITS(4,0),		/* div */
++	    __BITS(26,24),		/* sel */
++	    0),
++	SUNXI_CCU_DIV(A733_R_CLK_APB1, "r-apb1", r_apb_parents,
++	    R_APB1_CFG_REG,
++	    __BITS(4,0),		/* div */
++	    __BITS(26,24),		/* sel */
++	    0),
++
++	SUNXI_CCU_GATE(A733_R_CLK_BUS_UART0, "bus-r-uart0", "r-apb1",
++	    R_UART_BGR_REG, 0),
++	SUNXI_CCU_GATE(A733_R_CLK_BUS_UART1, "bus-r-uart1", "r-apb1",
++	    R_UART_BGR_REG, 1),
++	SUNXI_CCU_GATE(A733_R_CLK_BUS_I2C0, "bus-r-i2c0", "r-apb1",
++	    R_I2C_BGR_REG, 0),
++	SUNXI_CCU_GATE(A733_R_CLK_BUS_I2C1, "bus-r-i2c1", "r-apb1",
++	    R_I2C_BGR_REG, 1),
++	SUNXI_CCU_GATE(A733_R_CLK_BUS_I2C2, "bus-r-i2c2", "r-apb1",
++	    R_I2C_BGR_REG, 2),
++	SUNXI_CCU_GATE(A733_R_CLK_BUS_RTC, "bus-r-rtc", "r-ahb",
++	    R_RTC_BGR_REG, 0),
++};
++
++static int
++sun60i_a733_r_ccu_match(device_t parent, cfdata_t cf, void *aux)
++{
++	struct fdt_attach_args * const faa = aux;
++
++	return of_compatible_match(faa->faa_phandle, compat_data);
++}
++
++static void
++sun60i_a733_r_ccu_attach(device_t parent, device_t self, void *aux)
++{
++	struct sunxi_ccu_softc * const sc = device_private(self);
++	struct fdt_attach_args * const faa = aux;
++
++	sc->sc_dev = self;
++	sc->sc_phandle = faa->faa_phandle;
++	sc->sc_bst = faa->faa_bst;
++
++	sc->sc_resets = sun60i_a733_r_ccu_resets;
++	sc->sc_nresets = __arraycount(sun60i_a733_r_ccu_resets);
++
++	sc->sc_clks = sun60i_a733_r_ccu_clks;
++	sc->sc_nclks = __arraycount(sun60i_a733_r_ccu_clks);
++
++	if (sunxi_ccu_attach(sc) != 0)
++		return;
++
++	aprint_naive("\n");
++	aprint_normal(": A733 always-on domain CCU\n");
++
++	sunxi_ccu_print(sc);
++}
+--- /dev/null
++++ sys/arch/arm/sunxi/sun60i_a733_r_ccu.h
+@@ -0,0 +1,48 @@
++/*-
++ * Copyright (c) 2026 Anton and oxtorg contributors
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
++ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
++ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
++ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
++ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
++ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
++ * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
++ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
++ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++ * SUCH DAMAGE.
++ */
++
++#ifndef _SUN60I_A733_R_CCU_H
++#define _SUN60I_A733_R_CCU_H
++
++/* The numbers of the binding allwinner,sun60i-a733-r-ccu. */
++#define	A733_R_CLK_AHB			0
++#define	A733_R_CLK_APB0			1
++#define	A733_R_CLK_APB1			2
++#define	A733_R_CLK_BUS_UART0		14
++#define	A733_R_CLK_BUS_UART1		15
++#define	A733_R_CLK_BUS_I2C0		16
++#define	A733_R_CLK_BUS_I2C1		17
++#define	A733_R_CLK_BUS_I2C2		18
++#define	A733_R_CLK_BUS_RTC		24
++
++#define	A733_R_RST_BUS_UART0		4
++#define	A733_R_RST_BUS_UART1		5
++#define	A733_R_RST_BUS_I2C0		6
++#define	A733_R_RST_BUS_I2C1		7
++#define	A733_R_RST_BUS_I2C2		8
++#define	A733_R_RST_BUS_RTC		10
++
++#endif /* _SUN60I_A733_R_CCU_H */
+--- /dev/null
++++ sys/dev/i2c/axp8191.c
+@@ -0,0 +1,183 @@
++/*-
++ * Copyright (c) 2026 Anton and oxtorg contributors
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR
++ * IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++ * OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
++ * IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT,
++ * INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
++ * BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
++ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED
++ * AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
++ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
++ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
++ * SUCH DAMAGE.
++ */
++
++/*
++ * X-Powers AXP8191 power management chip: the power key.
++ *
++ * The chip switches the board on by itself when the key is pressed, and
++ * the firmware switches it off through PSCI. What is left to the system
++ * is to notice a short press while it runs and shut down in an orderly
++ * way. The chip's interrupt line goes to a controller that has no
++ * driver here, so the status is polled.
++ */
++
++#include <sys/cdefs.h>
++__KERNEL_RCSID(0, "$NetBSD$");
++
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <sys/callout.h>
++#include <sys/device.h>
++#include <sys/kernel.h>
++
++#include <dev/i2c/i2cvar.h>
++
++#include <dev/sysmon/sysmonvar.h>
++#include <dev/sysmon/sysmon_taskq.h>
++
++#include <dev/fdt/fdtvar.h>
++
++#define	AXP8191_IC_TYPE		0x03
++#define	AXP8191_CHIP_ID		0x0e
++#define	AXP8191_CHIP_VER	0x0f
++#define	AXP8191_IRQ_ENABLE2	0x41
++#define	AXP8191_IRQ_STATUS2	0x49
++#define	 AXP8191_IRQ2_POK_SHORT	__BIT(4)	/* the key, pressed briefly */
++
++#define	AXP8191_POLL_MS		500
++
++struct axp8191_softc {
++	device_t		sc_dev;
++	i2c_tag_t		sc_i2c;
++	i2c_addr_t		sc_addr;
++
++	struct sysmon_pswitch	sc_smpsw;
++	callout_t		sc_tick;
++};
++
++static const struct device_compatible_entry compat_data[] = {
++	{ .compat = "x-powers,axp8191" },
++	DEVICE_COMPAT_EOL
++};
++
++static int
++axp8191_read(struct axp8191_softc *sc, uint8_t reg, uint8_t *val)
++{
++	int error;
++
++	if ((error = iic_acquire_bus(sc->sc_i2c, 0)) != 0)
++		return error;
++	error = iic_smbus_read_byte(sc->sc_i2c, sc->sc_addr, reg, val, 0);
++	iic_release_bus(sc->sc_i2c, 0);
++
++	return error;
++}
++
++static int
++axp8191_write(struct axp8191_softc *sc, uint8_t reg, uint8_t val)
++{
++	int error;
++
++	if ((error = iic_acquire_bus(sc->sc_i2c, 0)) != 0)
++		return error;
++	error = iic_smbus_write_byte(sc->sc_i2c, sc->sc_addr, reg, val, 0);
++	iic_release_bus(sc->sc_i2c, 0);
++
++	return error;
++}
++
++/* The bus sleeps, so the status is read from the sysmon task queue. */
++static void
++axp8191_poll(void *arg)
++{
++	struct axp8191_softc * const sc = arg;
++	uint8_t status;
++
++	if (axp8191_read(sc, AXP8191_IRQ_STATUS2, &status) == 0 &&
++	    (status & AXP8191_IRQ2_POK_SHORT) != 0) {
++		/* A status bit is cleared by writing it back. */
++		(void)axp8191_write(sc, AXP8191_IRQ_STATUS2,
++		    AXP8191_IRQ2_POK_SHORT);
++		sysmon_pswitch_event(&sc->sc_smpsw, PSWITCH_EVENT_PRESSED);
++	}
++
++	callout_schedule(&sc->sc_tick, mstohz(AXP8191_POLL_MS));
++}
++
++static void
++axp8191_tick(void *arg)
++{
++	sysmon_task_queue_sched(0, axp8191_poll, arg);
++}
++
++static int
++axp8191_match(device_t parent, cfdata_t match, void *aux)
++{
++	struct i2c_attach_args * const ia = aux;
++	int match_result;
++
++	if (iic_use_direct_match(ia, match, compat_data, &match_result))
++		return match_result;
++
++	return 0;
++}
++
++static void
++axp8191_attach(device_t parent, device_t self, void *aux)
++{
++	struct axp8191_softc * const sc = device_private(self);
++	struct i2c_attach_args * const ia = aux;
++	uint8_t type, id, ver, enable;
++
++	sc->sc_dev = self;
++	sc->sc_i2c = ia->ia_tag;
++	sc->sc_addr = ia->ia_addr;
++
++	aprint_naive("\n");
++	if (axp8191_read(sc, AXP8191_IC_TYPE, &type) != 0 ||
++	    axp8191_read(sc, AXP8191_CHIP_ID, &id) != 0 ||
++	    axp8191_read(sc, AXP8191_CHIP_VER, &ver) != 0) {
++		aprint_error(": the chip does not answer\n");
++		return;
++	}
++	aprint_normal(": AXP8191, type 0x%02x, ID 0x%02x, version 0x%02x\n",
++	    type, id, ver);
++
++	/* Let the chip record a short press and drop what is recorded. */
++	if (axp8191_read(sc, AXP8191_IRQ_ENABLE2, &enable) != 0 ||
++	    axp8191_write(sc, AXP8191_IRQ_ENABLE2,
++	    enable | AXP8191_IRQ2_POK_SHORT) != 0 ||
++	    axp8191_write(sc, AXP8191_IRQ_STATUS2,
++	    AXP8191_IRQ2_POK_SHORT) != 0) {
++		aprint_error_dev(self, "couldn't set up the power key\n");
++		return;
++	}
++
++	sysmon_task_queue_init();
++	sc->sc_smpsw.smpsw_name = device_xname(self);
++	sc->sc_smpsw.smpsw_type = PSWITCH_TYPE_POWER;
++	if (sysmon_pswitch_register(&sc->sc_smpsw) != 0) {
++		aprint_error_dev(self, "couldn't register the power key\n");
++		return;
++	}
++
++	callout_init(&sc->sc_tick, CALLOUT_MPSAFE);
++	callout_setfunc(&sc->sc_tick, axp8191_tick, sc);
++	callout_schedule(&sc->sc_tick, mstohz(AXP8191_POLL_MS));
++}
++
++CFATTACH_DECL_NEW(axp8191pm, sizeof(struct axp8191_softc),
++    axp8191_match, axp8191_attach, NULL, NULL);
+--- sys/dev/i2c/files.i2c
++++ sys/dev/i2c/files.i2c
+@@ -242,6 +242,11 @@ attach	axppmic at iic
+ attach	axpreg at axppmic
+ file	dev/i2c/axppmic.c			axppmic
+ 
++# AXP8191 Power Management Unit: the power key
++device	axp8191pm: sysmon_power, sysmon_taskq
++attach	axp8191pm at iic
++file	dev/i2c/axp8191.c			axp8191pm
++
+ # AXP809 Power Management Unit
+ device	axp809pm
+ attach	axp809pm at iic

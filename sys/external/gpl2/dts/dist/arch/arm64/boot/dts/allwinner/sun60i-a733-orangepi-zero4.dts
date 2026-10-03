@@ -107,6 +107,19 @@
 	status = "okay";
 };
 
+/*
+ * The power management chip. The vendor tree also lists an AXP515 at
+ * 0x34; this board does not carry one.
+ */
+&r_i2c0 {
+	status = "okay";
+
+	pmic@36 {
+		compatible = "x-powers,axp8191";
+		reg = <0x36>;
+	};
+};
+
 &uart0 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&uart0_pb_pins>;

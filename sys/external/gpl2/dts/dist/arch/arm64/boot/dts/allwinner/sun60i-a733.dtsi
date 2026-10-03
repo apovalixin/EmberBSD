@@ -8,7 +8,9 @@
 
 #include <dt-bindings/interrupt-controller/arm-gic.h>
 #include <dt-bindings/clock/allwinner,sun60i-a733-ccu.h>
+#include <dt-bindings/clock/allwinner,sun60i-a733-r-ccu.h>
 #include <dt-bindings/reset/allwinner,sun60i-a733-ccu.h>
+#include <dt-bindings/reset/allwinner,sun60i-a733-r-ccu.h>
 
 / {
 	interrupt-parent = <&gic>;
@@ -351,15 +353,42 @@
 			reg = <0x04508000 0x100>;
 		};
 
-		/*
-		 * Pins of the always-on domain. Its clock controller has
-		 * no driver yet; the boot loader leaves the bus clock on.
-		 */
+		r_ccu: clock-controller@7010000 {
+			compatible = "allwinner,sun60i-a733-r-ccu";
+			reg = <0x07010000 0x400>;
+			clocks = <&osc24M>, <&osc32k>, <&iosc>;
+			clock-names = "hosc", "losc", "iosc";
+			#clock-cells = <1>;
+			#reset-cells = <1>;
+		};
+
+		/* Pins of the always-on domain. */
 		r_pio: pinctrl@7025000 {
 			compatible = "allwinner,sun60i-a733-r-pinctrl";
 			reg = <0x07025000 0x400>;
 			gpio-controller;
 			#gpio-cells = <3>;
+
+			r_i2c0_pins: r-i2c0-pins {
+				pins = "PL0", "PL1";
+				function = "s_twi0";
+				allwinner,pinmux = <2>;
+				bias-pull-up;
+			};
+		};
+
+		r_i2c0: i2c@7083000 {
+			compatible = "allwinner,sun60i-a733-i2c",
+				     "allwinner,sun6i-a31-i2c";
+			reg = <0x07083000 0x400>;
+			interrupts = <GIC_SPI 203 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&r_ccu CLK_BUS_R_I2C0>;
+			resets = <&r_ccu RST_BUS_R_I2C0>;
+			pinctrl-names = "default";
+			pinctrl-0 = <&r_i2c0_pins>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
 		};
 	};
 };

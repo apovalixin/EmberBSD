@@ -30,5 +30,9 @@ bcm2838rng*	at fdt?
 #	(../patches/aicwf.diff). Its firmware is not part of the tree.
 aicwf*		at sdmmc?
 
+#	The power management chip of the Orange Pi Zero 4: its power key
+#	(../patches/sun60i-a733.diff).
+axp8191pm*	at iic?
+
 # Serial Bluetooth transport; UART description and firmware are board-specific.
 pseudo-device	btuart

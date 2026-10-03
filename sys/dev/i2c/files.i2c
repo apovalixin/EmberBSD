@@ -242,6 +242,11 @@ attach	axppmic at iic
 attach	axpreg at axppmic
 file	dev/i2c/axppmic.c			axppmic
 
+# AXP8191 Power Management Unit: the power key
+device	axp8191pm: sysmon_power, sysmon_taskq
+attach	axp8191pm at iic
+file	dev/i2c/axp8191.c			axp8191pm
+
 # AXP809 Power Management Unit
 device	axp809pm
 attach	axp809pm at iic
