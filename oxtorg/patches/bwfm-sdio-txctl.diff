@@ -1,0 +1,429 @@
+Origin:
+Firmware commands shared one queue with data frames and waited behind
+them; with the transmit window closed they timed out unsent. Commands now
+have their own queue and go first, a command that waited a second is sent
+once past the window, and a window the firmware got wrong is replaced by
+two frames as in Linux. A sequence number is spent only on a successful
+write. bwfm_proto_bcdc_set_dcmd no longer leaks its buffer on a firmware
+error. The Raspberry Pi 5 run passed with and without this change.
+--- sys/dev/ic/bwfm.c.orig
++++ sys/dev/ic/bwfm.c
+@@ -1825,9 +1825,9 @@ bwfm_proto_bcdc_set_dcmd(struct bwfm_softc *sc, int ifidx,
+ 	}
+ 
+ 	if (dcmd->hdr.flags & BWFM_BCDC_DCMD_ERROR)
+-		return dcmd->hdr.status;
+-
+-	ret = 0;
++		ret = dcmd->hdr.status;
++	else
++		ret = 0;
+ err:
+ 	kmem_free(dcmd, sizeof(*dcmd));
+ 	return ret;
+--- sys/dev/sdmmc/if_bwfm_sdio.c.orig
++++ sys/dev/sdmmc/if_bwfm_sdio.c
+@@ -98,7 +98,11 @@ struct bwfm_sdio_softc {
+ 	uint8_t			sc_tx_seq;
+ 	uint8_t			sc_tx_max_seq;
+ 	int			sc_tx_count;
+-	MBUFQ_HEAD()		sc_tx_queue;
++#define TXCOUNT_MAX		64	/* data frames held for the firmware */
++#define TXCOUNT_BURST		32	/* data frames sent in one task run */
++	MBUFQ_HEAD()		sc_tx_queue;	/* data */
++	MBUFQ_HEAD()		sc_txctl_queue;	/* commands, sent first */
++	bool			sc_txctl_force;
+ 
+ 	struct mbuf		*sc_rxctl_queue;
+ 	kcondvar_t		sc_rxctl_cv;
+@@ -125,6 +129,8 @@ struct bwfm_sdio_softc {
+ 		uint64_t	txframes;	/* frames written */
+ 		uint64_t	txerrors;	/* writes that failed */
+ 		uint64_t	nowindow;	/* sends put off: window closed */
++		uint64_t	badwindow;	/* windows the firmware got wrong */
++		uint64_t	forced;		/* commands sent past the window */
+ 		uint64_t	paused;		/* sends put off: clock, flow control */
+ 		uint64_t	timeouts;	/* commands left without an answer */
+ 	} sc_stats;
+@@ -193,13 +199,16 @@ static int	bwfm_sdio_bus_sleep(struct bwfm_sdio_softc *, bool, bool);
+ static void	bwfm_sdio_drivestrength(struct bwfm_sdio_softc *, unsigned);
+ static void	bwfm_sdio_readshared(struct bwfm_sdio_softc *);
+ 
++static void	bwfm_sdio_stop(struct bwfm_softc *);
+ static int	bwfm_sdio_txcheck(struct bwfm_softc *);
+ static int	bwfm_sdio_txdata(struct bwfm_softc *, struct mbuf **);
+ static int	bwfm_sdio_txctl(struct bwfm_softc *, char *, size_t);
+ static int	bwfm_sdio_rxctl(struct bwfm_softc *, char *, size_t *);
+ 
+-static int		bwfm_sdio_tx_ok(struct bwfm_sdio_softc *);
++static unsigned	bwfm_sdio_tx_window(struct bwfm_sdio_softc *);
++static void	bwfm_sdio_rx_window(struct bwfm_sdio_softc *, uint8_t);
+ static void	bwfm_sdio_tx_frames(struct bwfm_sdio_softc *);
++static int	bwfm_sdio_tx_frame(struct bwfm_sdio_softc *, size_t);
+ static void	bwfm_sdio_tx_ctrlframe(struct bwfm_sdio_softc *,
+ 		    struct mbuf *);
+ static void	bwfm_sdio_tx_dataframe(struct bwfm_sdio_softc *,
+@@ -282,7 +291,7 @@ static const struct bwfm_firmware_selector bwfm_sdio_fwtab[] = {
+ 
+ static const struct bwfm_bus_ops bwfm_sdio_bus_ops = {
+ 	.bs_init = NULL,
+-	.bs_stop = NULL,
++	.bs_stop = bwfm_sdio_stop,
+ 	.bs_txcheck = bwfm_sdio_txcheck,
+ 	.bs_txdata = bwfm_sdio_txdata,
+ 	.bs_txctl = bwfm_sdio_txctl,
+@@ -411,6 +420,7 @@ bwfm_sdio_attach(device_t parent, device_t self, void *aux)
+ 	sc->sc_bounce_buf = kmem_alloc(sc->sc_bounce_size, KM_SLEEP);
+ 	sc->sc_tx_seq = 0xff;
+ 	MBUFQ_INIT(&sc->sc_tx_queue);
++	MBUFQ_INIT(&sc->sc_txctl_queue);
+ 	sc->sc_rxctl_queue = NULL;
+ 
+ 	sc->sc_sf_size = (sf->sc->sc_function_count + 1)
+@@ -1069,6 +1079,21 @@ bwfm_qput(struct mbuf **q, struct mbuf *m)
+ 		m_cat(*q, m);
+ }
+ 
++/*
++ * The interface went down: what was queued belongs to the link that is
++ * gone.  Commands stay, they are still wanted.
++ */
++static void
++bwfm_sdio_stop(struct bwfm_softc *bwfm)
++{
++	struct bwfm_sdio_softc *sc = (void *)bwfm;
++
++	mutex_enter(&sc->sc_lock);
++	MBUFQ_DRAIN(&sc->sc_tx_queue);
++	sc->sc_tx_count = 0;
++	mutex_exit(&sc->sc_lock);
++}
++
+ static int
+ bwfm_sdio_txcheck(struct bwfm_softc *bwfm)
+ {
+@@ -1076,7 +1101,7 @@ bwfm_sdio_txcheck(struct bwfm_softc *bwfm)
+ 	int error = 0;
+ 
+ 	mutex_enter(&sc->sc_lock);
+-	if (sc->sc_tx_count >= 64)
++	if (sc->sc_tx_count >= TXCOUNT_MAX)
+ 		error = ENOBUFS;
+ 	mutex_exit(&sc->sc_lock);
+ 
+@@ -1089,12 +1114,11 @@ bwfm_sdio_txdata(struct bwfm_softc *bwfm, struct mbuf **mp)
+ {
+ 	struct bwfm_sdio_softc *sc = (void *)bwfm;
+ 
+-	if (sc->sc_tx_count >= 64) {
+-		printf("%s: tx count limit reached\n",DEVNAME(sc));
++	mutex_enter(&sc->sc_lock);
++	if (sc->sc_tx_count >= TXCOUNT_MAX) {
++		mutex_exit(&sc->sc_lock);
+ 		return ENOBUFS;
+ 	}
+-
+-	mutex_enter(&sc->sc_lock);
+ 	sc->sc_tx_count++;
+ 	MBUFQ_ENQUEUE(&sc->sc_tx_queue, *mp);
+ 	mutex_exit(&sc->sc_lock);
+@@ -1126,7 +1150,7 @@ bwfm_sdio_txctl(struct bwfm_softc *bwfm, char *buf, size_t len)
+ 	m->m_len = len;
+ 
+ 	mutex_enter(&sc->sc_lock);
+-	MBUFQ_ENQUEUE(&sc->sc_tx_queue, m);
++	MBUFQ_ENQUEUE(&sc->sc_txctl_queue, m);
+ 	mutex_exit(&sc->sc_lock);
+ 
+ 	bwfm_sdio_intr1(sc, "sdio_txctl");
+@@ -1599,22 +1623,47 @@ bwfm_sdio_task1(struct bwfm_sdio_softc *sc)
+ 		}
+ 	}
+ 
+-	if (!dosend && MBUFQ_FIRST(&sc->sc_tx_queue)) {
++	if (MBUFQ_FIRST(&sc->sc_tx_queue) == NULL &&
++	    MBUFQ_FIRST(&sc->sc_txctl_queue) == NULL)
++		return;
++
++	if (!dosend) {
+ 		sc->sc_stats.paused++;
+-		printf("%s: pause\n", DEVNAME(sc));
++		DPRINTF(("%s: pause\n", DEVNAME(sc)));
++		return;
+ 	}
+ 
+-	if (dosend && MBUFQ_FIRST(&sc->sc_tx_queue)) {
+-		DPRINTF(("%s: xmit\n", DEVNAME(sc)));
+-		bwfm_sdio_tx_frames(sc);
+-	}
++	DPRINTF(("%s: xmit\n", DEVNAME(sc)));
++	bwfm_sdio_tx_frames(sc);
+ }
+ 
+-static int
+-bwfm_sdio_tx_ok(struct bwfm_sdio_softc *sc)
++/*
++ * The firmware names, in every frame it sends, the last sequence number
++ * it will take.  The distance to it is the window: frames we may send
++ * before it speaks again.
++ */
++static unsigned
++bwfm_sdio_tx_window(struct bwfm_sdio_softc *sc)
++{
++	uint8_t space = sc->sc_tx_max_seq - sc->sc_tx_seq;
++
++	return (space & 0x80) != 0 ? 0 : space;
++}
++
++/*
++ * A window behind our own counter, or wider than the firmware has
++ * buffers for, means the two sides lost count.  Taken as it is, it
++ * closes the window for good: nothing is sent, so nothing corrects it.
++ * Linux allows two frames then, and the next header brings the truth.
++ */
++static void
++bwfm_sdio_rx_window(struct bwfm_sdio_softc *sc, uint8_t maxseq)
+ {
+-	return (uint8_t)(sc->sc_tx_max_seq - sc->sc_tx_seq) != 0 &&
+-	    ((uint8_t)(sc->sc_tx_max_seq - sc->sc_tx_seq) & 0x80) == 0;
++	if ((uint8_t)(maxseq - sc->sc_tx_seq) > TXCOUNT_MAX) {
++		sc->sc_stats.badwindow++;
++		maxseq = sc->sc_tx_seq + 2;
++	}
++	sc->sc_tx_max_seq = maxseq;
+ }
+ 
+ static void
+@@ -1623,27 +1672,45 @@ bwfm_sdio_tx_frames(struct bwfm_sdio_softc *sc)
+ 	struct mbuf *m;
+ 	struct ifnet *ifp = sc->sc_sc.sc_ic.ic_ifp;
+ 	bool ifstart = false;
+-	int i;
++	unsigned space, burst;
+ 
+-	if (!bwfm_sdio_tx_ok(sc)) {
+-		sc->sc_stats.nowindow++;
+-		return;
++	space = bwfm_sdio_tx_window(sc);
++
++	/*
++	 * Commands go first.  In one queue with data, a command - a key,
++	 * a scan, leaving the network - waited behind every frame a slow
++	 * link had not taken yet, until it timed out.  One that has waited
++	 * on a closed window is sent once regardless: its answer carries
++	 * the window, and if the firmware lost count this is the only
++	 * frame that brings it back.
++	 */
++	if (space == 0 && sc->sc_txctl_force &&
++	    MBUFQ_FIRST(&sc->sc_txctl_queue) != NULL) {
++		sc->sc_stats.forced++;
++		space = 1;
++	}
++	sc->sc_txctl_force = false;
++	while (space > 0) {
++		MBUFQ_DEQUEUE(&sc->sc_txctl_queue, m);
++		if (m == NULL)
++			break;
++		bwfm_sdio_tx_ctrlframe(sc, m);
++		m_freem(m);
++		space--;
+ 	}
+ 
+-	i = uimin((uint8_t)(sc->sc_tx_max_seq - sc->sc_tx_seq), 32);
+-	while (i--) {
++	/* Data takes what the commands left. */
++	burst = uimin(bwfm_sdio_tx_window(sc), TXCOUNT_BURST);
++	if (burst == 0 && MBUFQ_FIRST(&sc->sc_tx_queue) != NULL)
++		sc->sc_stats.nowindow++;
++	while (burst-- > 0) {
+ 		MBUFQ_DEQUEUE(&sc->sc_tx_queue, m);
+ 		if (m == NULL)
+ 			break;
+-
+-		if (m->m_type == MT_CONTROL)
+-			bwfm_sdio_tx_ctrlframe(sc, m);
+-		else {
+-			bwfm_sdio_tx_dataframe(sc, m);
+-			if_statinc(ifp, if_opackets);
+-			ifstart = true;
+-		}
+-
++		bwfm_sdio_tx_dataframe(sc, m);
++		sc->sc_tx_count--;
++		if_statinc(ifp, if_opackets);
++		ifstart = true;
+ 		m_freem(m);
+ 	}
+ 
+@@ -1651,6 +1718,40 @@ bwfm_sdio_tx_frames(struct bwfm_sdio_softc *sc)
+ 		ifp->if_flags &= ~IFF_OACTIVE;
+ 		if_schedule_deferred_start(ifp);
+ 	}
++
++	/* More to send and room for it: do not wait for an interrupt. */
++	if (MBUFQ_FIRST(&sc->sc_tx_queue) != NULL &&
++	    bwfm_sdio_tx_window(sc) > 0)
++		bwfm_sdio_intr1(sc, "sdio_tx_frames");
++}
++
++/*
++ * Write the frame in the bounce buffer.  The sequence number is spent
++ * only when the firmware got the frame; a failed write is terminated so
++ * that the next frame does not continue it.
++ */
++static int
++bwfm_sdio_tx_frame(struct bwfm_sdio_softc *sc, size_t len)
++{
++	int err, i;
++
++	err = bwfm_sdio_frame_read_write(sc, sc->sc_bounce_buf, len, 1);
++	sc->sc_stats.txframes++;
++	if (err == 0) {
++		sc->sc_tx_seq++;
++		return 0;
++	}
++
++	sc->sc_stats.txerrors++;
++	bwfm_sdio_write_1(sc, SD_IO_CCCR_CTL, sc->sc_sf[2]->number);
++	bwfm_sdio_write_1(sc, BWFM_SDIO_FUNC1_FRAMECTRL,
++	    BWFM_SDIO_FUNC1_FRAMECTRL_WF_TERM);
++	for (i = 0; i < 3; i++) {
++		if (bwfm_sdio_read_1(sc, BWFM_SDIO_FUNC1_WFRAMEBCHI) == 0 &&
++		    bwfm_sdio_read_1(sc, BWFM_SDIO_FUNC1_WFRAMEBCLO) == 0)
++			break;
++	}
++	return err;
+ }
+ 
+ static void
+@@ -1676,7 +1777,7 @@ bwfm_sdio_tx_ctrlframe(struct bwfm_sdio_softc *sc, struct mbuf *m)
+ 	hwhdr->cksum = htole16(~len);
+ 
+ 	swhdr = (void *)&hwhdr[1];
+-	swhdr->seqnr = sc->sc_tx_seq++;
++	swhdr->seqnr = sc->sc_tx_seq;
+ 	swhdr->chanflag = BWFM_SDIO_SWHDR_CHANNEL_CONTROL;
+ 	swhdr->nextlen = 0;
+ 	swhdr->dataoff = sizeof(*hwhdr) + sizeof(*swhdr);
+@@ -1688,14 +1789,9 @@ bwfm_sdio_tx_ctrlframe(struct bwfm_sdio_softc *sc, struct mbuf *m)
+ 		memset(sc->sc_bounce_buf + len, 0,
+ 		    roundup(len, roundto) - len);
+ 	
+-	err = bwfm_sdio_frame_read_write(sc, sc->sc_bounce_buf,
+-	    roundup(len, roundto), 1);
+-
+-	sc->sc_stats.txframes++;
+-	if (err) {
+-		sc->sc_stats.txerrors++;
++	err = bwfm_sdio_tx_frame(sc, roundup(len, roundto));
++	if (err)
+ 		printf("%s: error %d\n",__func__,err);
+-	}
+ }
+ 
+ static void
+@@ -1723,7 +1819,7 @@ bwfm_sdio_tx_dataframe(struct bwfm_sdio_softc *sc, struct mbuf *m)
+ 	hwhdr->cksum = htole16(~len);
+ 
+ 	swhdr = (void *)&hwhdr[1];
+-	swhdr->seqnr = sc->sc_tx_seq++;
++	swhdr->seqnr = sc->sc_tx_seq;
+ 	swhdr->chanflag = BWFM_SDIO_SWHDR_CHANNEL_DATA;
+ 	swhdr->nextlen = 0;
+ 	swhdr->dataoff = sizeof(*hwhdr) + sizeof(*swhdr);
+@@ -1741,16 +1837,9 @@ bwfm_sdio_tx_dataframe(struct bwfm_sdio_softc *sc, struct mbuf *m)
+ 		memset(sc->sc_bounce_buf + len, 0,
+ 		    roundup(len, roundto) - len);
+ 
+-	err = bwfm_sdio_frame_read_write(sc, sc->sc_bounce_buf,
+-	    roundup(len, roundto), 1);
+-
+-	sc->sc_stats.txframes++;
+-	if (err) {
+-		sc->sc_stats.txerrors++;
++	err = bwfm_sdio_tx_frame(sc, roundup(len, roundto));
++	if (err)
+ 		printf("%s: error %d\n",__func__,err);
+-	}
+-
+-	sc->sc_tx_count--;
+ }
+ 
+ static int
+@@ -1758,22 +1847,28 @@ bwfm_sdio_rxctl(struct bwfm_softc *bwfm, char *buf, size_t *lenp)
+ {
+ 	struct bwfm_sdio_softc *sc = (void *)bwfm;
+ 	struct mbuf *m;
+-	int err = 0;
++	int waited = 0;
+ 
+ 	mutex_enter(&sc->sc_lock);
+ 	while ((m = bwfm_qget(&sc->sc_rxctl_queue)) == NULL) {
+-		err = cv_timedwait(&sc->sc_rxctl_cv, &sc->sc_lock,
+-		    mstohz(5000));
+-		if (err == EWOULDBLOCK)
++		if (cv_timedwait(&sc->sc_rxctl_cv, &sc->sc_lock,
++		    mstohz(1000)) != EWOULDBLOCK)
++			continue;
++		if (++waited >= 5)
+ 			break;
++		/* Not even sent after a second: the window is closed. */
++		if (MBUFQ_FIRST(&sc->sc_txctl_queue) != NULL) {
++			sc->sc_txctl_force = true;
++			bwfm_sdio_intr1(sc, "sdio_rxctl");
++		}
+ 	}
+-	if (err) {
++	if (m == NULL) {
+ 		sc->sc_stats.timeouts++;
+ 		bwfm_sdio_report(sc, "firmware command timed out");
+ 	}
+ 	mutex_exit(&sc->sc_lock);
+ 
+-	if (err)
++	if (m == NULL)
+ 		return 1;
+ 
+ 	if (m->m_len > *lenp) {
+@@ -1845,7 +1940,7 @@ bwfm_sdio_rx_frames(struct bwfm_sdio_softc *sc)
+ 			break;
+ 		}
+ 
+-		sc->sc_tx_max_seq = swhdr->maxseqnr;
++		bwfm_sdio_rx_window(sc, swhdr->maxseqnr);
+ 		sc->sc_stats.rxframes++;
+ 
+ 		flen = hwhdr->frmlen - hdrlen;
+@@ -2127,12 +2222,11 @@ bwfm_sdio_report(struct bwfm_sdio_softc *sc, const char *why)
+ 	if (!ratecheck(&sc->sc_report_time, &interval))
+ 		return;
+ 
+-	for (m = MBUFQ_FIRST(&sc->sc_tx_queue); m != NULL; m = MBUFQ_NEXT(m)) {
+-		if (m->m_type == MT_CONTROL)
+-			nctl++;
+-		else
+-			ndata++;
+-	}
++	for (m = MBUFQ_FIRST(&sc->sc_txctl_queue); m != NULL;
++	    m = MBUFQ_NEXT(m))
++		nctl++;
++	for (m = MBUFQ_FIRST(&sc->sc_tx_queue); m != NULL; m = MBUFQ_NEXT(m))
++		ndata++;
+ 
+ 	printf("%s: %s: tx seq %u max %u, queued %u control %u data,"
+ 	    " count %d, clock %d, rxskip %d\n", DEVNAME(sc), why,
+@@ -2140,10 +2234,12 @@ bwfm_sdio_report(struct bwfm_sdio_softc *sc, const char *why)
+ 	    sc->sc_clkstate, sc->sc_rxskip);
+ 	printf("%s: intrs %" PRIu64 " tasks %" PRIu64 " rx %" PRIu64
+ 	    " tx %" PRIu64 " txerrors %" PRIu64 " nowindow %" PRIu64
+-	    " paused %" PRIu64 " timeouts %" PRIu64 "\n", DEVNAME(sc),
++	    " badwindow %" PRIu64 " forced %" PRIu64 " paused %" PRIu64
++	    " timeouts %" PRIu64 "\n", DEVNAME(sc),
+ 	    sc->sc_stats.intrs, sc->sc_stats.tasks, sc->sc_stats.rxframes,
+ 	    sc->sc_stats.txframes, sc->sc_stats.txerrors,
+-	    sc->sc_stats.nowindow, sc->sc_stats.paused,
++	    sc->sc_stats.nowindow, sc->sc_stats.badwindow,
++	    sc->sc_stats.forced, sc->sc_stats.paused,
+ 	    sc->sc_stats.timeouts);
+ 	printf("%s: intstatus 0x%08x (last 0x%08x, seen 0x%08x) hostintmask 0x%08x"
+ 	    " pending 0x%02x enable 0x%02x ready 0x%02x clkcsr 0x%02x"

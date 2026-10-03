@@ -1,0 +1,28 @@
+Origin:
+The firmware can move to another access point of the same network by
+itself. net80211 is not told and wpa_supplicant keeps the old keys, so the
+link would stay up without traffic. roam_off keeps the firmware on the BSS
+it was told to join. This follows from the code; a firmware roam was not
+observed on a board.
+--- sys/dev/ic/bwfm.c.orig
++++ sys/dev/ic/bwfm.c
+@@ -592,6 +592,19 @@ bwfm_init(struct ifnet *ifp)
+ 		return EIO;
+ 	}
+ 
++	/*
++	 * The firmware would move to another access point of the same
++	 * network by itself.  net80211 is not told of such a move and
++	 * wpa_supplicant keeps the keys of the BSS it joined, so the
++	 * handshake the new access point starts is never finished.  Keep
++	 * the firmware on the BSS it was told to join, as Linux does when
++	 * the supplicant is the one that roams; a lost link is reported
++	 * and net80211 scans and joins again.
++	 */
++	if (bwfm_fwvar_var_set_int(sc, "roam_off", 1))
++		printf("%s: could not disable firmware roaming\n",
++		    DEVNAME(sc));
++
+ 	memset(evmask, 0, sizeof(evmask));
+ 
+ #define	ENABLE_EVENT(e)		evmask[(e) / 8] |= 1 << ((e) % 8)
