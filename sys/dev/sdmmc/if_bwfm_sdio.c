@@ -33,7 +33,9 @@
 #include <sys/mutex.h>
 #include <sys/queue.h>
 #include <sys/socket.h>
+#include <sys/sysctl.h>
 #include <sys/systm.h>
+#include <sys/time.h>
 
 #include <net/bpf.h>
 #include <net/if.h>
@@ -52,6 +54,7 @@
 #include <dev/ic/bwfmvar.h>
 #include <dev/ofw/openfirm.h>
 #include <dev/sdmmc/if_bwfm_sdio.h>
+#include <dev/sdmmc/sdmmc_ioreg.h>
 #include <dev/sdmmc/sdmmcdevs.h>
 #include <dev/sdmmc/sdmmcvar.h>
 
@@ -113,6 +116,22 @@ struct bwfm_sdio_softc {
 
 	int			sc_phandle;
 	void			*sc_fdtih;
+
+	/* What the transport report shows. */
+	struct {
+		uint64_t	intrs;		/* interrupts from the card */
+		uint64_t	tasks;		/* runs of the task */
+		uint64_t	rxframes;	/* frames read, superframes whole */
+		uint64_t	txframes;	/* frames written */
+		uint64_t	txerrors;	/* writes that failed */
+		uint64_t	nowindow;	/* sends put off: window closed */
+		uint64_t	paused;		/* sends put off: clock, flow control */
+		uint64_t	timeouts;	/* commands left without an answer */
+	} sc_stats;
+	uint32_t		sc_intstat;	/* the last one that was not zero */
+	uint32_t		sc_intstat_seen; /* every bit ever read */
+	struct timeval		sc_report_time;
+	struct sysctllog	*sc_sysctllog;
 };
 
 static int	bwfm_sdio_match(device_t, cfdata_t, void *);
@@ -193,6 +212,10 @@ static void	bwfm_sdio_rx_glom(struct bwfm_sdio_softc *,
 #ifdef BWFM_DEBUG
 static void	bwfm_sdio_debug_console(struct bwfm_sdio_softc *);
 #endif
+
+static void	bwfm_sdio_report(struct bwfm_sdio_softc *, const char *);
+static void	bwfm_sdio_report_firmware(struct bwfm_sdio_softc *);
+static void	bwfm_sdio_sysctl_attach(struct bwfm_sdio_softc *);
 
 static const struct bwfm_firmware_selector bwfm_sdio_fwtab[] = {
 	BWFM_FW_ENTRY(BRCM_CC_43143_CHIP_ID,
@@ -586,6 +609,8 @@ bwfm_sdio_attachhook(device_t self)
 	bwfm_attach(&sc->sc_sc);
 	sc->sc_bwfm_attached = true;
 
+	bwfm_sdio_sysctl_attach(sc);
+
  err:
 	bwfm_firmware_close(&fwctx);
 }
@@ -664,6 +689,8 @@ bwfm_sdio_detach(device_t self, int flags)
 			fdtbus_intr_disestablish(sc->sc_phandle, sc->sc_fdtih);
 #endif
 	}
+	sysctl_teardown(&sc->sc_sysctllog);
+
 	if (sc->sc_bwfm_attached)
 		bwfm_detach(&sc->sc_sc, flags);
 
@@ -1479,6 +1506,9 @@ bwfm_sdio_intr1(void *v, const char *name)
 static int
 bwfm_sdio_intr(void *v)
 {
+	struct bwfm_sdio_softc *sc = (void *)v;
+
+	sc->sc_stats.intrs++;
 	return bwfm_sdio_intr1(v, "sdio_intr");
 }
 
@@ -1501,6 +1531,8 @@ bwfm_sdio_task1(struct bwfm_sdio_softc *sc)
 	uint32_t clkctl, devctl, intstat, hostint;
 	bool dorecv, dosend;
 
+	sc->sc_stats.tasks++;
+
 	if (!sc->sc_sr_enabled && sc->sc_clkstate == CLK_PENDING) {
 		clkctl = bwfm_sdio_read_1(sc, BWFM_SDIO_FUNC1_CHIPCLKCSR);
 		if (BWFM_SDIO_FUNC1_CHIPCLKCSR_HTAV(clkctl)) {
@@ -1515,8 +1547,11 @@ bwfm_sdio_task1(struct bwfm_sdio_softc *sc)
 
 	intstat = bwfm_sdio_dev_read(sc, BWFM_SDPCMD_INTSTATUS);
 	DPRINTF(("%s: intstat 0x%" PRIx32 "\n", DEVNAME(sc), intstat));
-	if (intstat)
+	if (intstat) {
+		sc->sc_intstat = intstat;
+		sc->sc_intstat_seen |= intstat;
 		bwfm_sdio_dev_write(sc, BWFM_SDPCMD_INTSTATUS, intstat);
+	}
 
 	if (intstat & SDPCMD_INTSTATUS_CHIPACTIVE)
 		printf("%s: CHIPACTIVE\n", DEVNAME(sc));
@@ -1555,8 +1590,10 @@ bwfm_sdio_task1(struct bwfm_sdio_softc *sc)
 		}
 	}
 
-	if (!dosend && MBUFQ_FIRST(&sc->sc_tx_queue))
+	if (!dosend && MBUFQ_FIRST(&sc->sc_tx_queue)) {
+		sc->sc_stats.paused++;
 		printf("%s: pause\n", DEVNAME(sc));
+	}
 
 	if (dosend && MBUFQ_FIRST(&sc->sc_tx_queue)) {
 		DPRINTF(("%s: xmit\n", DEVNAME(sc)));
@@ -1579,8 +1616,10 @@ bwfm_sdio_tx_frames(struct bwfm_sdio_softc *sc)
 	bool ifstart = false;
 	int i;
 
-	if (!bwfm_sdio_tx_ok(sc))
+	if (!bwfm_sdio_tx_ok(sc)) {
+		sc->sc_stats.nowindow++;
 		return;
+	}
 
 	i = uimin((uint8_t)(sc->sc_tx_max_seq - sc->sc_tx_seq), 32);
 	while (i--) {
@@ -1643,8 +1682,11 @@ bwfm_sdio_tx_ctrlframe(struct bwfm_sdio_softc *sc, struct mbuf *m)
 	err = bwfm_sdio_frame_read_write(sc, sc->sc_bounce_buf,
 	    roundup(len, roundto), 1);
 
-	if (err)
+	sc->sc_stats.txframes++;
+	if (err) {
+		sc->sc_stats.txerrors++;
 		printf("%s: error %d\n",__func__,err);
+	}
 }
 
 static void
@@ -1693,8 +1735,11 @@ bwfm_sdio_tx_dataframe(struct bwfm_sdio_softc *sc, struct mbuf *m)
 	err = bwfm_sdio_frame_read_write(sc, sc->sc_bounce_buf,
 	    roundup(len, roundto), 1);
 
-	if (err)
+	sc->sc_stats.txframes++;
+	if (err) {
+		sc->sc_stats.txerrors++;
 		printf("%s: error %d\n",__func__,err);
+	}
 
 	sc->sc_tx_count--;
 }
@@ -1712,6 +1757,10 @@ bwfm_sdio_rxctl(struct bwfm_softc *bwfm, char *buf, size_t *lenp)
 		    mstohz(5000));
 		if (err == EWOULDBLOCK)
 			break;
+	}
+	if (err) {
+		sc->sc_stats.timeouts++;
+		bwfm_sdio_report(sc, "firmware command timed out");
 	}
 	mutex_exit(&sc->sc_lock);
 
@@ -1788,6 +1837,7 @@ bwfm_sdio_rx_frames(struct bwfm_sdio_softc *sc)
 		}
 
 		sc->sc_tx_max_seq = swhdr->maxseqnr;
+		sc->sc_stats.rxframes++;
 
 		flen = hwhdr->frmlen - hdrlen;
 		if (flen == 0) {
@@ -2047,6 +2097,177 @@ drop:
 		m_free(m);
 		break;
 	}
+}
+
+/*
+ * The transport fails silently: the window stays closed, or the card
+ * stops answering, and all the system sees is a command without an
+ * answer.  The report says where the transport stood at that moment and
+ * what the firmware wrote last on its own console.  hw.<device>.report
+ * prints the same on request, to compare with a healthy link.
+ */
+static void
+bwfm_sdio_report(struct bwfm_sdio_softc *sc, const char *why)
+{
+	static const struct timeval interval = { 30, 0 };
+	struct mbuf *m;
+	unsigned nctl = 0, ndata = 0;
+
+	KASSERT(mutex_owned(&sc->sc_lock));
+
+	if (!ratecheck(&sc->sc_report_time, &interval))
+		return;
+
+	for (m = MBUFQ_FIRST(&sc->sc_tx_queue); m != NULL; m = MBUFQ_NEXT(m)) {
+		if (m->m_type == MT_CONTROL)
+			nctl++;
+		else
+			ndata++;
+	}
+
+	printf("%s: %s: tx seq %u max %u, queued %u control %u data,"
+	    " count %d, clock %d, rxskip %d\n", DEVNAME(sc), why,
+	    sc->sc_tx_seq, sc->sc_tx_max_seq, nctl, ndata, sc->sc_tx_count,
+	    sc->sc_clkstate, sc->sc_rxskip);
+	printf("%s: intrs %" PRIu64 " tasks %" PRIu64 " rx %" PRIu64
+	    " tx %" PRIu64 " txerrors %" PRIu64 " nowindow %" PRIu64
+	    " paused %" PRIu64 " timeouts %" PRIu64 "\n", DEVNAME(sc),
+	    sc->sc_stats.intrs, sc->sc_stats.tasks, sc->sc_stats.rxframes,
+	    sc->sc_stats.txframes, sc->sc_stats.txerrors,
+	    sc->sc_stats.nowindow, sc->sc_stats.paused,
+	    sc->sc_stats.timeouts);
+	printf("%s: intstatus 0x%08x (last 0x%08x, seen 0x%08x) hostintmask 0x%08x"
+	    " pending 0x%02x enable 0x%02x ready 0x%02x clkcsr 0x%02x"
+	    " sleepcsr 0x%02x chipid 0x%08x\n", DEVNAME(sc),
+	    bwfm_sdio_dev_read(sc, BWFM_SDPCMD_INTSTATUS), sc->sc_intstat,
+	    sc->sc_intstat_seen,
+	    bwfm_sdio_dev_read(sc, SDPCMD_HOSTINTMASK),
+	    bwfm_sdio_read_1(sc, SD_IO_CCCR_FN_INTPENDING),
+	    bwfm_sdio_read_1(sc, SD_IO_CCCR_FN_ENABLE),
+	    bwfm_sdio_read_1(sc, SD_IO_CCCR_FN_IOREADY),
+	    bwfm_sdio_read_1(sc, BWFM_SDIO_FUNC1_CHIPCLKCSR),
+	    bwfm_sdio_read_1(sc, BWFM_SDIO_FUNC1_SLEEPCSR),
+	    bwfm_sdio_read_4(sc, sc->sc_cc->co_base));
+
+	bwfm_sdio_report_firmware(sc);
+}
+
+static void
+bwfm_sdio_report_firmware(struct bwfm_sdio_softc *sc)
+{
+	struct bwfm_softc *bwfm = &sc->sc_sc;
+	struct bwfm_sdio_sdpcm sdpcm;
+	struct bwfm_sdio_console c;
+	uint32_t addr, shaddr, flags, trap[20], bufsz, idx, i, n;
+	char line[100], *buf;
+	size_t len;
+
+	shaddr = bwfm->sc_chip.ch_rambase + bwfm->sc_chip.ch_ramsize - 4;
+	if (!bwfm->sc_chip.ch_rambase && sc->sc_sr_enabled)
+		shaddr -= bwfm->sc_chip.ch_srsize;
+
+	if (bwfm_sdio_ram_read_write(sc, shaddr, (char *)&addr,
+	    sizeof(addr), 0))
+		return;
+	addr = le32toh(addr);
+	if (addr == 0 || ((~addr >> 16) & 0xffff) == (addr & 0xffff)) {
+		printf("%s: firmware shared area not set (0x%08x)\n",
+		    DEVNAME(sc), addr);
+		return;
+	}
+	if (bwfm_sdio_ram_read_write(sc, addr, (char *)&sdpcm,
+	    sizeof(sdpcm), 0))
+		return;
+
+	flags = le32toh(sdpcm.flags);
+	printf("%s: firmware flags 0x%08x%s%s\n", DEVNAME(sc), flags,
+	    (flags & SDPCM_SHARED_ASSERT) ? " ASSERT" : "",
+	    (flags & SDPCM_SHARED_TRAP) ? " TRAP" : "");
+	if ((flags & SDPCM_SHARED_TRAP) != 0 &&
+	    bwfm_sdio_ram_read_write(sc, le32toh(sdpcm.trap_addr),
+	    (char *)trap, sizeof(trap), 0) == 0) {
+		/* type, epc, cpsr, spsr, r0-r14, pc */
+		printf("%s: firmware trap type 0x%x epc 0x%08x cpsr 0x%08x"
+		    " sp 0x%08x lr 0x%08x pc 0x%08x\n", DEVNAME(sc),
+		    le32toh(trap[0]), le32toh(trap[1]), le32toh(trap[2]),
+		    le32toh(trap[17]), le32toh(trap[18]), le32toh(trap[19]));
+	}
+
+	sc->sc_console_addr = le32toh(sdpcm.console_addr);
+	if (sc->sc_console_addr == 0 ||
+	    bwfm_sdio_ram_read_write(sc, sc->sc_console_addr, (char *)&c,
+	    sizeof(c), 0))
+		return;
+	bufsz = le32toh(c.log_bufsz);
+	idx = le32toh(c.log_idx);
+	if (bufsz == 0 || bufsz > 16384 || idx > bufsz)
+		return;
+
+	buf = kmem_alloc(bufsz, KM_SLEEP);
+	if (bwfm_sdio_ram_read_write(sc, le32toh(c.log_buf), buf, bufsz,
+	    0) == 0) {
+		/* The buffer is a ring and idx is where the next byte goes. */
+		n = uimin(bufsz, 2048);
+		len = 0;
+		for (i = bufsz - n; i < bufsz; i++) {
+			char ch = buf[(idx + i) % bufsz];
+
+			if (ch != '\n' && ch != '\0' && ch != '\r' &&
+			    len < sizeof(line) - 1) {
+				line[len++] = (ch >= ' ' && ch <= '~') ?
+				    ch : '.';
+				continue;
+			}
+			if (len == 0)
+				continue;
+			line[len] = '\0';
+			printf("%s: firmware: %s\n", DEVNAME(sc), line);
+			len = 0;
+			if (ch != '\n' && ch != '\0' && ch != '\r')
+				line[len++] = (ch >= ' ' && ch <= '~') ?
+				    ch : '.';
+		}
+		if (len != 0) {
+			line[len] = '\0';
+			printf("%s: firmware: %s\n", DEVNAME(sc), line);
+		}
+	}
+	kmem_free(buf, bufsz);
+}
+
+static int
+bwfm_sdio_sysctl_report(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node = *rnode;
+	struct bwfm_sdio_softc *sc = node.sysctl_data;
+	int error, val = 0;
+
+	node.sysctl_data = &val;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (error || newp == NULL)
+		return error;
+	if (val != 0) {
+		mutex_enter(&sc->sc_lock);
+		timerclear(&sc->sc_report_time);
+		bwfm_sdio_report(sc, "report requested");
+		mutex_exit(&sc->sc_lock);
+	}
+	return 0;
+}
+
+static void
+bwfm_sdio_sysctl_attach(struct bwfm_sdio_softc *sc)
+{
+	const struct sysctlnode *node;
+
+	if (sysctl_createv(&sc->sc_sysctllog, 0, NULL, &node, 0,
+	    CTLTYPE_NODE, DEVNAME(sc), SYSCTL_DESCR("bwfm SDIO transport"),
+	    NULL, 0, NULL, 0, CTL_HW, CTL_CREATE, CTL_EOL) != 0)
+		return;
+	sysctl_createv(&sc->sc_sysctllog, 0, &node, NULL, CTLFLAG_READWRITE,
+	    CTLTYPE_INT, "report",
+	    SYSCTL_DESCR("write 1 to log the transport and firmware state"),
+	    bwfm_sdio_sysctl_report, 0, (void *)sc, 0, CTL_CREATE, CTL_EOL);
 }
 
 #ifdef BWFM_DEBUG
