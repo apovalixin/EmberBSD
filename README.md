@@ -26,6 +26,7 @@ driver.
 | Temperature sensor | Tested | Not validated | Tested | Tested (five sensors, factory calibration) |
 | Fan control | Tested | Not validated | No fan | No |
 | Watchdog | Tested | Not validated | Not validated | Tested |
+| Power button | Tested: a press powers the board off, the next one powers it on | Not validated | None on the board | No |
 | I2C | Tested (WM8960 codec) | Not validated | Not validated | No |
 | Audio | WM8960 HAT: Tested | Not validated | Not validated | No |
 | Pin multiplexing and GPIO | Not validated | Not validated | Not validated | Pin multiplexing and GPIO output: Tested; no pin interrupts |

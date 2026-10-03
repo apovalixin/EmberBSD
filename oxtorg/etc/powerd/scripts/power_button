@@ -1,0 +1,48 @@
+#!/bin/sh -
+#
+# powerd(8) runs this when the power button is pressed: power the board
+# off at once.
+#
+# The stock script calls shutdown(8).  That takes twelve seconds on a
+# Raspberry Pi 5 with nothing to wait for: rc.shutdown stops the services
+# one after another and looks every two seconds whether each has exited,
+# and halt(8) sleeps five seconds between SIGTERM and SIGKILL and two more
+# after it, whatever is still running.
+#
+# Here every process is asked to exit at the same moment and is waited for
+# only as long as it takes, with the limit halt(8) gives.  The stop
+# actions of rc.shutdown run after that: a service that has already exited
+# is skipped without a wait, one with a stop action of its own, as
+# random_seed, still gets it.  The kernel syncs and unmounts the file
+# systems on the way down.
+#
+# Arguments: device event
+
+case "${2}" in
+pressed)
+	logger -p notice "power button pressed: powering off"
+
+	# powerd is among the processes ended below; outlive it.
+	trap '' HUP TERM
+
+	# Keep init from starting anything again.
+	kill -TSTP 1
+
+	# kill is a builtin: -1 is every process but init, the kernel's and
+	# this shell.
+	kill -TERM -1 2>/dev/null
+	n=0
+	while kill -0 -1 2>/dev/null && [ $n -lt 50 ]; do
+		sleep 0.1
+		n=$((n + 1))
+	done
+	kill -KILL -1 2>/dev/null
+
+	/bin/sh /etc/rc.shutdown >/dev/null 2>&1
+	exec /sbin/halt -lpq
+	;;
+*)
+	logger -p warning "${0}: unsupported event ${2} on device ${1}" >&1
+	exit 1
+	;;
+esac
