@@ -29,6 +29,16 @@
 	 * The enable pins of the AIC8800 wireless module: PM1 for the
 	 * network half, PM2 for the Bluetooth half.
 	 */
+	/* Power of the Type-C data port, switched by PL8. */
+	reg_usb3_vbus: regulator-usb3-vbus {
+		compatible = "regulator-fixed";
+		regulator-name = "usb3-vbus";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		gpio = <&r_pio 0 8 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+	};
+
 	wifi_pwrseq: wifi-pwrseq {
 		compatible = "mmc-pwrseq-simple";
 		reset-gpios = <&r_pio 1 1 GPIO_ACTIVE_LOW>,
@@ -119,6 +129,19 @@
  * The power management chip. The vendor tree also lists an AXP515 at
  * 0x34; this board does not carry one.
  */
+/*
+ * The Type-C data port as a USB 2.0 host. Its power is on all the time:
+ * the Type-C controller that tells what is plugged in has no driver.
+ */
+&usb3_u2phy {
+	vbus-supply = <&reg_usb3_vbus>;
+	status = "okay";
+};
+
+&usb3 {
+	status = "okay";
+};
+
 &r_i2c0 {
 	status = "okay";
 

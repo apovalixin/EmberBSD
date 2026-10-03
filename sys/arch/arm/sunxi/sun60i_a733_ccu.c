@@ -67,6 +67,13 @@ __KERNEL_RCSID(1, "$NetBSD$");
 #define	USB0_BGR_REG		0x1304
 #define	USB1_CLK_REG		0x1308
 #define	USB1_BGR_REG		0x130c
+#define	USB2_U2_REF_CLK_REG	0x1348
+#define	USB2_SUSPEND_CLK_REG	0x1350
+#define	USB2_MF_CLK_REG		0x1354
+#define	USB2_BGR_REG		0x135c
+#define	USB2_U3_UTMI_CLK_REG	0x1360
+#define	USB2_U2_PIPE_CLK_REG	0x1364
+#define	SERDES_BGR_REG		0x13c4
 #define	GMAC0_PHY_CLK_REG	0x1410
 #define	GMAC0_BGR_REG		0x141c
 
@@ -111,6 +118,8 @@ static struct sunxi_ccu_reset sun60i_a733_ccu_resets[] = {
 	SUNXI_CCU_RESET(A733_RST_USB_PHY1, USB1_CLK_REG, 30),
 	SUNXI_CCU_RESET(A733_RST_BUS_OHCI1, USB1_BGR_REG, 16),
 	SUNXI_CCU_RESET(A733_RST_BUS_EHCI1, USB1_BGR_REG, 20),
+	SUNXI_CCU_RESET(A733_RST_BUS_USB2, USB2_BGR_REG, 16),
+	SUNXI_CCU_RESET(A733_RST_BUS_SERDES, SERDES_BGR_REG, 16),
 
 	SUNXI_CCU_RESET(A733_RST_BUS_GMAC0, GMAC0_BGR_REG, 16),
 	SUNXI_CCU_RESET(A733_RST_BUS_GMAC0_AXI, GMAC0_BGR_REG, 17),
@@ -130,6 +139,13 @@ static const char *mmc_parents[] = {
 };
 static const char *ce_parents[] = {
 	"sys-24M", "pll-periph0-400M", "pll-periph0-600M"
+};
+static const char *usb2_suspend_parents[] = { "losc", "sys-24M" };
+static const char *usb2_300M_parents[] = {
+	"sys-24M", "pll-periph0-300M", "hosc"
+};
+static const char *usb2_480M_parents[] = {
+	"sys-24M", "pll-periph0-480M", "hosc"
 };
 static const char *gpadc_24m_parents[] = { "sys-24M", "hosc" };
 static const char *emmc_parents[] = {
@@ -286,6 +302,34 @@ static struct sunxi_ccu_clk sun60i_a733_ccu_clks[] = {
 	    USB1_BGR_REG, 0),
 	SUNXI_CCU_GATE(A733_CLK_BUS_EHCI1, "bus-ehci1", "ahb",
 	    USB1_BGR_REG, 4),
+
+	/* The USB 3 controller: the third USB port of the chip. */
+	SUNXI_CCU_GATE(A733_CLK_USB2_U2_REF, "usb2-u2-ref", "hosc",
+	    USB2_U2_REF_CLK_REG, 31),
+	SUNXI_CCU_DIV_GATE(A733_CLK_USB2_SUSPEND, "usb2-suspend",
+	    usb2_suspend_parents, USB2_SUSPEND_CLK_REG,
+	    __BITS(4,0),		/* div */
+	    __BIT(24),			/* sel */
+	    __BIT(31),			/* enable */
+	    0),
+	SUNXI_CCU_DIV_GATE(A733_CLK_USB2_MF, "usb2-mf",
+	    usb2_300M_parents, USB2_MF_CLK_REG,
+	    __BITS(4,0),		/* div */
+	    __BITS(26,24),		/* sel */
+	    __BIT(31),			/* enable */
+	    0),
+	SUNXI_CCU_DIV_GATE(A733_CLK_USB2_U3_UTMI, "usb2-u3-utmi",
+	    usb2_300M_parents, USB2_U3_UTMI_CLK_REG,
+	    __BITS(4,0),		/* div */
+	    __BITS(26,24),		/* sel */
+	    __BIT(31),			/* enable */
+	    0),
+	SUNXI_CCU_DIV_GATE(A733_CLK_USB2_U2_PIPE, "usb2-u2-pipe",
+	    usb2_480M_parents, USB2_U2_PIPE_CLK_REG,
+	    __BITS(4,0),		/* div */
+	    __BITS(26,24),		/* sel */
+	    __BIT(31),			/* enable */
+	    0),
 
 	SUNXI_CCU_DIV_GATE(A733_CLK_GMAC0_PHY, "gmac0-phy",
 	    pll_periph0_150M_parent, GMAC0_PHY_CLK_REG,

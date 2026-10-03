@@ -33,6 +33,7 @@ driver.
 | Real-time clock | Not validated | Not validated | None on the board | Tested across a reboot |
 | Processor frequency control | Tested | Not validated | Not validated | Tested: 408 MHz to 1.8 GHz (little cores) and 2.0 GHz (big cores) with the supply voltage following, by the chip's speed grade; drops to 408 MHz at 85 degC |
 | Voltage regulators | Not validated | Not validated | None on the board | Tested: all outputs of the AXP8191 read; the two core supplies are driven; the chip's own switch for the card pins is driven |
+| USB | Not validated | Not validated | Not validated | Controllers attach (two USB 2.0 hosts and the Type-C port at USB 2.0 rates); no device tried; no SuperSpeed |
 | Hardware random numbers | Not validated | Not validated | Not validated | Tested: the crypto engine's generator seeds the kernel at boot |
 
 Long-run stability has not been established on any of these boards.
