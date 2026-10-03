@@ -62,6 +62,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <net80211/ieee80211_var.h>
 
 #include <dev/firmload.h>
+#include <dev/sdmmc/sdmmcchip.h>
 #include <dev/sdmmc/sdmmcvar.h>
 
 #define	AICWF_SDIO_VENDOR		0xc8a1
@@ -285,6 +286,7 @@ struct aicwf_softc {
 
 	kmutex_t		sc_lock;
 	kmutex_t		sc_bus_lock;	/* the SDIO layer has none */
+	size_t			sc_io_max;	/* bytes in one transfer */
 	kcondvar_t		sc_cv;
 
 	uint8_t			*sc_txbuf;
@@ -362,6 +364,33 @@ aicwf_crc8(const uint8_t *buf, size_t len)
 	return crc;
 }
 
+/*
+ * Move whole blocks between a buffer and the chip. A host controller
+ * takes only so much in one transfer, so a long one goes in parts.
+ */
+static int
+aicwf_fifo(struct aicwf_softc *sc, bool write, uint8_t *buf, size_t len)
+{
+	int error = 0;
+
+	KASSERT(mutex_owned(&sc->sc_bus_lock));
+
+	while (len > 0 && error == 0) {
+		const size_t n = MIN(len, sc->sc_io_max);
+
+		if (write)
+			error = sdmmc_io_write_multi_1(sc->sc_sf,
+			    AICWF_WR_FIFO, buf, n);
+		else
+			error = sdmmc_io_read_multi_1(sc->sc_sf,
+			    AICWF_RD_FIFO, buf, n);
+		buf += n;
+		len -= n;
+	}
+
+	return error;
+}
+
 /* Wait until the chip has room for a frame of this many bytes. */
 static int
 aicwf_tx_wait(struct aicwf_softc *sc, size_t len, u_int reserve)
@@ -404,8 +433,7 @@ aicwf_write(struct aicwf_softc *sc, size_t len, u_int reserve)
 	error = aicwf_tx_wait(sc, total, reserve);
 	if (error == 0) {
 		mutex_enter(&sc->sc_bus_lock);
-		error = sdmmc_io_write_multi_1(sc->sc_sf, AICWF_WR_FIFO,
-		    buf, total);
+		error = aicwf_fifo(sc, true, buf, total);
 		mutex_exit(&sc->sc_bus_lock);
 	}
 
@@ -581,7 +609,7 @@ aicwf_intr(void *arg)
 		mutex_exit(&sc->sc_bus_lock);
 		return 1;
 	}
-	error = sdmmc_io_read_multi_1(sf, AICWF_RD_FIFO, sc->sc_rxbuf, len);
+	error = aicwf_fifo(sc, false, sc->sc_rxbuf, len);
 	mutex_exit(&sc->sc_bus_lock);
 
 	if (error != 0) {
@@ -1685,6 +1713,9 @@ aicwf_attach(device_t parent, device_t self, void *aux)
 	aprint_naive("\n");
 	aprint_normal(": AIC8800D80\n");
 
+	sc->sc_io_max = MAX(AICWF_BLOCK_SIZE, rounddown(
+	    sdmmc_chip_host_maxblklen(sf->sc->sc_sct, sf->sc->sc_sch),
+	    AICWF_BLOCK_SIZE));
 	sdmmc_io_set_blocklen(sf, AICWF_BLOCK_SIZE);
 	if (sdmmc_io_function_enable(sf) != 0) {
 		aprint_error_dev(self, "couldn't enable function 1\n");
