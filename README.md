@@ -21,7 +21,7 @@ driver.
 | Serial console | Tested | Tested | Tested | Tested |
 | All CPU cores | Tested | Not validated | Tested | Tested (8 cores) |
 | Ethernet | Tested | Not validated | No port | Tested (gigabit) |
-| Wi-Fi | Tested | Tested | Tested at 2.4 GHz; large transfers stall | No driver; the AIC8800D80 module answers on SDIO |
+| Wi-Fi | Tested | Tested | Tested at 2.4 GHz; large transfers stall | Tested: WPA2 on 2.4 and 5 GHz at 802.11a/g rates; needs the vendor firmware file |
 | Bluetooth | Classic: Tested; BLE: No | Not validated | Not validated | No |
 | Temperature sensor | Tested | Not validated | Tested | Tested (five sensors, factory calibration) |
 | Fan control | Tested | Not validated | No fan | No |

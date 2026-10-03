@@ -145,6 +145,7 @@
     "aarch64-idle-resched.diff",
     "acpi-early-console.diff",
     "acpitz-hysteresis.diff",
+    "aicwf.diff",
     "bcm2712btcom.diff",
     "bcm2838rng-bcm2711.diff",
     "bcmmbox-timeout.diff",

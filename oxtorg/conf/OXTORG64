@@ -26,5 +26,9 @@ bcmpmwdog*	at acpi?
 bcm2838pcie*	at fdt?
 bcm2838rng*	at fdt?
 
+#	The AICSemi AIC8800D80 wireless module of the Orange Pi Zero 4
+#	(../patches/aicwf.diff). Its firmware is not part of the tree.
+aicwf*		at sdmmc?
+
 # Serial Bluetooth transport; UART description and firmware are board-specific.
 pseudo-device	btuart
