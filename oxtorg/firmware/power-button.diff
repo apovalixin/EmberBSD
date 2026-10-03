@@ -1,0 +1,107 @@
+Origin:
+The firmware's ACPI tables did not describe the power button, so an
+operating system that boots through UEFI never saw a press.
+
+The button is pin 20 of the main GPIO bank: pulled up, low while pressed.
+The bank interrupts through line 0 of the level-2 controller at
+0x107d508400, GIC SPI 244, as the board's device tree has it. The platform
+driver makes the pin a pulled-up input. The DSDT adds a power button
+device and a generic event device on that interrupt: its _INI arms the
+falling edge, and its event method waits 50 ms, clears the edge and
+notifies the button only if the pin is still low, so a bouncing release is
+not a press.
+
+diff --git a/Platform/RaspberryPi/RPi5/AcpiTables/Dsdt.asl b/Platform/RaspberryPi/RPi5/AcpiTables/Dsdt.asl
+--- a/Platform/RaspberryPi/RPi5/AcpiTables/Dsdt.asl
++++ b/Platform/RaspberryPi/RPi5/AcpiTables/Dsdt.asl
+@@ -608,6 +608,61 @@
+       }
+     } // Device (GPU0)
+ 
++    //
++    // Power button: GIO pin 20, pulled up, low while pressed. The pin
++    // interrupts through line 0 of the level-2 controller. The falling
++    // edge is armed here; the event method waits out the bounce, clears
++    // the edge and reports a press that is still held. A release bounces
++    // too, and is not a press.
++    //
++    OperationRegion (GIOB, SystemMemory, BCM2712_BRCMSTB_GIO_BASE, BCM2712_BRCMSTB_GIO_LENGTH)
++    Field (GIOB, DWordAcc, NoLock, Preserve) {
++      Offset (0x04), BDAT, 32,  // pin levels
++      Offset (0x08), BDIR, 32,  // 1: input
++      Offset (0x0C), BEC, 32,   // edge: 1 rising, 0 falling
++      Offset (0x10), BEI, 32,   // 1: both edges
++      Offset (0x14), BMSK, 32,  // 1: interrupt enabled
++      Offset (0x18), BLVL, 32,  // 1: level, not edge
++      Offset (0x1C), BSTA, 32   // pending, write 1 to clear
++    }
++    OperationRegion (L2IC, SystemMemory, BCM2712_L2_INTC_BASE, BCM2712_L2_INTC_LENGTH)
++    Field (L2IC, DWordAcc, NoLock, Preserve) {
++      Offset (0x0C), L2MC, 32   // write 1 to unmask a line
++    }
++
++    Device (PWRB) {
++      Name (_HID, "PNP0C0C")
++      Name (_UID, 0x0)
++    }
++
++    Device (GED0) {
++      Name (_HID, "ACPI0013")
++      Name (_UID, 0x0)
++      Name (_CRS, ResourceTemplate () {
++        Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive) { BCM2712_L2_INTC_INTERRUPT }
++      })
++
++      Method (_INI, 0, Serialized) {
++        BDIR |= (1 << 20)
++        BLVL &= ~(1 << 20)
++        BEI &= ~(1 << 20)
++        BEC &= ~(1 << 20)
++        BSTA = (1 << 20)
++        BMSK |= (1 << 20)
++        L2MC = 1
++      }
++
++      Method (_EVT, 1, Serialized) {
++        If (BSTA & (1 << 20)) {
++          Sleep (50)
++          BSTA = (1 << 20)
++          If ((BDAT & (1 << 20)) == 0) {
++            Notify (\_SB.PWRB, 0x80)
++          }
++        }
++      }
++    }
++
+     // Windows can use this device for passive logical-processor idling.
+     Device (PAG0) {
+       Name (_HID, "ACPI000C")
+diff --git a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/Peripherals.c b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/Peripherals.c
+--- a/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/Peripherals.c
++++ b/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/Peripherals.c
+@@ -189,6 +189,11 @@
+   GpioWrite (BCM2712_GIO, 28, TRUE);
+   GpioSetDirection (BCM2712_GIO, 28, BCM2712_GPIO_PIN_OUTPUT);
+ 
++  // Power button: a pulled-up input, low while pressed. ACPI arms its edge.
++  GpioSetFunction (BCM2712_GIO, 20, BCM2712_GPIO_ALT_IO);
++  GpioSetPull (BCM2712_GIO, 20, BCM2712_GPIO_PIN_PULL_UP);
++  GpioSetDirection (BCM2712_GIO, 20, BCM2712_GPIO_PIN_INPUT);
++
+   return EFI_SUCCESS;
+ }
+ 
+diff --git a/Silicon/Broadcom/Bcm27xx/Include/IndustryStandard/Bcm2712.h b/Silicon/Broadcom/Bcm27xx/Include/IndustryStandard/Bcm2712.h
+--- a/Silicon/Broadcom/Bcm27xx/Include/IndustryStandard/Bcm2712.h
++++ b/Silicon/Broadcom/Bcm27xx/Include/IndustryStandard/Bcm2712.h
+@@ -25,6 +25,10 @@
+ #define BCM2712_MBOX_LENGTH                               0x40
+ #define BCM2712_MBOX_INTERRUPT                            65    // GIC_SPI 33 + 32
+ 
++#define BCM2712_L2_INTC_BASE                              0x107d508400
++#define BCM2712_L2_INTC_LENGTH                            0x10
++#define BCM2712_L2_INTC_INTERRUPT                         276   // GIC_SPI 244 + 32
++
+ #define BCM2712_BRCMSTB_GIO_BASE                          0x107d508500
+ #define BCM2712_BRCMSTB_GIO_LENGTH                        0x40
+ #define BCM2712_BRCMSTB_GIO_AON_BASE                      0x107d517c00
