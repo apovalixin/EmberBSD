@@ -1545,13 +1545,22 @@ bwfm_sdio_task1(struct bwfm_sdio_softc *sc)
 
 	dorecv = dosend = sc->sc_clkstate == CLK_AVAIL;
 
+	/*
+	 * The register is shared with the firmware: the interrupts of its
+	 * own side of the bus live in the same word.  Acknowledge only
+	 * what was raised for the host, as Linux and OpenBSD do.  Written
+	 * back whole, it takes from the firmware an interrupt it has not
+	 * seen yet, and the firmware stops taking or sending frames.
+	 */
 	intstat = bwfm_sdio_dev_read(sc, BWFM_SDPCMD_INTSTATUS);
 	DPRINTF(("%s: intstat 0x%" PRIx32 "\n", DEVNAME(sc), intstat));
 	if (intstat) {
 		sc->sc_intstat = intstat;
 		sc->sc_intstat_seen |= intstat;
-		bwfm_sdio_dev_write(sc, BWFM_SDPCMD_INTSTATUS, intstat);
 	}
+	intstat &= SDPCMD_INTSTATUS_HMB_SW_MASK | SDPCMD_INTSTATUS_CHIPACTIVE;
+	if (intstat)
+		bwfm_sdio_dev_write(sc, BWFM_SDPCMD_INTSTATUS, intstat);
 
 	if (intstat & SDPCMD_INTSTATUS_CHIPACTIVE)
 		printf("%s: CHIPACTIVE\n", DEVNAME(sc));
