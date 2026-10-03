@@ -75,7 +75,7 @@ which selects the same code silently.
  file	arch/arm/sunxi/sunxi_sata.c		sunxi_sata
 --- /dev/null
 +++ sys/arch/arm/sunxi/sun60i_a733_ccu.c
-@@ -0,0 +1,283 @@
+@@ -0,0 +1,311 @@
 +/*-
 + * Copyright (c) 2026 Anton and oxtorg contributors
 + * All rights reserved.
@@ -139,6 +139,10 @@ which selects the same code silently.
 +#define	TWI_BGR_REG(n)		(0xe80 + 4 * (n))
 +#define	GPADC0_24M_CLK_REG	0xfc0
 +#define	THS_BGR_REG		0xfe4
++#define	USB0_CLK_REG		0x1300
++#define	USB0_BGR_REG		0x1304
++#define	USB1_CLK_REG		0x1308
++#define	USB1_BGR_REG		0x130c
 +#define	GMAC0_PHY_CLK_REG	0x1410
 +#define	GMAC0_BGR_REG		0x141c
 +
@@ -172,6 +176,14 @@ which selects the same code silently.
 +	SUNXI_CCU_RESET(A733_RST_BUS_I2C3, TWI_BGR_REG(3), 16),
 +
 +	SUNXI_CCU_RESET(A733_RST_BUS_THS0, THS_BGR_REG, 16),
++
++	SUNXI_CCU_RESET(A733_RST_USB_PHY0, USB0_CLK_REG, 30),
++	SUNXI_CCU_RESET(A733_RST_BUS_OHCI0, USB0_BGR_REG, 16),
++	SUNXI_CCU_RESET(A733_RST_BUS_EHCI0, USB0_BGR_REG, 20),
++	SUNXI_CCU_RESET(A733_RST_BUS_OTG, USB0_BGR_REG, 24),
++	SUNXI_CCU_RESET(A733_RST_USB_PHY1, USB1_CLK_REG, 30),
++	SUNXI_CCU_RESET(A733_RST_BUS_OHCI1, USB1_BGR_REG, 16),
++	SUNXI_CCU_RESET(A733_RST_BUS_EHCI1, USB1_BGR_REG, 20),
 +
 +	SUNXI_CCU_RESET(A733_RST_BUS_GMAC0, GMAC0_BGR_REG, 16),
 +	SUNXI_CCU_RESET(A733_RST_BUS_GMAC0_AXI, GMAC0_BGR_REG, 17),
@@ -317,6 +329,22 @@ which selects the same code silently.
 +	SUNXI_CCU_GATE(A733_CLK_BUS_THS0, "bus-ths0", "apb0",
 +	    THS_BGR_REG, 0),
 +
++	/* The 24 MHz reference of the two USB 2.0 ports and their buses. */
++	SUNXI_CCU_GATE(A733_CLK_USB_OHCI0, "usb-ohci0", "hosc",
++	    USB0_CLK_REG, 31),
++	SUNXI_CCU_GATE(A733_CLK_BUS_OHCI0, "bus-ohci0", "ahb",
++	    USB0_BGR_REG, 0),
++	SUNXI_CCU_GATE(A733_CLK_BUS_EHCI0, "bus-ehci0", "ahb",
++	    USB0_BGR_REG, 4),
++	SUNXI_CCU_GATE(A733_CLK_BUS_OTG, "bus-otg", "ahb",
++	    USB0_BGR_REG, 8),
++	SUNXI_CCU_GATE(A733_CLK_USB_OHCI1, "usb-ohci1", "hosc",
++	    USB1_CLK_REG, 31),
++	SUNXI_CCU_GATE(A733_CLK_BUS_OHCI1, "bus-ohci1", "ahb",
++	    USB1_BGR_REG, 0),
++	SUNXI_CCU_GATE(A733_CLK_BUS_EHCI1, "bus-ehci1", "ahb",
++	    USB1_BGR_REG, 4),
++
 +	SUNXI_CCU_DIV_GATE(A733_CLK_GMAC0_PHY, "gmac0-phy",
 +	    pll_periph0_150M_parent, GMAC0_PHY_CLK_REG,
 +	    __BITS(4,0),		/* div */
@@ -361,7 +389,7 @@ which selects the same code silently.
 +}
 --- /dev/null
 +++ sys/arch/arm/sunxi/sun60i_a733_ccu.h
-@@ -0,0 +1,93 @@
+@@ -0,0 +1,107 @@
 +/*-
 + * Copyright (c) 2026 Anton and oxtorg contributors
 + * All rights reserved.
@@ -433,6 +461,13 @@ which selects the same code silently.
 +#define	A733_CLK_BUS_I2C3		160
 +#define	A733_CLK_GPADC0_24M		182
 +#define	A733_CLK_BUS_THS0		184
++#define	A733_CLK_USB_OHCI0		210
++#define	A733_CLK_BUS_OHCI0		211
++#define	A733_CLK_BUS_EHCI0		212
++#define	A733_CLK_BUS_OTG		213
++#define	A733_CLK_USB_OHCI1		214
++#define	A733_CLK_BUS_OHCI1		215
++#define	A733_CLK_BUS_EHCI1		216
 +#define	A733_CLK_GMAC0_PHY		227
 +#define	A733_CLK_BUS_GMAC0		228
 +
@@ -451,6 +486,13 @@ which selects the same code silently.
 +#define	A733_RST_BUS_I2C2		51
 +#define	A733_RST_BUS_I2C3		52
 +#define	A733_RST_BUS_THS0		69
++#define	A733_RST_USB_PHY0		82
++#define	A733_RST_BUS_OHCI0		83
++#define	A733_RST_BUS_EHCI0		84
++#define	A733_RST_BUS_OTG		85
++#define	A733_RST_USB_PHY1		86
++#define	A733_RST_BUS_OHCI1		87
++#define	A733_RST_BUS_EHCI1		88
 +#define	A733_RST_BUS_GMAC0		93
 +#define	A733_RST_BUS_GMAC0_AXI		94
 +
@@ -559,7 +601,7 @@ which selects the same code silently.
  		return ENXIO;
 --- /dev/null
 +++ sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner/sun60i-a733-orangepi-zero4.dts
-@@ -0,0 +1,93 @@
+@@ -0,0 +1,114 @@
 +// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
 +/*
 + * Orange Pi Zero 4.
@@ -648,6 +690,27 @@ which selects the same code silently.
 +	status = "okay";
 +};
 +
++/* Two USB 2.0 host ports; the boot loader leaves their power on. */
++&usbphy {
++	status = "okay";
++};
++
++&ehci0 {
++	status = "okay";
++};
++
++&ohci0 {
++	status = "okay";
++};
++
++&ehci1 {
++	status = "okay";
++};
++
++&ohci1 {
++	status = "okay";
++};
++
 +&uart0 {
 +	pinctrl-names = "default";
 +	pinctrl-0 = <&uart0_pb_pins>;
@@ -655,7 +718,7 @@ which selects the same code silently.
 +};
 --- /dev/null
 +++ sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
-@@ -0,0 +1,305 @@
+@@ -0,0 +1,365 @@
 +// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
 +/*
 + * Allwinner A733 (sun60iw2).
@@ -913,6 +976,66 @@ which selects the same code silently.
 +			cap-sdio-irq;
 +			#address-cells = <1>;
 +			#size-cells = <0>;
++			status = "disabled";
++		};
++
++		usbphy: phy@4100400 {
++			compatible = "allwinner,sun60i-a733-usb-phy";
++			reg = <0x04100400 0x100>,
++			      <0x04101800 0x100>,
++			      <0x04200800 0x100>;
++			reg-names = "phy_ctrl", "pmu0", "pmu1";
++			clocks = <&ccu CLK_USB_OHCI0>, <&ccu CLK_USB_OHCI1>;
++			clock-names = "usb0_phy", "usb1_phy";
++			resets = <&ccu RST_USB_PHY0>, <&ccu RST_USB_PHY1>;
++			reset-names = "usb0_reset", "usb1_reset";
++			#phy-cells = <1>;
++			status = "disabled";
++		};
++
++		ehci0: usb@4101000 {
++			compatible = "allwinner,sun60i-a733-ehci", "generic-ehci";
++			reg = <0x04101000 0x100>;
++			interrupts = <GIC_SPI 157 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_OHCI0>, <&ccu CLK_BUS_EHCI0>,
++				 <&ccu CLK_USB_OHCI0>;
++			resets = <&ccu RST_BUS_OHCI0>, <&ccu RST_BUS_EHCI0>;
++			phys = <&usbphy 0>;
++			phy-names = "usb";
++			status = "disabled";
++		};
++
++		ohci0: usb@4101400 {
++			compatible = "allwinner,sun60i-a733-ohci", "generic-ohci";
++			reg = <0x04101400 0x100>;
++			interrupts = <GIC_SPI 158 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_OHCI0>, <&ccu CLK_USB_OHCI0>;
++			resets = <&ccu RST_BUS_OHCI0>;
++			phys = <&usbphy 0>;
++			phy-names = "usb";
++			status = "disabled";
++		};
++
++		ehci1: usb@4200000 {
++			compatible = "allwinner,sun60i-a733-ehci", "generic-ehci";
++			reg = <0x04200000 0x100>;
++			interrupts = <GIC_SPI 159 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_OHCI1>, <&ccu CLK_BUS_EHCI1>,
++				 <&ccu CLK_USB_OHCI1>;
++			resets = <&ccu RST_BUS_OHCI1>, <&ccu RST_BUS_EHCI1>;
++			phys = <&usbphy 1>;
++			phy-names = "usb";
++			status = "disabled";
++		};
++
++		ohci1: usb@4200400 {
++			compatible = "allwinner,sun60i-a733-ohci", "generic-ohci";
++			reg = <0x04200400 0x100>;
++			interrupts = <GIC_SPI 160 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_BUS_OHCI1>, <&ccu CLK_USB_OHCI1>;
++			resets = <&ccu RST_BUS_OHCI1>;
++			phys = <&usbphy 1>;
++			phy-names = "usb";
 +			status = "disabled";
 +		};
 +
@@ -2525,3 +2648,88 @@ which selects the same code silently.
  		msc->sc_rx_internal_delay_ps = YT8521_DELAY_DEFAULT;
  		msc->sc_tx_internal_delay_ps = YT8521_DELAY_DEFAULT;
  
+--- sys/arch/arm/sunxi/sunxi_usbphy.c
++++ sys/arch/arm/sunxi/sunxi_usbphy.c
+@@ -63,12 +63,16 @@ __KERNEL_RCSID(0, "$NetBSD: sunxi_usbphy.c,v 1.18 2024/08/13 07:20:23 skrll Exp
+ 
+ /* PMU registers */
+ #define	PMU_CFG			0x00
++#define	 OHCI_BULK_BYPASS	__BIT(15)	/* A733 */
++#define	 AHB_INCR16		__BIT(11)	/* A733 */
+ #define	 AHB_INCR8		__BIT(10)
+ #define	 AHB_INCR4		__BIT(9)
+ #define	 AHB_INCRX_ALIGN	__BIT(8)
+ #define	 ULPI_BYPASS		__BIT(0)
+ #define	PMU_UNK_H3		0x10
+ #define	 PMU_UNK_H3_CLR		__BIT(1)
++#define	PMU_PHY_CTL		0x10
++#define	 PMU_PHY_CTL_SIDDQ	__BIT(3)	/* PHY powered down */
+ 
+ static int sunxi_usbphy_match(device_t, cfdata_t, void *);
+ static void sunxi_usbphy_attach(device_t, device_t, void *);
+@@ -83,6 +87,7 @@ enum sunxi_usbphy_type {
+ 	USBPHY_D1,
+ 	USBPHY_H3,
+ 	USBPHY_H6,
++	USBPHY_A733,
+ };
+ 
+ static const struct device_compatible_entry compat_data[] = {
+@@ -96,6 +101,7 @@ static const struct device_compatible_entry compat_data[] = {
+ 	{ .compat = "allwinner,sun20i-d1-usb-phy",	.value = USBPHY_D1 },
+ 	{ .compat = "allwinner,sun50i-a64-usb-phy",	.value = USBPHY_A64 },
+ 	{ .compat = "allwinner,sun50i-h6-usb-phy",	.value = USBPHY_H6 },
++	{ .compat = "allwinner,sun60i-a733-usb-phy",	.value = USBPHY_A733 },
+ 	DEVICE_COMPAT_EOL
+ };
+ 
+@@ -157,6 +163,7 @@ sunxi_usbphy_write(struct sunxi_usbphy_softc *sc,
+ 	case USBPHY_H6:
+ 	case USBPHY_A64:
+ 	case USBPHY_A83T:
++	case USBPHY_A733:
+ 		reg = PHYCTL_A33;
+ 		break;
+ 	default:
+@@ -239,6 +246,7 @@ sunxi_usbphy_enable(device_t dev, void *priv, bool enable)
+ 	case USBPHY_D1:
+ 	case USBPHY_H3:
+ 	case USBPHY_H6:
++	case USBPHY_A733:
+ 		disc_thresh = 0x3;
+ 		phy0_reroute = true;
+ 		break;
+@@ -253,7 +261,9 @@ sunxi_usbphy_enable(device_t dev, void *priv, bool enable)
+ 
+ 	if (phy->phy_bsh) {
+ 		/* Enable/disable passby */
+-		const uint32_t mask =
++		const uint32_t mask = sc->sc_type == USBPHY_A733 ?
++		    ULPI_BYPASS|AHB_INCR16|AHB_INCR4|AHB_INCRX_ALIGN|
++		    OHCI_BULK_BYPASS :
+ 		    ULPI_BYPASS|AHB_INCR8|AHB_INCR4|AHB_INCRX_ALIGN;
+ 		val = PMU_READ(sc, phy->phy_index, PMU_CFG);
+ 		if (enable)
+@@ -272,6 +282,14 @@ sunxi_usbphy_enable(device_t dev, void *priv, bool enable)
+ 			PMU_WRITE(sc, phy->phy_index, PMU_UNK_H3, val);
+ 		}
+ 		break;
++	case USBPHY_A733:
++		/* The boot loader leaves the PHY powered down. */
++		if (enable && phy->phy_bsh) {
++			val = PMU_READ(sc, phy->phy_index, PMU_PHY_CTL);
++			val &= ~PMU_PHY_CTL_SIDDQ;
++			PMU_WRITE(sc, phy->phy_index, PMU_PHY_CTL, val);
++		}
++		break;
+ 	default:
+ 		break;
+ 	}
+@@ -280,6 +298,7 @@ sunxi_usbphy_enable(device_t dev, void *priv, bool enable)
+ 		switch (sc->sc_type) {
+ 		case USBPHY_A83T:
+ 		case USBPHY_H6:
++		case USBPHY_A733:
+ 			break;
+ 		default:
+ 			if (phy->phy_index == 0)

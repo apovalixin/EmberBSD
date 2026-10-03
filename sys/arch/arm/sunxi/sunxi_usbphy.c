@@ -63,12 +63,16 @@ __KERNEL_RCSID(0, "$NetBSD: sunxi_usbphy.c,v 1.18 2024/08/13 07:20:23 skrll Exp 
 
 /* PMU registers */
 #define	PMU_CFG			0x00
+#define	 OHCI_BULK_BYPASS	__BIT(15)	/* A733 */
+#define	 AHB_INCR16		__BIT(11)	/* A733 */
 #define	 AHB_INCR8		__BIT(10)
 #define	 AHB_INCR4		__BIT(9)
 #define	 AHB_INCRX_ALIGN	__BIT(8)
 #define	 ULPI_BYPASS		__BIT(0)
 #define	PMU_UNK_H3		0x10
 #define	 PMU_UNK_H3_CLR		__BIT(1)
+#define	PMU_PHY_CTL		0x10
+#define	 PMU_PHY_CTL_SIDDQ	__BIT(3)	/* PHY powered down */
 
 static int sunxi_usbphy_match(device_t, cfdata_t, void *);
 static void sunxi_usbphy_attach(device_t, device_t, void *);
@@ -83,6 +87,7 @@ enum sunxi_usbphy_type {
 	USBPHY_D1,
 	USBPHY_H3,
 	USBPHY_H6,
+	USBPHY_A733,
 };
 
 static const struct device_compatible_entry compat_data[] = {
@@ -96,6 +101,7 @@ static const struct device_compatible_entry compat_data[] = {
 	{ .compat = "allwinner,sun20i-d1-usb-phy",	.value = USBPHY_D1 },
 	{ .compat = "allwinner,sun50i-a64-usb-phy",	.value = USBPHY_A64 },
 	{ .compat = "allwinner,sun50i-h6-usb-phy",	.value = USBPHY_H6 },
+	{ .compat = "allwinner,sun60i-a733-usb-phy",	.value = USBPHY_A733 },
 	DEVICE_COMPAT_EOL
 };
 
@@ -157,6 +163,7 @@ sunxi_usbphy_write(struct sunxi_usbphy_softc *sc,
 	case USBPHY_H6:
 	case USBPHY_A64:
 	case USBPHY_A83T:
+	case USBPHY_A733:
 		reg = PHYCTL_A33;
 		break;
 	default:
@@ -239,6 +246,7 @@ sunxi_usbphy_enable(device_t dev, void *priv, bool enable)
 	case USBPHY_D1:
 	case USBPHY_H3:
 	case USBPHY_H6:
+	case USBPHY_A733:
 		disc_thresh = 0x3;
 		phy0_reroute = true;
 		break;
@@ -253,7 +261,9 @@ sunxi_usbphy_enable(device_t dev, void *priv, bool enable)
 
 	if (phy->phy_bsh) {
 		/* Enable/disable passby */
-		const uint32_t mask =
+		const uint32_t mask = sc->sc_type == USBPHY_A733 ?
+		    ULPI_BYPASS|AHB_INCR16|AHB_INCR4|AHB_INCRX_ALIGN|
+		    OHCI_BULK_BYPASS :
 		    ULPI_BYPASS|AHB_INCR8|AHB_INCR4|AHB_INCRX_ALIGN;
 		val = PMU_READ(sc, phy->phy_index, PMU_CFG);
 		if (enable)
@@ -272,6 +282,14 @@ sunxi_usbphy_enable(device_t dev, void *priv, bool enable)
 			PMU_WRITE(sc, phy->phy_index, PMU_UNK_H3, val);
 		}
 		break;
+	case USBPHY_A733:
+		/* The boot loader leaves the PHY powered down. */
+		if (enable && phy->phy_bsh) {
+			val = PMU_READ(sc, phy->phy_index, PMU_PHY_CTL);
+			val &= ~PMU_PHY_CTL_SIDDQ;
+			PMU_WRITE(sc, phy->phy_index, PMU_PHY_CTL, val);
+		}
+		break;
 	default:
 		break;
 	}
@@ -280,6 +298,7 @@ sunxi_usbphy_enable(device_t dev, void *priv, bool enable)
 		switch (sc->sc_type) {
 		case USBPHY_A83T:
 		case USBPHY_H6:
+		case USBPHY_A733:
 			break;
 		default:
 			if (phy->phy_index == 0)
