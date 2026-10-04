@@ -54,6 +54,8 @@ __RCSID("$NetBSD$");
 
 #include <machine/machdep.h>
 
+#include <riscv/espressif/esp_rom.h>
+
 /* One 32-bit register per source; the low six bits are the CLIC slot. */
 #define	INTMTX_SOURCE(src)	((src) * 4)
 #define	INTMTX_NSOURCES		128
@@ -216,6 +218,8 @@ espintmtx_attach(device_t parent, device_t self, void *aux)
 	aprint_naive("\n");
 	aprint_normal(": interrupt matrix, CLIC slots %u-%u\n",
 	    CLIC_SLOT_FIRST, CLIC_SLOT_LAST);
+
+	esp_rom_init();
 }
 
 CFATTACH_DECL_NEW(espintmtx, sizeof(struct espintmtx_softc),

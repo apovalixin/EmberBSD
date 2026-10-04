@@ -5,6 +5,7 @@
 
 # ESP32-S31 platform
 file	arch/riscv/espressif/esp32s31_platform.c	espintmtx
+file	arch/riscv/espressif/esp_rom.c			espintmtx
 
 # ESP32-S31 interrupt matrix and CLIC
 device	espintmtx

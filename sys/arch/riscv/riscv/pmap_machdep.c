@@ -221,6 +221,42 @@ pmap_md_growkernel(vaddr_t ova, vaddr_t nva)
 	mutex_exit(&pmap_md_list_lock);
 }
 
+#ifdef RISCV_LOW_IDMAP
+#define	PMAP_MD_KPDE_FIRST	((size_t)RISCV_LOW_IDMAP >> XSEGSHIFT)
+
+/*
+ * Map [pa, pa + len) at its own address with top-level leaf entries, in the
+ * kernel and in every user pmap.  The range lies between the lowered end of
+ * user space and the kernel base.
+ */
+void
+pmap_md_idmap(paddr_t pa, psize_t len)
+{
+	pmap_pdetab_t * const kptb = pmap_kernel()->pm_pdetab;
+	const size_t first = pa >> XSEGSHIFT;
+	const size_t last = (pa + len - 1) >> XSEGSHIFT;
+	struct pmap *pm;
+
+	KASSERT(pmap_md_list_ready);
+	KASSERT(first >= PMAP_MD_KPDE_FIRST && last < NPDEPG / 2);
+
+	mutex_enter(&pmap_md_list_lock);
+	for (size_t i = first; i <= last; i++) {
+		const pd_entry_t pde =
+		    (((paddr_t)i << XSEGSHIFT) >> PAGE_SHIFT) << PTE_PPN_SHIFT |
+		    PTE_KERN | PTE_HARDWIRED | PTE_RW | PTE_X;
+
+		kptb->pde_pde[i] = pde;
+		LIST_FOREACH(pm, &pmap_md_list, pm_md.md_list)
+			pm->pm_pdetab->pde_pde[i] = pde;
+	}
+	mutex_exit(&pmap_md_list_lock);
+	asm volatile("sfence.vma");
+}
+#else
+#define	PMAP_MD_KPDE_FIRST	(NPDEPG / 2)
+#endif
+
 void
 pmap_md_pdetab_init(struct pmap *pmap)
 {
@@ -236,7 +272,7 @@ pmap_md_pdetab_init(struct pmap *pmap)
 	/* XXXSB can we "pre-optimise" this by keeping a list of pdes to copy? */
 	/* XXXSB for relatively normal size memory (8gb) we only need 10-20ish ptes? */
 	/* XXXSB most (all?) of these ptes are  in two consecutive ranges. */
-	for (size_t i = NPDEPG / 2; i < NPDEPG; ++i) {
+	for (size_t i = PMAP_MD_KPDE_FIRST; i < NPDEPG; ++i) {
 		/*
 		 * XXXSB where/when do new entries in pmap_kernel()->pm_pdetab
 		 * XXXSB get added to existing pmaps?
@@ -280,7 +316,7 @@ pmap_md_pdetab_fini(struct pmap *pmap)
 	LIST_REMOVE(pmap, pm_md.md_list);
 	mutex_exit(&pmap_md_list_lock);
 
-	for (size_t i = NPDEPG / 2; i < NPDEPG; ++i) {
+	for (size_t i = PMAP_MD_KPDE_FIRST; i < NPDEPG; ++i) {
 		KASSERT(pte_invalid_pde() == 0);
 		pmap->pm_pdetab->pde_pde[i] = 0;
 	}

@@ -140,6 +140,7 @@ struct pmap_md {
 
 #define	PMAP_MD_GROWKERNEL
 void	pmap_md_growkernel(vaddr_t, vaddr_t);
+void	pmap_md_idmap(paddr_t, psize_t);
 
 static inline void
 pmap_md_icache_sync_all(void)

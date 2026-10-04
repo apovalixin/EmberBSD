@@ -58,6 +58,10 @@ awge* 		at fdt?			# ESP32-S31 Ethernet
 # One descriptor per 64-byte cache line: the controller writes memory
 # past the cache (see dwc_gmac_reg.h).
 makeoptions 	CPPFLAGS+="-DAWGE_RX_RING_COUNT=32 -DAWGE_TX_RING_COUNT=32 -DAWGE_DESC_PAD=12"
+
+# User space ends at 512 MB; the mask ROM and the internal RAM are mapped at
+# their physical addresses above it, for the vendor's radio code.
+makeoptions 	CPPFLAGS+="-DRISCV_LOW_IDMAP=0x20000000"
 mcommphy* 	at mii? phy ?		# Motorcomm YT8531
 ukphy* 		at mii? phy ?
 

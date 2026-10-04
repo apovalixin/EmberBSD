@@ -167,7 +167,16 @@
  *
  */
 
+#ifdef RISCV_LOW_IDMAP
+/*
+ * User space ends early; the kernel maps physical memory 1:1 between this
+ * address and its own base, for code that is tied to physical addresses
+ * (pmap_md_idmap).
+ */
+#define VM_MAXUSER_ADDRESS	((vaddr_t)RISCV_LOW_IDMAP)
+#else
 #define VM_MAXUSER_ADDRESS	((vaddr_t)-0x7fffffff-1)/* 0xffff_ffff_8000_0000 */
+#endif
 #define VM_MIN_KERNEL_ADDRESS	((vaddr_t)-0x7fffffff-1)/* 0xffff_ffff_8000_0000 */
 #define VM_MAX_KERNEL_ADDRESS	((vaddr_t)0xc0000000)
 
