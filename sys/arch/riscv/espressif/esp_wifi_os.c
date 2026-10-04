@@ -143,7 +143,6 @@ static struct espwifi_task *espwifi_tasks[ESPWIFI_NTHREADS];
 static TAILQ_HEAD(, espwifi_timer) espwifi_fired =
     TAILQ_HEAD_INITIALIZER(espwifi_fired);
 static kcondvar_t espwifi_timer_cv;
-static u_int espwifi_nintr;
 
 /*
  * Sleep on a condition, at most `ticks` of the radio's clock.  The F
@@ -259,11 +258,7 @@ espwifi_os_free_heap(void)
 unsigned int
 espwifi_os_critical_enter(void)
 {
-#ifdef ESPWIFI_WATCH
-	const int s = splvm();	/* leave the clock running */
-#else
 	const int s = splhigh();
-#endif
 
 	if (espwifi_crit_depth++ == 0)
 		espwifi_crit_spl = s;
@@ -824,7 +819,6 @@ espwifi_intr(void *v)
 	espwifi_fp_save(&fp);
 	(*i->i_func)(i->i_arg);
 	espwifi_fp_restore(&fp);
-	espwifi_nintr++;
 	return 1;
 }
 
@@ -921,20 +915,6 @@ espwifi_os_link(int up)
 	espwifi_if_link(up);
 	espwifi_fp_restore(&fp);
 }
-
-#ifdef ESPWIFI_WATCH
-/* Bring-up aid: where does a radio thread spin? */
-void espwifi_watch(vaddr_t);
-
-void
-espwifi_watch(vaddr_t pc)
-{
-	static u_int n;
-
-	if (++n % 6000 == 0)
-		printf("espwifi: %u interrupts\n", espwifi_nintr);
-}
-#endif
 
 /*
  * Start: the pool, the timer thread and the thread that brings the radio

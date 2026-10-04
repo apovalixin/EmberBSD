@@ -993,15 +993,34 @@ coex_zero(void)
 	return 0;
 }
 
+/*
+ * The priority of a Wi-Fi event in the radio arbiter.  The libraries use
+ * the byte whatever the function returns, and a radio left at priority 0
+ * hears nothing.  The values are those of Espressif's own arbiter with
+ * Wi-Fi alone on the air.
+ */
 static int
 coex_pti_get_wrapper(uint32_t event, uint8_t *pti)
 {
-	/*
-	 * The libraries pass an unset byte and use it whatever comes back.
-	 * Give Wi-Fi the top priority in the radio arbiter: it is alone.
-	 */
-	if (pti != NULL)
-		*pti = 0xef;
+	if (pti == NULL)
+		return 0;
+	switch (event) {
+	case 0:
+		*pti = 10;
+		break;
+	case 1:
+		*pti = 5;
+		break;
+	case 3:
+		*pti = 7;
+		break;
+	case 10:
+		*pti = 3;
+		break;
+	default:
+		*pti = 1;
+		break;
+	}
 	return 0;
 }
 
@@ -1160,6 +1179,7 @@ esp_phy_enable(esp_phy_modem_t modem)
 				espwifi_os_panic("no memory for calibration");
 			espwifi_os_log("espwifi: phy %s\n",
 			    get_phy_version_str());
+			phy_init_param_set(1);
 			efuse_mac(cal->mac);
 			const int rc = register_chipv7_phy(&phy_init_data,
 			    cal, PHY_RF_CAL_FULL);
@@ -1488,12 +1508,9 @@ espwifi_start(void)
 	regi2c_ctrl_ll_i2c_sar_periph_enable();
 
 	/*
-	 * The gates that follow the power unit's state do not open on this
-	 * board, and a register of a block without a clock stalls the
-	 * processor for good.  Nothing here saves power, so every modem
-	 * clock is forced on.
+	 * The modem clocks are left to their gates.  Forcing them all on
+	 * spoils the transmitter: the access point stops answering.
 	 */
-	REG_WRITE(MODEM_SYSCON_CLK_CONF_FORCE_ON_REG, 0x3ff);
 	scan_done = espwifi_os_sem_create(1, 0);
 	link_change = espwifi_os_sem_create(1, 0);
 

@@ -5,4 +5,3 @@ include "arch/riscv/conf/ESP32S31"
 
 options 	ESPWIFI
 makeoptions 	EXTRA_OBJ="$S/arch/riscv/espressif/wifi/espwifi.o"
-makeoptions 	CPPFLAGS+="-DESPWIFI_WATCH"

@@ -154,12 +154,6 @@ espsystimer_intr(void *arg)
 	espsystimer_arm(sc, sc->sc_next);
 
 	hardclock(cf);
-#ifdef ESPWIFI_WATCH
-	{
-		extern void espwifi_watch(vaddr_t);
-		espwifi_watch(CLKF_PC(cf));
-	}
-#endif
 
 	return 1;
 }
