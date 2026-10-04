@@ -276,7 +276,8 @@ ENTRY_NP(cpu_exception_handler)
 	REG_S	t5, TF_T5(sp)		// save t5
 	REG_S	t6, TF_T6(sp)		// save t6
 
-#if defined(DDB)
+	// The exit paths restore the callee-saved registers from the
+	// trapframe, so save them whatever the kernel options are.
 	REG_S	s0, TF_S0(sp)		// save s0 - frame pointer - useful
 	REG_S	s1, TF_S1(sp)		// save s1
 	REG_S	s2, TF_S2(sp)		// save s2
@@ -289,7 +290,6 @@ ENTRY_NP(cpu_exception_handler)
 	REG_S	s9, TF_S9(sp)		// save s9
 	REG_S	s10, TF_S10(sp)		// save s10
 	REG_S	s11, TF_S11(sp)		// save s11
-#endif
 
 	/* Set the global pointer */
 	.option push
