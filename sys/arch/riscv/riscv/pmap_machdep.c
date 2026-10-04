@@ -192,6 +192,35 @@ pmap_md_xtab_deactivate(struct pmap *pmap)
 	pmap_md_xtab_activate(pmap_kernel(), NULL);
 }
 
+/*
+ * Every user pmap carries a copy of the kernel's top-level entries.  The
+ * list lets pmap_growkernel add new ones to the copies: on Sv32 one entry
+ * spans 4 MiB, so the kernel grows across them in normal operation.
+ */
+static LIST_HEAD(, pmap) pmap_md_list = LIST_HEAD_INITIALIZER(pmap_md_list);
+static kmutex_t pmap_md_list_lock;
+static bool pmap_md_list_ready;
+
+void
+pmap_md_growkernel(vaddr_t ova, vaddr_t nva)
+{
+	const pmap_pdetab_t * const kptb = pmap_kernel()->pm_pdetab;
+	const size_t mask = PMAP_PDETABSIZE - 1;
+	struct pmap *pm;
+
+	if (!pmap_md_list_ready || nva <= ova)
+		return;
+	const size_t first = (ova >> XSEGSHIFT) & mask;
+	const size_t last = ((nva - 1) >> XSEGSHIFT) & mask;
+
+	mutex_enter(&pmap_md_list_lock);
+	LIST_FOREACH(pm, &pmap_md_list, pm_md.md_list) {
+		for (size_t i = first; i <= last; i++)
+			pm->pm_pdetab->pde_pde[i] = kptb->pde_pde[i];
+	}
+	mutex_exit(&pmap_md_list_lock);
+}
+
 void
 pmap_md_pdetab_init(struct pmap *pmap)
 {
@@ -200,6 +229,9 @@ pmap_md_pdetab_init(struct pmap *pmap)
 	const vaddr_t pdetabva = (vaddr_t)pmap->pm_pdetab;
 	const paddr_t pdetabpa = pmap_md_direct_mapped_vaddr_to_paddr(pdetabva);
 	pmap->pm_md.md_ppn = pdetabpa >> PAGE_SHIFT;
+
+	if (pmap != pmap_kernel())
+		mutex_enter(&pmap_md_list_lock);
 
 	/* XXXSB can we "pre-optimise" this by keeping a list of pdes to copy? */
 	/* XXXSB for relatively normal size memory (8gb) we only need 10-20ish ptes? */
@@ -230,6 +262,11 @@ pmap_md_pdetab_init(struct pmap *pmap)
 			pmap->pm_pdetab->pde_pde[i] = pde;
 		}
 	}
+
+	if (pmap != pmap_kernel()) {
+		LIST_INSERT_HEAD(&pmap_md_list, pmap, pm_md.md_list);
+		mutex_exit(&pmap_md_list_lock);
+	}
 }
 
 void
@@ -238,6 +275,11 @@ pmap_md_pdetab_fini(struct pmap *pmap)
 
 	if (pmap == pmap_kernel())
 		return;
+
+	mutex_enter(&pmap_md_list_lock);
+	LIST_REMOVE(pmap, pm_md.md_list);
+	mutex_exit(&pmap_md_list_lock);
+
 	for (size_t i = NPDEPG / 2; i < NPDEPG; ++i) {
 		KASSERT(pte_invalid_pde() == 0);
 		pmap->pm_pdetab->pde_pde[i] = 0;
@@ -391,6 +433,9 @@ pmap_bootstrap(vaddr_t vstart, vaddr_t vend)
 	    pmap_curmaxkvaddr);
 
 	pmap_md_grow(pmap_kernel()->pm_pdetab, kvmstart, XSEGSHIFT, &kvmsize);
+
+	mutex_init(&pmap_md_list_lock, MUTEX_DEFAULT, IPL_VM);
+	pmap_md_list_ready = true;
 
 	/*
 	 * Initialize the pools.

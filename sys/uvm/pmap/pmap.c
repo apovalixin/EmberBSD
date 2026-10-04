@@ -531,6 +531,11 @@ pmap_growkernel(vaddr_t maxkvaddr)
 		pmap_pte_reserve(pmap_kernel(), virtual_end, 0);
 	}
 
+#ifdef PMAP_MD_GROWKERNEL
+	/* Show the new top-level entries to the pmaps that already exist. */
+	pmap_md_growkernel(pmap_curmaxkvaddr, virtual_end);
+#endif
+
 	kasan_shadow_map((void *)pmap_curmaxkvaddr,
 	    (size_t)(virtual_end - pmap_curmaxkvaddr));
 

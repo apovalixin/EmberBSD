@@ -135,7 +135,11 @@ pmap_procwr(struct proc *p, vaddr_t va, vsize_t len)
 #define	__HAVE_PMAP_MD
 struct pmap_md {
 	paddr_t md_ppn;
+	LIST_ENTRY(pmap) md_list;	/* all user pmaps, for pmap_growkernel */
 };
+
+#define	PMAP_MD_GROWKERNEL
+void	pmap_md_growkernel(vaddr_t, vaddr_t);
 
 static inline void
 pmap_md_icache_sync_all(void)
