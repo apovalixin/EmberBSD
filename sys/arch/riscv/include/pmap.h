@@ -104,10 +104,21 @@
 #endif
 #endif /* __BSD_PTENTRY_T__ */
 
+/*
+ * Set by a platform whose caches fence.i does not reach.  A null argument
+ * asks for the whole cache.
+ */
+struct vm_page_md;
+extern void (*riscv_icache_sync)(struct vm_page_md *);
+
 #define	PMAP_NEED_PROCWR
 static inline void
 pmap_procwr(struct proc *p, vaddr_t va, vsize_t len)
 {
+	if (riscv_icache_sync != NULL) {
+		riscv_icache_sync(NULL);
+		return;
+	}
 	__asm __volatile("fence\trw,rw; fence.i" ::: "memory");
 }
 
@@ -190,6 +201,10 @@ pmap_md_tlb_check_entry(void *ctx, vaddr_t va, tlb_asid_t asid, pt_entry_t pte)
 static inline void
 pmap_md_page_syncicache(struct vm_page_md *mdpg, const kcpuset_t *onproc)
 {
+	if (riscv_icache_sync != NULL) {
+		riscv_icache_sync(mdpg);
+		return;
+	}
 	__asm __volatile("fence\trw,rw; fence.i" ::: "memory");
 }
 

@@ -3,6 +3,9 @@
 # Espressif SoC devices
 #
 
+# ESP32-S31 platform
+file	arch/riscv/espressif/esp32s31_platform.c	espintmtx
+
 # ESP32-S31 interrupt matrix and CLIC
 device	espintmtx
 attach	espintmtx at fdt

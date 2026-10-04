@@ -67,6 +67,8 @@ static pt_entry_t pmap_pte_nc __read_mostly;
 static pt_entry_t pmap_pte_io __read_mostly;
 #endif
 
+void (*riscv_icache_sync)(struct vm_page_md *);
+
 void
 pmap_zero_page(paddr_t pa)
 {
