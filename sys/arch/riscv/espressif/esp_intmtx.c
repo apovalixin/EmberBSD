@@ -54,6 +54,7 @@ __RCSID("$NetBSD$");
 
 #include <machine/machdep.h>
 
+#include <riscv/espressif/esp_intmtx.h>
 #include <riscv/espressif/esp_rom.h>
 
 /* One 32-bit register per source; the low six bits are the CLIC slot. */
@@ -78,6 +79,7 @@ struct espintmtx_softc {
 	bus_space_handle_t	sc_mtx_bsh;
 	bus_space_handle_t	sc_clic_bsh;
 	uint32_t		sc_slots;	/* slots in use */
+	uint32_t		sc_off;		/* slots a driver holds masked */
 	uint8_t			sc_slot[INTMTX_NSOURCES];
 };
 
@@ -93,22 +95,20 @@ espintmtx_mask(u_int slot, bool masked)
 {
 	struct espintmtx_softc * const sc = espintmtx_sc;
 
+	if (!masked && (sc->sc_off & __BIT(slot)) != 0)
+		return;
 	bus_space_write_1(sc->sc_bst, sc->sc_clic_bsh, CLIC_INTIE(slot),
 	    masked ? 0 : 1);
 }
 
-static void *
-espintmtx_establish(device_t dev, u_int *specifier, int ipl, int flags,
-    int (*func)(void *), void *arg, const char *xname)
+void *
+espintmtx_establish_source(u_int src, int ipl, int (*func)(void *), void *arg,
+    const char *xname)
 {
-	struct espintmtx_softc * const sc = device_private(dev);
+	struct espintmtx_softc * const sc = espintmtx_sc;
 
-	/* 1st cell is the source, 2nd the trigger; all sources are level. */
-	const u_int src = be32toh(specifier[0]);
-	if (src >= INTMTX_NSOURCES) {
-		aprint_error_dev(dev, "source %u out of range\n", src);
+	if (sc == NULL || src >= INTMTX_NSOURCES)
 		return NULL;
-	}
 
 	u_int slot = sc->sc_slot[src];
 	if (slot == 0) {
@@ -117,7 +117,7 @@ espintmtx_establish(device_t dev, u_int *specifier, int ipl, int flags,
 				break;
 		}
 		if (slot > CLIC_SLOT_LAST) {
-			aprint_error_dev(dev, "no free CLIC slot\n");
+			aprint_error_dev(sc->sc_dev, "no free CLIC slot\n");
 			return NULL;
 		}
 		sc->sc_slots |= __BIT(slot);
@@ -138,8 +138,40 @@ espintmtx_establish(device_t dev, u_int *specifier, int ipl, int flags,
 		    CLIC_INTIP(slot), 0);
 	}
 
-	return riscv_intc_establish_source(slot, ipl, flags, func, arg,
+	return riscv_intc_establish_source(slot, ipl, 0, func, arg,
 	    xname, espintmtx_mask);
+}
+
+void
+espintmtx_source_enable(u_int src, bool on)
+{
+	struct espintmtx_softc * const sc = espintmtx_sc;
+
+	if (sc == NULL || src >= INTMTX_NSOURCES || sc->sc_slot[src] == 0)
+		return;
+
+	const u_int slot = sc->sc_slot[src];
+	const int s = splhigh();
+	if (on)
+		sc->sc_off &= ~__BIT(slot);
+	else
+		sc->sc_off |= __BIT(slot);
+	espintmtx_mask(slot, !on);
+	splx(s);
+}
+
+static void *
+espintmtx_establish(device_t dev, u_int *specifier, int ipl, int flags,
+    int (*func)(void *), void *arg, const char *xname)
+{
+	/* 1st cell is the source, 2nd the trigger; all sources are level. */
+	const u_int src = be32toh(specifier[0]);
+	if (src >= INTMTX_NSOURCES) {
+		aprint_error_dev(dev, "source %u out of range\n", src);
+		return NULL;
+	}
+
+	return espintmtx_establish_source(src, ipl, func, arg, xname);
 }
 
 static void

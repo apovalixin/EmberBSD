@@ -26,8 +26,9 @@
 
 /*
  * The mask ROM of the ESP32-S31.  The vendor's radio libraries call into it
- * at fixed addresses, and the ROM keeps its own data at the top of the
- * internal RAM, so both are mapped where they physically are.
+ * at fixed addresses, the ROM keeps its own data at the top of the internal
+ * RAM, and the libraries reach the registers of the radio by address, so
+ * all of it is mapped where it physically is.
  */
 
 #include <sys/cdefs.h>
@@ -39,13 +40,14 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <uvm/uvm.h>
 
 #include <riscv/espressif/esp_rom.h>
+#include <riscv/espressif/esp_wifi_var.h>
+
+#include "opt_espwifi.h"
 
 #ifdef RISCV_LOW_IDMAP
 
-#define	S31_IRAM_BASE	0x2f000000
-#define	S31_IRAM_SIZE	0x00080000
-#define	S31_ROM_BASE	0x2f800000
-#define	S31_ROM_SIZE	0x00080000
+#define	S31_IDMAP_BASE	0x20000000
+#define	S31_IDMAP_SIZE	0x10000000
 
 #define	S31_ROM_ECO_VERSION	0x2f800014
 #define	S31_ROM_CRC32_LE	0x2f800784
@@ -58,8 +60,8 @@ esp_rom_init(void)
 {
 	static const uint8_t check[] = "123456789";
 
-	pmap_md_idmap(S31_IRAM_BASE, S31_IRAM_SIZE);
-	pmap_md_idmap(S31_ROM_BASE, S31_ROM_SIZE);
+	/* The peripherals, the internal RAM and the ROM, all at once. */
+	pmap_md_idmap(S31_IDMAP_BASE, S31_IDMAP_SIZE);
 
 	const uint32_t crc = ((rom_crc32_t)S31_ROM_CRC32_LE)(0, check, 9);
 
@@ -67,6 +69,9 @@ esp_rom_init(void)
 	    *(volatile uint32_t *)S31_ROM_ECO_VERSION,
 	    *(volatile uint32_t *)S31_ROM_OPS_TABLE_PTR, crc,
 	    crc == 0xcbf43926 ? "" : " (wrong)");
+#ifdef ESPWIFI
+	espwifi_attach();
+#endif
 }
 
 #else

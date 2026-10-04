@@ -1,0 +1,21 @@
+#!/bin/sh
+# idfcc FILE.c OUT.o [FLAGS]: compile one source against the ESP-IDF headers
+# for the ESP32-S31 with the NetBSD toolchain, soft-float.
+V=${NBRV32:-/Volumes/nb-rv32}
+I=${IDF:-$V/esp/idf}/components
+W=$(cd "$(dirname "$0")" && pwd)
+INC="-I$W/shim"
+for d in $I/*/include $I/*/esp32s31/include $I/*/esp32s31 $I/soc/esp32s31/register \
+    $I/hal/platform_port/include $I/esp_hw_support/modem/include \
+    $I/esp_hw_support/include/soc $I/esp_hw_support/port/esp32s31/include \
+    $I/esp_hw_support/port/esp32s31/private_include $I/esp_hw_support/port/include \
+    $I/esp_wifi/include/local $I/esp_phy/esp32s31/include \
+    $I/esp_rom/esp32s31/include/esp32s31 \
+    $I/log/include $I/heap/include $I/riscv/include; do
+	[ -d "$d" ] && INC="$INC -I$d"
+done
+src=$1; out=$2; shift 2
+exec $V/tools/bin/riscv32--netbsd-gcc -ffreestanding -Os -ffunction-sections \
+    -fdata-sections -fno-jump-tables -march=rv32imac_zicsr_zifencei -mabi=ilp32 \
+    -isystem $V/dest/usr/include -D__ESP_IDF_NETBSD__ -Wno-attributes \
+    $INC "$@" -c "$src" -o "$out"

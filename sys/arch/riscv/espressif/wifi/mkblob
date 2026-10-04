@@ -1,0 +1,120 @@
+#!/bin/sh
+# mkblob: build espwifi.o, the radio code of the ESP32-S31 for the kernel:
+# the vendor's libraries, the ESP-IDF sources they need and the glue, linked
+# into one relocatable object whose only outside names are kernel services.
+# NBRV32 is the work volume, IDF the ESP-IDF checkout, LIBS the directory
+# with libpp.a, libnet80211.a, libphy.a, libcore.a at the versions that
+# checkout pins.
+set -e
+V=${NBRV32:-/Volumes/nb-rv32}
+I=${IDF:-$V/esp/idf}/components
+L=${LIBS:-$V/esp/wifi}
+W=$(cd "$(dirname "$0")" && pwd)
+O=${OUT:-$V/obj/espwifi}
+T=$V/tools/bin/riscv32--netbsd-
+mkdir -p $O
+SRCS="
+$W/glue.c
+$I/esp_hw_support/modem/modem_clock.c
+$I/esp_hw_support/modem/port/esp32s31/modem_clock_impl.c
+$I/hal/esp32s31/modem_clock_hal.c
+$I/esp_hw_support/periph_ctrl.c
+$I/esp_hal_regi2c/esp32s31/regi2c_impl.c
+$I/esp_wifi/src/ftm_load_calibration.c
+$I/esp_hw_support/regi2c_ctrl.c
+$I/esp_phy/src/phy_common.c
+$I/esp_phy/esp32s31/phy_init_data.c
+$I/esp_wifi/regulatory/esp_wifi_regulatory.c
+$EXTRA_SRCS
+"
+OBJS=
+for s in $SRCS; do
+	o=$O/$(basename $s .c).o
+	case $s in
+	*ftm_load_calibration.c) F=-DCONFIG_ESP_WIFI_FTM_ENABLE=1;;
+	*) F=;;
+	esac
+	$W/idfcc $s $o $F
+	OBJS="$OBJS $o"
+done
+# TRACE="name ..." wraps the named functions of the libraries or the ROM so
+# that each call is printed: a bring-up aid.
+WRAP=
+if [ -n "$TRACE" ]; then
+	{
+		echo '	.text'
+		for s in $TRACE; do
+			WRAP="$WRAP --wrap=$s"
+			cat <<EOT
+	.globl	__wrap_$s
+__wrap_$s:
+	addi	sp, sp, -48
+	sw	ra, 44(sp)
+	sw	a0, 40(sp)
+	sw	a1, 36(sp)
+	sw	a2, 32(sp)
+	sw	a3, 28(sp)
+	sw	a4, 24(sp)
+	sw	a5, 20(sp)
+	sw	a6, 16(sp)
+	sw	a7, 12(sp)
+	la	a0, 1f
+	call	espwifi_trace
+	lw	ra, 44(sp)
+	lw	a0, 40(sp)
+	lw	a1, 36(sp)
+	lw	a2, 32(sp)
+	lw	a3, 28(sp)
+	lw	a4, 24(sp)
+	lw	a5, 20(sp)
+	lw	a6, 16(sp)
+	lw	a7, 12(sp)
+	addi	sp, sp, 48
+	tail	__real_$s
+	.section .rodata
+1:	.asciz	"$s"
+	.text
+EOT
+		done
+	} > $O/trace.S
+	${T}gcc -march=rv32imac_zicsr_zifencei -mabi=ilp32 -c $O/trace.S -o $O/trace.o
+	OBJS="$OBJS $O/trace.o"
+fi
+ROM=
+for f in esp32s31.rom.ld esp32s31.rom.api.ld esp32s31.rom.libgcc.ld \
+    esp32s31.rom.rvfp.ld esp32s31.rom.version.ld esp32s31.rom.pp.ld \
+    esp32s31.rom.net80211.ld esp32s31.rom.phy.ld esp32s31.rom.coexist.ld \
+    esp32s31.rom.libc.ld; do
+	ROM="$ROM -T $I/esp_rom/esp32s31/ld/$f"
+done
+ENTRY=
+for s in espwifi_start espwifi_scan espwifi_connect espwifi_tx espwifi_get_mac; do
+	ENTRY="$ENTRY -u $s"
+done
+# The libraries use the single-float ABI inside and the linker refuses to
+# mix it with the kernel's soft-float.  No floating point value crosses
+# the boundary, so their objects are re-marked soft-float (e_flags, the
+# float ABI bits) before the link.
+LIBA=
+for a in libnet80211 libpp libphy libcore; do
+	rm -rf $O/$a; mkdir -p $O/$a
+	(cd $O/$a && ${T}ar x $L/$a.a && for o in *.o; do
+		printf '\001' | dd of=$o bs=1 seek=36 conv=notrunc 2>/dev/null
+	done && ${T}ar rcs ../$a.a *.o)
+	LIBA="$LIBA $O/$a.a"
+done
+${T}ld -m elf32lriscv -r --gc-sections -e espwifi_start $ENTRY $WRAP \
+    -o $O/espwifi.o $OBJS --start-group $LIBA --end-group \
+    -T $W/espwifi.lds $ROM -T $I/soc/esp32s31/ld/esp32s31.peripherals.ld
+# The ROM and the libraries define many names the kernel has too (memcpy,
+# putchar, longjmp), so every global name defined here except the entry
+# points gets a prefix.  They stay global: the linker cannot relax code
+# against local absolute symbols, and the ROM addresses are absolute.
+${T}nm -g --defined-only $O/espwifi.o | awk '$3 !~ /^espwifi_(start|scan|connect|tx|get_mac)$/ \
+    { print $3, "espw." $3 }' > $O/rename.txt
+echo "putchar espw.espwifi_putchar" >> $O/rename.txt
+${T}objcopy --redefine-syms=$O/rename.txt $O/espwifi.o
+${T}size $O/espwifi.o
+${T}nm -u $O/espwifi.o | awk '{print $2}' | sort > $O/undefined.txt
+echo "undefined: $(wc -l < $O/undefined.txt)"
+cp $O/espwifi.o $W/espwifi.o
