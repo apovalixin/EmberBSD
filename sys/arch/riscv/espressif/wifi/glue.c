@@ -1521,12 +1521,23 @@ espwifi_start(void)
 		espwifi_os_log("espwifi: start: error %#x\n", error);
 		return error;
 	}
+	/*
+	 * No power saving: a sleeping station wakes for beacons by a clock
+	 * this port does not keep to the microsecond, and misses its frames.
+	 */
+	esp_wifi_set_ps(WIFI_PS_NONE);
 	esp_wifi_internal_reg_rxcb(WIFI_IF_STA, rx_frame);
 	return 0;
 }
 
 static wifi_ap_record_t aps[16];
 static uint16_t naps;
+
+int
+espwifi_linked(void)
+{
+	return link_up;
+}
 
 /* Was the network in the last scan? */
 int

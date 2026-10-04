@@ -135,7 +135,7 @@ for f in esp32s31.rom.ld esp32s31.rom.api.ld esp32s31.rom.libgcc.ld \
 	ROM="$ROM -T $I/esp_rom/esp32s31/ld/$f"
 done
 ENTRY=
-for s in espwifi_start espwifi_scan espwifi_seen espwifi_connect espwifi_tx espwifi_get_mac; do
+for s in espwifi_start espwifi_scan espwifi_seen espwifi_linked espwifi_connect espwifi_tx espwifi_get_mac; do
 	ENTRY="$ENTRY -u $s"
 done
 # The libraries use the single-float ABI inside and the linker refuses to
@@ -157,7 +157,7 @@ ${T}ld -m elf32lriscv -r --gc-sections -e espwifi_start $ENTRY $WRAP \
 # putchar, longjmp), so every global name defined here except the entry
 # points gets a prefix.  They stay global: the linker cannot relax code
 # against local absolute symbols, and the ROM addresses are absolute.
-${T}nm -g --defined-only $O/espwifi.o | awk '$3 !~ /^espwifi_(start|scan|seen|connect|tx|get_mac)$/ \
+${T}nm -g --defined-only $O/espwifi.o | awk '$3 !~ /^espwifi_(start|scan|seen|linked|connect|tx|get_mac)$/ \
     { print $3, "espw." $3 }' > $O/rename.txt
 echo "putchar espw.espwifi_putchar" >> $O/rename.txt
 ${T}objcopy --redefine-syms=$O/rename.txt $O/espwifi.o

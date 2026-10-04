@@ -82,6 +82,7 @@ void	espwifi_os_link(int);
 int	espwifi_start(void);
 int	espwifi_scan(void);
 int	espwifi_seen(const char *);
+int	espwifi_linked(void);
 int	espwifi_connect(const char *, const char *);
 int	espwifi_tx(const void *, unsigned int);
 void	espwifi_get_mac(unsigned char *);

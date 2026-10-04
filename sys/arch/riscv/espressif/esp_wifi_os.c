@@ -594,7 +594,8 @@ espwifi_os_event_wait(void *v, unsigned int bits, int clear, int all,
 
 /*
  * Tasks.  Each is a kernel thread that runs on a stack of its own with
- * floating point enabled.
+ * floating point enabled.  They run above user processes: the radio
+ * answers its peer within milliseconds.
  */
 
 static void
@@ -637,7 +638,7 @@ espwifi_os_task_create(void (*func)(void *), const char *name,
 		printf("espwifi: too many tasks\n");
 		return 0;
 	}
-	if (kthread_create(PRI_NONE, KTHREAD_MPSAFE, NULL, espwifi_task_main,
+	if (kthread_create(PRI_SOFTNET, KTHREAD_MPSAFE, NULL, espwifi_task_main,
 	    t, &t->t_lwp, "espwifi/%s", name) != 0) {
 		espwifi_tasks[slot] = NULL;
 		return 0;
@@ -897,15 +898,28 @@ espwifi_os_panic(const char *what)
 	panic("espwifi: %s", what);
 }
 
+/*
+ * A frame from the radio, on the thread of the libraries.  The network
+ * stack may sleep under it, so the F registers are kept.
+ */
 void
 espwifi_os_rx(const void *buf, unsigned int len)
 {
+	struct espwifi_fp fp;
+
+	espwifi_fp_save(&fp);
+	espwifi_if_input(buf, len);
+	espwifi_fp_restore(&fp);
 }
 
 void
 espwifi_os_link(int up)
 {
-	printf("espwifi: link %s\n", up ? "up" : "down");
+	struct espwifi_fp fp;
+
+	espwifi_fp_save(&fp);
+	espwifi_if_link(up);
+	espwifi_fp_restore(&fp);
 }
 
 #ifdef ESPWIFI_WATCH
@@ -931,7 +945,7 @@ espwifi_watch(vaddr_t pc)
  * Join the first network of the list in /chosen that is on the air.  The
  * list holds name and key in turn, best network first.
  */
-static void
+static bool
 espwifi_join(void)
 {
 	const int chosen = OF_finddevice("/chosen");
@@ -940,7 +954,7 @@ espwifi_join(void)
 	    fdtbus_get_prop(chosen, "netbsd,wifi-networks", &len);
 
 	if (espwifi_scan() <= 0 || list == NULL)
-		return;
+		return false;
 	for (const char *p = list; p < list + len; ) {
 		const char * const ssid = p;
 		p += strlen(p) + 1;
@@ -954,24 +968,31 @@ espwifi_join(void)
 		printf("espwifi: joining %s\n", ssid);
 		if (espwifi_connect(ssid, key) == 0) {
 			printf("espwifi: joined %s\n", ssid);
-			return;
+			return true;
 		}
 		printf("espwifi: could not join %s\n", ssid);
 	}
+	return false;
 }
 
 static void
 espwifi_main(void *v)
 {
-	uint8_t mac[6];
-
-	espwifi_get_mac(mac);
-	printf("espwifi: address %02x:%02x:%02x:%02x:%02x:%02x\n",
-	    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-	if (espwifi_start() == 0)
-		espwifi_join();
-	for (;;)
-		espwifi_os_task_delay(ESPWIFI_WAIT_FOREVER / 100);
+	if (espwifi_start() != 0)
+		kthread_exit(0);
+	/*
+	 * Join, and join again whenever the link is lost.  The pause grows
+	 * with every failure: access points stop answering a station that
+	 * knocks every few seconds.
+	 */
+	for (u_int pause = 3;;) {
+		if (espwifi_linked()) {
+			pause = 3;
+		} else if (!espwifi_join()) {
+			pause = MIN(pause * 2, 60);
+		}
+		espwifi_os_task_delay(pause * 1000 / ESPWIFI_TICK_MS);
+	}
 }
 
 void
@@ -985,6 +1006,7 @@ espwifi_attach(void)
 	    ESPWIFI_POOL_SIZE, 16, NULL, NULL, NULL, 0, VM_NOSLEEP, IPL_HIGH);
 	espwifi_pool_free = ESPWIFI_POOL_SIZE;
 
+	espwifi_if_attach();
 	if (!espwifi_os_task_create(espwifi_timer_thread, "timer", 0, NULL,
 	    &handle) ||
 	    !espwifi_os_task_create(espwifi_main, "main", 0, NULL, &handle))
