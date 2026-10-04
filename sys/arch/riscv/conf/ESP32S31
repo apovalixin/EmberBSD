@@ -62,6 +62,12 @@ ld* 		at virtio?
 vioif* 		at virtio?
 viornd* 	at virtio?
 
+# The root file system is read in place from the flash window: the boot
+# loader names its range as an initrd.
+pseudo-device 	md
+options 	MEMORY_DISK_HOOKS
+options 	MEMORY_DISK_DYNAMIC
+
 pseudo-device 	loop
 pseudo-device 	pty
 
