@@ -225,9 +225,15 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define	AICWF_ME_CONFIG_HT_AMPDU	2
 #define	AICWF_ME_CONFIG_HT_MCS		3	/* 16 bytes */
 #define	AICWF_ME_CONFIG_TX_LIFETIME	100	/* 16 bits, TU */
+#define	AICWF_ME_CONFIG_BW_MAX		102
 #define	AICWF_ME_CONFIG_HT_SUPP		103
-/* LDPC, no SM power save, short guard interval, STBC receive. */
-#define	AICWF_HT_INFO			(0x0001 | 0x000c | 0x0020 | 0x0100)
+/*
+ * LDPC, 40 MHz channels, no SM power save, short guard interval at
+ * either width, STBC receive.
+ */
+#define	AICWF_HT_INFO			\
+	(0x0001 | 0x0002 | 0x000c | 0x0020 | 0x0040 | 0x0100)
+#define	AICWF_BW_40			1
 #define	AICWF_HT_AMPDU			0x1f	/* 64 KiB, 16 us apart */
 #define	AICWF_TX_LIFETIME		100
 
@@ -1063,8 +1069,10 @@ aicwf_fw_init(struct aicwf_softc *sc)
 	    le16dec(cfm + 24), cfm[26]);
 
 	/*
-	 * Capabilities: 802.11n in 20 MHz channels with one stream. The
-	 * firmware builds the association request from them.
+	 * Capabilities: 802.11n with one stream in channels up to 40 MHz
+	 * wide. The firmware builds the association request from them.
+	 * 802.11ac is left out: with it announced the station associates
+	 * and then exchanges only broadcast frames with the access point.
 	 */
 	memset(req, 0, sizeof(req));
 	le16enc(req + AICWF_ME_CONFIG_HT_INFO, AICWF_HT_INFO);
@@ -1072,6 +1080,7 @@ aicwf_fw_init(struct aicwf_softc *sc)
 	req[AICWF_ME_CONFIG_HT_MCS] = 0xff;		/* MCS 0-7 */
 	le16enc(req + AICWF_ME_CONFIG_TX_LIFETIME, AICWF_TX_LIFETIME);
 	req[AICWF_ME_CONFIG_HT_SUPP] = 1;
+	req[AICWF_ME_CONFIG_BW_MAX] = AICWF_BW_40;
 	error = aicwf_cmd(sc, AICWF_ME_CONFIG_REQ, req, AICWF_ME_CONFIG_LEN,
 	    AICWF_ME_CONFIG_CFM, NULL, 0);
 	if (error != 0)
