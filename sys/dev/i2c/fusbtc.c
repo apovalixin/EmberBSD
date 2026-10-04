@@ -21,6 +21,7 @@
 #include <sys/kernel.h>
 #include <sys/device.h>
 #include <sys/gpio.h>
+#include <sys/kthread.h>
 
 #include <dev/i2c/i2cvar.h>
 
@@ -195,6 +196,7 @@ struct fusbtc_softc {
 	i2c_addr_t		 sc_addr;
 	int			 sc_phandle;
 	void			*sc_ih;
+	bool			 sc_poll;	/* no interrupt line */
 #if 0
 	struct task		 sc_task;
 #endif
@@ -216,6 +218,7 @@ struct fusbtc_softc {
 
 int	 fusbtc_intr(void *);
 void	 fusbtc_task(void *);
+static void fusbtc_poll(void *);
 void	 fusbtc_toggle(struct fusbtc_softc *, int);
 void	 fusbtc_toggle_change(struct fusbtc_softc *);
 void	 fusbtc_power_change(struct fusbtc_softc *);
@@ -299,8 +302,9 @@ fusbtc_attach(device_t parent, device_t self, void *aux)
 	sc->sc_ih = fdtbus_intr_establish_xname(sc->sc_phandle, 0, IPL_BIO, 0,
 	    fusbtc_intr, sc, device_xname(self));
 	if (sc->sc_ih == NULL) {
-		aprint_error(": unable to establish interrupt\n");
-		return;
+		/* The pin controller may not offer interrupts: poll. */
+		aprint_normal_dev(self, "no interrupt, polling\n");
+		sc->sc_poll = true;
 	}
 
 	fusbtc_write_reg(sc, FUSB_RESET, FUSB_RESET_SW);
@@ -341,6 +345,21 @@ fusbtc_attach(device_t parent, device_t self, void *aux)
 	reg = fusbtc_read_reg(sc, FUSB_CONTROL2);
 	reg |= FUSB_CONTROL2_TOGGLE;
 	fusbtc_write_reg(sc, FUSB_CONTROL2, reg);
+
+	if (sc->sc_poll && kthread_create(PRI_NONE, 0, NULL, fusbtc_poll, sc,
+	    NULL, "%s", device_xname(self)) != 0)
+		aprint_error_dev(self, "unable to start the polling thread\n");
+}
+
+static void
+fusbtc_poll(void *args)
+{
+	struct fusbtc_softc *sc = args;
+
+	for (;;) {
+		fusbtc_intr(sc);
+		kpause("fusbtc", false, hz / 4, NULL);
+	}
 }
 
 int
@@ -349,7 +368,8 @@ fusbtc_intr(void *args)
 	struct fusbtc_softc *sc = args;
 	uint8_t intr, intra, intrb;
 
-	fdtbus_intr_mask(sc->sc_phandle, sc->sc_ih);
+	if (!sc->sc_poll)
+		fdtbus_intr_mask(sc->sc_phandle, sc->sc_ih);
 
 	intr = fusbtc_read_reg(sc, FUSB_INTERRUPT);
 	intra = fusbtc_read_reg(sc, FUSB_INTERRUPTA);
@@ -360,7 +380,7 @@ fusbtc_intr(void *args)
 	if (intr & FUSB_INTERRUPT_VBUSOK)
 		fusbtc_power_change(sc);
 
-	if (intra & FUSB_INTERRUPTA_TOGDONE)
+	if ((intra & FUSB_INTERRUPTA_TOGDONE) && !sc->sc_attached)
 		fusbtc_toggle_change(sc);
 
 	if (intr)
@@ -382,7 +402,8 @@ fusbtc_intr(void *args)
 	task_add(systq, &sc->sc_task);
 #endif
 
-	fdtbus_intr_unmask(sc->sc_phandle, sc->sc_ih);
+	if (!sc->sc_poll)
+		fdtbus_intr_unmask(sc->sc_phandle, sc->sc_ih);
 
 	return 1;
 }
@@ -516,8 +537,8 @@ fusbtc_toggle_change(struct fusbtc_softc *sc)
 		fusbtc_set_vbus(sc, 0, 0);
 		sc->sc_attached = 1;
 	} else {
-		panic("%s: unknown combination %x", device_xname(sc->sc_dev),
-		   status);
+		/* Still toggling: nothing is attached yet. */
+		DPRINTF((sc->sc_dev, "toggle state %x\n", status));
 	}
 }
 

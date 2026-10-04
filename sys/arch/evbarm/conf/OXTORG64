@@ -34,6 +34,7 @@ aicwf*		at sdmmc?
 #	(../patches/sun60i-a733.diff).
 axp8191pm*	at iic?
 axp8191reg*	at axp8191pm?
+fusbtc*		at iic?			# FUSB302 USB Type-C controller
 
 # Serial Bluetooth transport; UART description and firmware are board-specific.
 pseudo-device	btuart

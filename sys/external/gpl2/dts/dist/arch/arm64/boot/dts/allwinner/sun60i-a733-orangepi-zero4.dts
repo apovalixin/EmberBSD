@@ -125,23 +125,41 @@
 	status = "okay";
 };
 
-/*
- * The power management chip. The vendor tree also lists an AXP515 at
- * 0x34; this board does not carry one.
- */
-/*
- * The Type-C data port as a USB 2.0 host. Its power is on all the time:
- * the Type-C controller that tells what is plugged in has no driver.
- */
+/* The Type-C data port as a USB 2.0 host. */
 &usb3_u2phy {
-	vbus-supply = <&reg_usb3_vbus>;
 	status = "okay";
+};
+
+/*
+ * The Type-C controller of the data port. It powers the port only while
+ * a device is plugged in. Its interrupt line (PL9) is not described: the
+ * pin controller has no interrupts, the driver polls.
+ */
+&r_i2c1 {
+	status = "okay";
+
+	typec@22 {
+		compatible = "fcs,fusb302";
+		reg = <0x22>;
+		vbus-supply = <&reg_usb3_vbus>;
+
+		connector {
+			compatible = "usb-c-connector";
+			label = "USB-C";
+			data-role = "host";
+			power-role = "source";
+		};
+	};
 };
 
 &usb3 {
 	status = "okay";
 };
 
+/*
+ * The power management chip. The vendor tree also lists an AXP515 at
+ * 0x34; this board does not carry one.
+ */
 &r_i2c0 {
 	status = "okay";
 

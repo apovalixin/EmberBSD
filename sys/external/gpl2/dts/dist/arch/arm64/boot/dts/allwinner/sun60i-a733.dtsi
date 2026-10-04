@@ -909,10 +909,14 @@
 			clocks = <&ccu CLK_USB2_MF>, <&ccu CLK_USB2_U2_REF>,
 				 <&ccu CLK_USB2_SUSPEND>;
 			clock-names = "bus_clk", "ref_clk", "suspend";
+			/*
+			 * The controller counts its frames from the
+			 * bus clock and expects 24 MHz there.
+			 */
 			assigned-clocks = <&ccu CLK_USB2_SUSPEND>,
 					  <&ccu CLK_USB2_MF>;
 			assigned-clock-parents = <&ccu CLK_SYS_24M>,
-						 <&ccu CLK_PLL_PERIPH0_300M>;
+						 <&ccu CLK_SYS_24M>;
 			resets = <&ccu RST_BUS_USB2>;
 			dr_mode = "host";
 			maximum-speed = "high-speed";
@@ -998,6 +1002,13 @@
 				allwinner,pinmux = <2>;
 				bias-pull-up;
 			};
+
+			r_i2c1_pins: r-i2c1-pins {
+				pins = "PL12", "PL13";
+				function = "s_twi1";
+				allwinner,pinmux = <3>;
+				bias-pull-up;
+			};
 		};
 
 		rtc: rtc@7090000 {
@@ -1015,6 +1026,20 @@
 			resets = <&r_ccu RST_BUS_R_I2C0>;
 			pinctrl-names = "default";
 			pinctrl-0 = <&r_i2c0_pins>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		r_i2c1: i2c@7084000 {
+			compatible = "allwinner,sun60i-a733-i2c",
+				     "allwinner,sun6i-a31-i2c";
+			reg = <0x07084000 0x400>;
+			interrupts = <GIC_SPI 204 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&r_ccu CLK_BUS_R_I2C1>;
+			resets = <&r_ccu RST_BUS_R_I2C1>;
+			pinctrl-names = "default";
+			pinctrl-0 = <&r_i2c1_pins>;
 			#address-cells = <1>;
 			#size-cells = <0>;
 			status = "disabled";

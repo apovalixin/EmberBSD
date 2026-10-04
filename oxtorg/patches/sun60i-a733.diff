@@ -787,7 +787,7 @@ which selects the same code silently.
  		return ENXIO;
 --- /dev/null
 +++ sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner/sun60i-a733-orangepi-zero4.dts
-@@ -0,0 +1,372 @@
+@@ -0,0 +1,390 @@
 +// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
 +/*
 + * Orange Pi Zero 4.
@@ -915,23 +915,41 @@ which selects the same code silently.
 +	status = "okay";
 +};
 +
-+/*
-+ * The power management chip. The vendor tree also lists an AXP515 at
-+ * 0x34; this board does not carry one.
-+ */
-+/*
-+ * The Type-C data port as a USB 2.0 host. Its power is on all the time:
-+ * the Type-C controller that tells what is plugged in has no driver.
-+ */
++/* The Type-C data port as a USB 2.0 host. */
 +&usb3_u2phy {
-+	vbus-supply = <&reg_usb3_vbus>;
 +	status = "okay";
++};
++
++/*
++ * The Type-C controller of the data port. It powers the port only while
++ * a device is plugged in. Its interrupt line (PL9) is not described: the
++ * pin controller has no interrupts, the driver polls.
++ */
++&r_i2c1 {
++	status = "okay";
++
++	typec@22 {
++		compatible = "fcs,fusb302";
++		reg = <0x22>;
++		vbus-supply = <&reg_usb3_vbus>;
++
++		connector {
++			compatible = "usb-c-connector";
++			label = "USB-C";
++			data-role = "host";
++			power-role = "source";
++		};
++	};
 +};
 +
 +&usb3 {
 +	status = "okay";
 +};
 +
++/*
++ * The power management chip. The vendor tree also lists an AXP515 at
++ * 0x34; this board does not carry one.
++ */
 +&r_i2c0 {
 +	status = "okay";
 +
@@ -1162,7 +1180,7 @@ which selects the same code silently.
 +};
 --- /dev/null
 +++ sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
-@@ -0,0 +1,1023 @@
+@@ -0,0 +1,1048 @@
 +// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
 +/*
 + * Allwinner A733 (sun60iw2).
@@ -2074,10 +2092,14 @@ which selects the same code silently.
 +			clocks = <&ccu CLK_USB2_MF>, <&ccu CLK_USB2_U2_REF>,
 +				 <&ccu CLK_USB2_SUSPEND>;
 +			clock-names = "bus_clk", "ref_clk", "suspend";
++			/*
++			 * The controller counts its frames from the
++			 * bus clock and expects 24 MHz there.
++			 */
 +			assigned-clocks = <&ccu CLK_USB2_SUSPEND>,
 +					  <&ccu CLK_USB2_MF>;
 +			assigned-clock-parents = <&ccu CLK_SYS_24M>,
-+						 <&ccu CLK_PLL_PERIPH0_300M>;
++						 <&ccu CLK_SYS_24M>;
 +			resets = <&ccu RST_BUS_USB2>;
 +			dr_mode = "host";
 +			maximum-speed = "high-speed";
@@ -2163,6 +2185,13 @@ which selects the same code silently.
 +				allwinner,pinmux = <2>;
 +				bias-pull-up;
 +			};
++
++			r_i2c1_pins: r-i2c1-pins {
++				pins = "PL12", "PL13";
++				function = "s_twi1";
++				allwinner,pinmux = <3>;
++				bias-pull-up;
++			};
 +		};
 +
 +		rtc: rtc@7090000 {
@@ -2180,6 +2209,20 @@ which selects the same code silently.
 +			resets = <&r_ccu RST_BUS_R_I2C0>;
 +			pinctrl-names = "default";
 +			pinctrl-0 = <&r_i2c0_pins>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			status = "disabled";
++		};
++
++		r_i2c1: i2c@7084000 {
++			compatible = "allwinner,sun60i-a733-i2c",
++				     "allwinner,sun6i-a31-i2c";
++			reg = <0x07084000 0x400>;
++			interrupts = <GIC_SPI 204 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&r_ccu CLK_BUS_R_I2C1>;
++			resets = <&r_ccu RST_BUS_R_I2C1>;
++			pinctrl-names = "default";
++			pinctrl-0 = <&r_i2c1_pins>;
 +			#address-cells = <1>;
 +			#size-cells = <0>;
 +			status = "disabled";
@@ -5611,3 +5654,103 @@ which selects the same code silently.
 +
 +CFATTACH_DECL_NEW(sun60i_a733_usb2phy, sizeof(struct a733_usb2phy_softc),
 +	a733_usb2phy_match, a733_usb2phy_attach, NULL, NULL);
+--- sys/dev/i2c/fusbtc.c
++++ sys/dev/i2c/fusbtc.c
+@@ -21,6 +21,7 @@
+ #include <sys/kernel.h>
+ #include <sys/device.h>
+ #include <sys/gpio.h>
++#include <sys/kthread.h>
+ 
+ #include <dev/i2c/i2cvar.h>
+ 
+@@ -195,6 +196,7 @@ struct fusbtc_softc {
+ 	i2c_addr_t		 sc_addr;
+ 	int			 sc_phandle;
+ 	void			*sc_ih;
++	bool			 sc_poll;	/* no interrupt line */
+ #if 0
+ 	struct task		 sc_task;
+ #endif
+@@ -216,6 +218,7 @@ struct fusbtc_softc {
+ 
+ int	 fusbtc_intr(void *);
+ void	 fusbtc_task(void *);
++static void fusbtc_poll(void *);
+ void	 fusbtc_toggle(struct fusbtc_softc *, int);
+ void	 fusbtc_toggle_change(struct fusbtc_softc *);
+ void	 fusbtc_power_change(struct fusbtc_softc *);
+@@ -299,8 +302,9 @@ fusbtc_attach(device_t parent, device_t self, void *aux)
+ 	sc->sc_ih = fdtbus_intr_establish_xname(sc->sc_phandle, 0, IPL_BIO, 0,
+ 	    fusbtc_intr, sc, device_xname(self));
+ 	if (sc->sc_ih == NULL) {
+-		aprint_error(": unable to establish interrupt\n");
+-		return;
++		/* The pin controller may not offer interrupts: poll. */
++		aprint_normal_dev(self, "no interrupt, polling\n");
++		sc->sc_poll = true;
+ 	}
+ 
+ 	fusbtc_write_reg(sc, FUSB_RESET, FUSB_RESET_SW);
+@@ -341,6 +345,21 @@ fusbtc_attach(device_t parent, device_t self, void *aux)
+ 	reg = fusbtc_read_reg(sc, FUSB_CONTROL2);
+ 	reg |= FUSB_CONTROL2_TOGGLE;
+ 	fusbtc_write_reg(sc, FUSB_CONTROL2, reg);
++
++	if (sc->sc_poll && kthread_create(PRI_NONE, 0, NULL, fusbtc_poll, sc,
++	    NULL, "%s", device_xname(self)) != 0)
++		aprint_error_dev(self, "unable to start the polling thread\n");
++}
++
++static void
++fusbtc_poll(void *args)
++{
++	struct fusbtc_softc *sc = args;
++
++	for (;;) {
++		fusbtc_intr(sc);
++		kpause("fusbtc", false, hz / 4, NULL);
++	}
+ }
+ 
+ int
+@@ -349,7 +368,8 @@ fusbtc_intr(void *args)
+ 	struct fusbtc_softc *sc = args;
+ 	uint8_t intr, intra, intrb;
+ 
+-	fdtbus_intr_mask(sc->sc_phandle, sc->sc_ih);
++	if (!sc->sc_poll)
++		fdtbus_intr_mask(sc->sc_phandle, sc->sc_ih);
+ 
+ 	intr = fusbtc_read_reg(sc, FUSB_INTERRUPT);
+ 	intra = fusbtc_read_reg(sc, FUSB_INTERRUPTA);
+@@ -360,7 +380,7 @@ fusbtc_intr(void *args)
+ 	if (intr & FUSB_INTERRUPT_VBUSOK)
+ 		fusbtc_power_change(sc);
+ 
+-	if (intra & FUSB_INTERRUPTA_TOGDONE)
++	if ((intra & FUSB_INTERRUPTA_TOGDONE) && !sc->sc_attached)
+ 		fusbtc_toggle_change(sc);
+ 
+ 	if (intr)
+@@ -382,7 +402,8 @@ fusbtc_intr(void *args)
+ 	task_add(systq, &sc->sc_task);
+ #endif
+ 
+-	fdtbus_intr_unmask(sc->sc_phandle, sc->sc_ih);
++	if (!sc->sc_poll)
++		fdtbus_intr_unmask(sc->sc_phandle, sc->sc_ih);
+ 
+ 	return 1;
+ }
+@@ -516,8 +537,8 @@ fusbtc_toggle_change(struct fusbtc_softc *sc)
+ 		fusbtc_set_vbus(sc, 0, 0);
+ 		sc->sc_attached = 1;
+ 	} else {
+-		panic("%s: unknown combination %x", device_xname(sc->sc_dev),
+-		   status);
++		/* Still toggling: nothing is attached yet. */
++		DPRINTF((sc->sc_dev, "toggle state %x\n", status));
+ 	}
+ }
+ 
