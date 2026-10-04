@@ -902,6 +902,27 @@
 			status = "disabled";
 		};
 
+		/*
+		 * The serdes behind the SuperSpeed lanes of the Type-C
+		 * port. Registers: the PHY's pins, the PHY itself, the
+		 * lane routing, the subsystem's gates, and the gate of
+		 * the oscillator's outputs in the real-time clock. The
+		 * compatible string is not an upstream binding.
+		 */
+		combophy: phy@6c01000 {
+			compatible = "allwinner,sun60i-a733-combophy";
+			reg = <0x06c01000 0xa00>, <0x06c80000 0x20000>,
+			      <0x06c06000 0x2000>, <0x06c00000 0x400>,
+			      <0x0709016c 0x4>;
+			clocks = <&ccu CLK_SERDES_PHY>;
+			assigned-clocks = <&ccu CLK_SERDES_PHY>;
+			assigned-clock-parents = <&ccu CLK_PLL_PERIPH0_600M>;
+			assigned-clock-rates = <100000000>;
+			resets = <&ccu RST_BUS_SERDES>;
+			#phy-cells = <0>;
+			status = "disabled";
+		};
+
 		usb3: usb@6a00000 {
 			compatible = "snps,dwc3";
 			reg = <0x06a00000 0x100000>;
@@ -919,13 +940,12 @@
 						 <&ccu CLK_SYS_24M>;
 			resets = <&ccu RST_BUS_USB2>;
 			dr_mode = "host";
-			maximum-speed = "high-speed";
 			phy_type = "utmi";
 			snps,dis_enblslpm_quirk;
 			snps,dis_u3_susphy_quirk;
 			snps,dis_u2_susphy_quirk;
-			phys = <&usb3_u2phy>;
-			phy-names = "usb2-phy";
+			phys = <&usb3_u2phy>, <&combophy>;
+			phy-names = "usb2-phy", "usb3-phy";
 			status = "disabled";
 		};
 

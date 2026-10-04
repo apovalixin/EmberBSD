@@ -73,6 +73,7 @@ __KERNEL_RCSID(1, "$NetBSD$");
 #define	USB2_BGR_REG		0x135c
 #define	USB2_U3_UTMI_CLK_REG	0x1360
 #define	USB2_U2_PIPE_CLK_REG	0x1364
+#define	SERDES_PHY_CLK_REG	0x13c0
 #define	SERDES_BGR_REG		0x13c4
 #define	GMAC0_PHY_CLK_REG	0x1410
 #define	GMAC0_BGR_REG		0x141c
@@ -143,6 +144,9 @@ static const char *ce_parents[] = {
 static const char *usb2_suspend_parents[] = { "losc", "sys-24M" };
 static const char *usb2_300M_parents[] = {
 	"sys-24M", "pll-periph0-300M", "hosc"
+};
+static const char *serdes_phy_parents[] = {
+	"sys-24M", "pll-periph0-600M"
 };
 static const char *usb2_480M_parents[] = {
 	"sys-24M", "pll-periph0-480M", "hosc"
@@ -326,6 +330,13 @@ static struct sunxi_ccu_clk sun60i_a733_ccu_clks[] = {
 	    0),
 	SUNXI_CCU_DIV_GATE(A733_CLK_USB2_U2_PIPE, "usb2-u2-pipe",
 	    usb2_480M_parents, USB2_U2_PIPE_CLK_REG,
+	    __BITS(4,0),		/* div */
+	    __BITS(26,24),		/* sel */
+	    __BIT(31),			/* enable */
+	    0),
+
+	SUNXI_CCU_DIV_GATE(A733_CLK_SERDES_PHY, "serdes-phy-cfg",
+	    serdes_phy_parents, SERDES_PHY_CLK_REG,
 	    __BITS(4,0),		/* div */
 	    __BITS(26,24),		/* sel */
 	    __BIT(31),			/* enable */

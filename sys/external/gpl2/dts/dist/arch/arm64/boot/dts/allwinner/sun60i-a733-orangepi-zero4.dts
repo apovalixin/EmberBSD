@@ -152,6 +152,10 @@
 	};
 };
 
+&combophy {
+	status = "okay";
+};
+
 &usb3 {
 	status = "okay";
 };
