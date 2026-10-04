@@ -107,8 +107,9 @@ ENTRY_NP(generic_bs_rm_1)
 2:
 	la	a0, 3f
 	tail	_C_LABEL(panic)
-3:
-	.asciz	"_bs_rm_1: count == 0"
+	.pushsection .rodata
+3:	.asciz	"_bs_rm_1: count == 0"
+	.popsection
 END(generic_bs_rm_1)
 
 
@@ -130,8 +131,9 @@ ENTRY_NP(generic_bs_rm_2)
 2:
 	la	a0, 3f
 	tail	_C_LABEL(panic)
-3:
-	.asciz	"_bs_rm_2: count == 0"
+	.pushsection .rodata
+3:	.asciz	"_bs_rm_2: count == 0"
+	.popsection
 END(generic_bs_rm_2)
 
 
@@ -153,8 +155,9 @@ ENTRY_NP(generic_bs_rm_4)
 2:
 	la	a0, 3f
 	tail	_C_LABEL(panic)
-3:
-	.asciz	"_bs_rm_4: count == 0"
+	.pushsection .rodata
+3:	.asciz	"_bs_rm_4: count == 0"
+	.popsection
 END(generic_bs_rm_4)
 
 
@@ -177,8 +180,9 @@ ENTRY_NP(generic_bs_rm_8)
 2:
 	la	a0, 3f
 	tail	_C_LABEL(panic)
-3:
-	.asciz	"_bs_rm_8: count == 0"
+	.pushsection .rodata
+3:	.asciz	"_bs_rm_8: count == 0"
+	.popsection
 END(generic_bs_rm_8)
 #endif
 
@@ -204,8 +208,9 @@ ENTRY_NP(generic_bs_rr_1)
 2:
 	la	a0, 3f
 	tail	_C_LABEL(panic)
-3:
-	.asciz	"_bs_rr_1: count == 0"
+	.pushsection .rodata
+3:	.asciz	"_bs_rr_1: count == 0"
+	.popsection
 END(generic_bs_rr_1)
 
 
@@ -234,8 +239,9 @@ ENTRY_NP(generic_bs_rr_2)
 2:
 	la	a0, 3f
 	tail	_C_LABEL(panic)
-3:
-	.asciz	"_bs_rr_2: count == 0"
+	.pushsection .rodata
+3:	.asciz	"_bs_rr_2: count == 0"
+	.popsection
 END(generic_bs_rr_2)
 
 
@@ -304,8 +310,9 @@ ENTRY_NP(generic_bs_wm_1)
 2:
 	la	a0, 3f
 	tail	_C_LABEL(panic)
-3:
-	.asciz	"_bs_wm_1: count == 0"
+	.pushsection .rodata
+3:	.asciz	"_bs_wm_1: count == 0"
+	.popsection
 END(generic_bs_wm_1)
 
 
@@ -327,8 +334,9 @@ ENTRY_NP(generic_bs_wm_2)
 2:
 	la	a0, 3f
 	tail	_C_LABEL(panic)
-3:
-	.asciz	"_bs_wm_2: count == 0"
+	.pushsection .rodata
+3:	.asciz	"_bs_wm_2: count == 0"
+	.popsection
 END(generic_bs_wm_2)
 
 
@@ -350,8 +358,9 @@ ENTRY_NP(generic_bs_wm_4)
 2:
 	la	a0, 3f
 	tail	_C_LABEL(panic)
-3:
-	.asciz	"_bs_wm_4: count == 0"
+	.pushsection .rodata
+3:	.asciz	"_bs_wm_4: count == 0"
+	.popsection
 END(generic_bs_wm_4)
 
 
@@ -374,8 +383,9 @@ ENTRY_NP(generic_bs_wm_8)
 2:
 	la	a0, 3f
 	tail	_C_LABEL(panic)
-3:
-	.asciz	"_bs_wm_8: count == 0"
+	.pushsection .rodata
+3:	.asciz	"_bs_wm_8: count == 0"
+	.popsection
 END(generic_bs_wm_8)
 #endif
 
