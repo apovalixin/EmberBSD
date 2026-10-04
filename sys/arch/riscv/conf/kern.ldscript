@@ -35,6 +35,12 @@ SECTIONS
 
 	PROVIDE(_etext = .);
 	PROVIDE(etext = .);
+	/*
+	 * The linker puts orphan read-only sections (link sets) before the
+	 * first assignment to dot, so this one keeps them below the symbol.
+	 */
+	. = ALIGN(__PAGE_SIZE);
+	PROVIDE(__rodata_end = .);
 	. = ALIGN(__LARGE_PAGE_SIZE);
 
 	.data :
@@ -72,6 +78,7 @@ SECTIONS
 		*(.sbss)
 		*(.sbss.*)
 		*(COMMON)
+		PROVIDE(__bss_used_end = .);
 		. = ALIGN(__LARGE_PAGE_SIZE);
 	}
 	_bss_end__ = . ;

@@ -564,13 +564,37 @@ cpu_kernel_vm_init(paddr_t memory_start, paddr_t memory_end)
 
 	vaddr_t kernstart = trunc_page((vaddr_t)__kernel_text);
 	vaddr_t kernend = round_page((vaddr_t)_end);
-	paddr_t kernstart_phys = KERN_VTOPHYS(kernstart);
-	paddr_t kernend_phys = KERN_VTOPHYS(kernend);
+	paddr_t kernstart_phys __unused = KERN_VTOPHYS(kernstart);
+	paddr_t kernend_phys __unused = KERN_VTOPHYS(kernend);
 
 	VPRINTF("%s: kernel phys start %#" PRIxPADDR " end %#" PRIxPADDR "\n",
 	    __func__, kernstart_phys, kernend_phys);
-	fdt_memory_remove_range(kernstart_phys,
-	    kernend_phys - kernstart_phys);
+
+	/*
+	 * The linker script aligns the text, the read-only data and the
+	 * end of the bss to large pages.  Keep only the pages the image
+	 * really uses; the padding between them goes to UVM, which reaches
+	 * it through the direct map.
+	 */
+	extern char _etext[], __rodata_start[], __rodata_end[];
+	extern char __data_start[], __bss_used_end[];
+	const struct {
+		const char *start, *end;
+	} used[] = {
+		{ __kernel_text, _etext },
+		{ __rodata_start, __rodata_end },
+		{ __data_start, __bss_used_end },
+	};
+	for (size_t i = 0; i < __arraycount(used); i++) {
+		const paddr_t spa =
+		    KERN_VTOPHYS(trunc_page((vaddr_t)used[i].start));
+		const paddr_t epa =
+		    KERN_VTOPHYS(round_page((vaddr_t)used[i].end));
+
+		VPRINTF("%s: kernel part %#" PRIxPADDR " - %#" PRIxPADDR "\n",
+		    __func__, spa, epa);
+		fdt_memory_remove_range(spa, epa - spa);
+	}
 
 #if 0
 	/*
