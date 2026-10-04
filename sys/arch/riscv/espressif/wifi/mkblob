@@ -27,7 +27,54 @@ $I/esp_phy/esp32s31/phy_init_data.c
 $I/esp_wifi/regulatory/esp_wifi_regulatory.c
 $EXTRA_SRCS
 "
+# The vendor's open WPA code, with its own ciphers and hashes: station,
+# pre-shared key.
+WP=$I/wpa_supplicant
+WPA_SRCS="
+$WP/esp_supplicant/src/esp_wpa_main.c
+$WP/esp_supplicant/src/esp_wpas_glue.c
+$WP/esp_supplicant/src/esp_common.c
+$WP/src/crypto/aes-cbc.c
+$WP/src/crypto/ccmp.c
+$WP/src/crypto/aes-ccm.c
+$WP/src/rsn_supp/wpa.c
+$WP/src/rsn_supp/wpa_ie.c
+$WP/src/rsn_supp/pmksa_cache.c
+$WP/src/common/wpa_common.c
+$WP/src/utils/common.c
+$WP/src/utils/wpabuf.c
+$WP/src/utils/wpa_debug.c
+$WP/port/eloop.c
+$WP/src/crypto/crypto_ops.c
+$WP/src/crypto/sha1-internal.c
+$WP/src/crypto/sha1.c
+$WP/src/crypto/sha1-pbkdf2.c
+$WP/src/crypto/sha1-prf.c
+$WP/src/crypto/md5-internal.c
+$WP/src/crypto/md5.c
+$WP/src/crypto/aes-internal.c
+$WP/src/crypto/aes-internal-dec.c
+$WP/src/crypto/aes-internal-enc.c
+$WP/src/crypto/aes-unwrap.c
+$WP/src/crypto/aes-wrap.c
+$WP/src/crypto/rc4.c
+$WP/src/crypto/sha256-internal.c
+$WP/src/crypto/sha256.c
+$WP/src/crypto/sha256-prf.c
+$WP/src/crypto/aes-omac1.c
+"
+WPA_FLAGS="-D__ets__ -DESP_PLATFORM -DESP_SUPPLICANT -DIEEE8021X_EAPOL
+    -DESPRESSIF_USE -DCONFIG_IEEE80211W -DCONFIG_SHA256 -DCONFIG_NO_RADIUS
+    -DCONFIG_INTERNAL_SHA256 -DCONFIG_CRYPTO_INTERNAL -isystem $V/dest/usr/include/gcc-12
+    -I$WP/include -I$WP/src -I$WP/src/utils -I$WP/port/include
+    -I$WP/esp_supplicant/include -I$WP/esp_supplicant/src
+    -I$WP/esp_supplicant/src/crypto"
 OBJS=
+for s in $WPA_SRCS; do
+	o=$O/wpa_$(basename $s .c).o
+	$W/idfcc $s $o $WPA_FLAGS
+	OBJS="$OBJS $o"
+done
 for s in $SRCS; do
 	o=$O/$(basename $s .c).o
 	case $s in

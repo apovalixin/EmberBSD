@@ -141,8 +141,6 @@ static TAILQ_HEAD(, espwifi_timer) espwifi_fired =
     TAILQ_HEAD_INITIALIZER(espwifi_fired);
 static kcondvar_t espwifi_timer_cv;
 static u_int espwifi_nintr;
-static u_int espwifi_nsrc[8];
-static struct espwifi_intr *espwifi_poll_intr;
 
 /*
  * Sleep on a condition, at most `ticks` of the radio's clock.  The F
@@ -823,8 +821,6 @@ espwifi_intr(void *v)
 	(*i->i_func)(i->i_arg);
 	espwifi_fp_restore(&fp);
 	espwifi_nintr++;
-	if (i->i_src < 128)
-		espwifi_nsrc[i->i_src & 7]++;
 	return 1;
 }
 
@@ -838,7 +834,6 @@ espwifi_os_intr_establish(unsigned int src, void (*func)(void *), void *arg)
 	i->i_func = func;
 	i->i_arg = arg;
 	i->i_src = src;
-	espwifi_poll_intr = i;
 	if (espintmtx_establish_source(src, IPL_NET, espwifi_intr, i,
 	    "espwifi") == NULL)
 		panic("espwifi: cannot take interrupt source %u", src);
@@ -911,23 +906,6 @@ espwifi_os_link(int up)
 }
 
 #ifdef ESPWIFI_WATCH
-static u_int espwifi_npoll;
-
-/* Bring-up aid: run the handler of the radio without its interrupt. */
-static void
-espwifi_poll(void *v)
-{
-	struct espwifi_intr * const i = espwifi_poll_intr;
-
-	if (i != NULL) {
-		const int s = splnet();
-
-		(*i->i_func)(i->i_arg);
-		splx(s);
-		espwifi_npoll++;
-	}
-}
-
 /* Bring-up aid: where does a radio thread spin? */
 void espwifi_watch(vaddr_t);
 
@@ -936,10 +914,8 @@ espwifi_watch(vaddr_t pc)
 {
 	static u_int n;
 
-	if (++n % 1000 == 0)
-		printf("espwifi: %u interrupts (mac %u, pwr %u), %u polls\n",
-		    espwifi_nintr, espwifi_nsrc[0], espwifi_nsrc[2],
-		    espwifi_npoll);
+	if (++n % 6000 == 0)
+		printf("espwifi: %u interrupts\n", espwifi_nintr);
 }
 #endif
 
@@ -956,13 +932,8 @@ espwifi_main(void *v)
 	espwifi_get_mac(mac);
 	printf("espwifi: address %02x:%02x:%02x:%02x:%02x:%02x\n",
 	    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-	if (espwifi_start() == 0) {
-#ifdef ESPWIFI_WATCH
-		espwifi_os_timer_arm(espwifi_os_timer_create(espwifi_poll,
-		    NULL), 10000, 1);
-#endif
+	if (espwifi_start() == 0)
 		espwifi_scan();
-	}
 	for (;;)
 		espwifi_os_task_delay(ESPWIFI_WAIT_FOREVER / 100);
 }

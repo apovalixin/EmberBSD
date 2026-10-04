@@ -65,6 +65,9 @@
 #include "hal/pmu_types.h"
 #include "hal/regi2c_ctrl_ll.h"
 #include "esp_rom_sys.h"
+#include "esp_private/regi2c_ctrl.h"
+#include "soc/regi2c_bias.h"
+#include "soc/regi2c_dig_reg.h"
 #include "soc/pmu_reg.h"
 #include "soc/hp_alive_sys_reg.h"
 #include "soc/hp_sys_clkrst_reg.h"
@@ -148,6 +151,75 @@ __assert_func(const char *file, int line, const char *func, const char *expr)
 		continue;
 }
 
+void *realloc(void *, size_t);
+
+void *
+realloc(void *p, size_t n)
+{
+	return espwifi_os_realloc(p, n);
+}
+
+void vTaskDelay(uint32_t);
+
+void
+vTaskDelay(uint32_t ticks)
+{
+	espwifi_os_task_delay(ticks);
+}
+
+/* One processor: a critical section makes the exchange atomic. */
+bool __atomic_compare_exchange_1(volatile void *, void *, uint8_t, bool,
+    int, int);
+
+bool
+__atomic_compare_exchange_1(volatile void *ptr, void *expected,
+    uint8_t desired, bool weak, int success, int failure)
+{
+	volatile uint8_t *p = ptr;
+	uint8_t *e = expected;
+	bool ok;
+
+	espwifi_os_critical_enter();
+	ok = *p == *e;
+	if (ok)
+		*p = desired;
+	else
+		*e = *p;
+	espwifi_os_critical_exit(0);
+	return ok;
+}
+
+/* Calendar time is not needed by the pre-shared key exchange. */
+void *__gmtime50(const void *);
+long long __mktime50(void *);
+
+void *
+__gmtime50(const void *t)
+{
+	return NULL;
+}
+
+long long
+__mktime50(void *tm)
+{
+	return -1;
+}
+
+/* Access point and WPS code is not built. */
+void wpa_receive(void *, void *, uint8_t *, size_t);
+void *wps_get_wps_sm_cb(void);
+
+void
+wpa_receive(void *auth, void *sm, uint8_t *data, size_t len)
+{
+}
+
+void *
+wps_get_wps_sm_cb(void)
+{
+	return NULL;
+}
+
 void __assert13(const char *, int, const char *, const char *);
 
 void
@@ -204,32 +276,6 @@ strtok(char *s, const char *delim)
 		next = NULL;
 	}
 	return start;
-}
-
-int hexstr2bin(const char *, uint8_t *, size_t);
-
-int
-hexstr2bin(const char *hex, uint8_t *buf, size_t len)
-{
-	for (size_t i = 0; i < len; i++) {
-		int v = 0;
-
-		for (int k = 0; k < 2; k++) {
-			const char c = hex[2 * i + k];
-
-			v <<= 4;
-			if (c >= '0' && c <= '9')
-				v |= c - '0';
-			else if (c >= 'a' && c <= 'f')
-				v |= c - 'a' + 10;
-			else if (c >= 'A' && c <= 'F')
-				v |= c - 'A' + 10;
-			else
-				return -1;
-		}
-		buf[i] = (uint8_t)v;
-	}
-	return 0;
 }
 
 /*
@@ -455,6 +501,43 @@ static void
 timer_arm_wrapper(void *ptimer, uint32_t ms, bool repeat)
 {
 	timer_arm_us_wrapper(ptimer, ms * 1000, repeat);
+}
+
+/* Timers under the names the vendor's WPA code uses. */
+void ets_timer_setfn(ETSTimer *, ETSTimerFunc *, void *);
+void ets_timer_arm(ETSTimer *, uint32_t, bool);
+void ets_timer_arm_us(ETSTimer *, uint32_t, bool);
+void ets_timer_disarm(ETSTimer *);
+void ets_timer_done(ETSTimer *);
+
+void
+ets_timer_setfn(ETSTimer *t, ETSTimerFunc *func, void *arg)
+{
+	timer_setfn_wrapper(t, func, arg);
+}
+
+void
+ets_timer_arm(ETSTimer *t, uint32_t ms, bool repeat)
+{
+	timer_arm_wrapper(t, ms, repeat);
+}
+
+void
+ets_timer_arm_us(ETSTimer *t, uint32_t us, bool repeat)
+{
+	timer_arm_us_wrapper(t, us, repeat);
+}
+
+void
+ets_timer_disarm(ETSTimer *t)
+{
+	timer_disarm_wrapper(t);
+}
+
+void
+ets_timer_done(ETSTimer *t)
+{
+	timer_done_wrapper(t);
 }
 
 struct newlib_timeval {
@@ -764,6 +847,58 @@ get_free_heap_size_wrapper(void)
 	return espwifi_os_free_heap();
 }
 
+/* What the vendor's WPA code asks of an operating system. */
+struct os_time {
+	uint64_t sec;
+	int32_t	usec;
+};
+
+int os_get_time(struct os_time *);
+unsigned long os_random(void);
+int os_get_random(unsigned char *, size_t);
+void os_sleep(uint64_t, uint64_t);
+void forced_memzero(void *, size_t);
+
+int
+os_get_time(struct os_time *t)
+{
+	const int64_t us = espwifi_os_time_us();
+
+	t->sec = (uint64_t)(us / 1000000);
+	t->usec = (int32_t)(us % 1000000);
+	return 0;
+}
+
+unsigned long
+os_random(void)
+{
+	return espwifi_os_random();
+}
+
+int
+os_get_random(unsigned char *buf, size_t len)
+{
+	for (size_t i = 0; i < len; i++)
+		buf[i] = (unsigned char)espwifi_os_random();
+	return 0;
+}
+
+void
+os_sleep(uint64_t sec, uint64_t usec)
+{
+	espwifi_os_task_delay((unsigned)(sec * 1000 + usec / 1000) /
+	    ESPWIFI_TICK_MS);
+}
+
+void
+forced_memzero(void *p, size_t len)
+{
+	volatile unsigned char *v = p;
+
+	while (len-- > 0)
+		*v++ = 0;
+}
+
 /*
  * Storage: none.  The libraries are told so at start and fall back to
  * their defaults.
@@ -855,6 +990,18 @@ espwifi_get_mac(unsigned char *mac)
 static int
 coex_zero(void)
 {
+	return 0;
+}
+
+static int
+coex_pti_get_wrapper(uint32_t event, uint8_t *pti)
+{
+	/*
+	 * The libraries pass an unset byte and use it whatever comes back.
+	 * Give Wi-Fi the top priority in the radio arbiter: it is alone.
+	 */
+	if (pti != NULL)
+		*pti = 0xef;
 	return 0;
 }
 
@@ -994,8 +1141,6 @@ MESH_STUB(mesh_set_rssi_threshold)
 MESH_STUB(mt_get_peer_info)
 void *g_mt;
 
-static void dump_state(const char *);
-
 static bool phy_calibrated;
 
 void
@@ -1015,15 +1160,12 @@ esp_phy_enable(esp_phy_modem_t modem)
 				espwifi_os_panic("no memory for calibration");
 			espwifi_os_log("espwifi: phy %s\n",
 			    get_phy_version_str());
-			phy_init_param_set(1);
 			efuse_mac(cal->mac);
 			const int rc = register_chipv7_phy(&phy_init_data,
 			    cal, PHY_RF_CAL_FULL);
-			espwifi_os_log("espwifi: phy calibrated, %d:", rc);
-			for (unsigned k = 0; k < 64; k++)
-				espwifi_os_log(" %02x",
-				    ((const uint8_t *)cal)[k]);
-			espwifi_os_log("\n");
+			if (rc != 0)
+				espwifi_os_log("espwifi: calibration: %d\n",
+				    rc);
 			free(cal);
 			phy_calibrated = true;
 		} else {
@@ -1242,7 +1384,7 @@ wifi_osi_funcs_t g_wifi_osi_funcs = {
 	._coex_wifi_release = (void *)coex_zero,
 	._coex_wifi_channel_set = (void *)coex_zero,
 	._coex_event_duration_get = (void *)coex_zero,
-	._coex_pti_get = (void *)coex_zero,
+	._coex_pti_get = coex_pti_get_wrapper,
 	._coex_schm_status_bit_clear = (void *)empty_wrapper,
 	._coex_schm_status_bit_set = (void *)empty_wrapper,
 	._coex_schm_interval_set = (void *)coex_zero,
@@ -1268,11 +1410,9 @@ wifi_osi_funcs_t g_wifi_osi_funcs = {
 	._magic = ESP_WIFI_OS_ADAPTER_MAGIC,
 };
 
-/* No key exchange yet: open networks and scanning only. */
-const wpa_crypto_funcs_t g_wifi_default_wpa_crypto_funcs = {
-	.size = sizeof(wpa_crypto_funcs_t),
-	.version = ESP_WIFI_CRYPTO_VERSION,
-};
+/* The table of ciphers and hashes comes with the vendor's WPA code. */
+extern const wpa_crypto_funcs_t g_wifi_default_wpa_crypto_funcs;
+int esp_supplicant_init(void);
 
 /* Names the libraries want and this configuration leaves empty. */
 uint8_t g_espnow_user_oui[3];
@@ -1292,30 +1432,11 @@ rx_frame(void *buffer, uint16_t len, void *eb)
 
 void espwifi_trace(const char *);
 
+/* The target of mkblob's TRACE option. */
 void
 espwifi_trace(const char *name)
 {
 	espwifi_os_log("espwifi: -> %s\n", name);
-}
-
-static void
-dump_state(const char *when)
-{
-	espwifi_os_log("espwifi: %s: pmu dig %#x icg %#x ck %#x imm1 %#x "
-	    "pd-pwr %#x pd-top %#x\n", when,
-	    (unsigned)REG_READ(PMU_HP_ACTIVE_DIG_POWER_REG),
-	    (unsigned)REG_READ(PMU_HP_ACTIVE_ICG_MODEM_REG),
-	    (unsigned)REG_READ(PMU_HP_ACTIVE_HP_CK_POWER_REG),
-	    (unsigned)REG_READ(PMU_IMM_HP_CK_POWER_1_REG),
-	    (unsigned)REG_READ(PMU_POWER_PD_MODEM_PWR_CNTL_REG),
-	    (unsigned)REG_READ(PMU_POWER_PD_MODEM_TOP_CNTL_REG));
-	espwifi_os_log("espwifi: %s: hp-clk %#x ref160 %#x syscon %#x/%#x "
-	    "lpcon %#x\n", when,
-	    (unsigned)REG_READ(HP_ALIVE_SYS_HP_CLK_CTRL_REG),
-	    (unsigned)REG_READ(HP_SYS_CLKRST_REF_160M_CTRL0_REG),
-	    (unsigned)REG_READ(MODEM_SYSCON_CLK_CONF_REG),
-	    (unsigned)REG_READ(MODEM_SYSCON_CLK_CONF1_REG),
-	    (unsigned)REG_READ(MODEM_LPCON_CLK_CONF_REG));
 }
 
 int
@@ -1333,6 +1454,7 @@ espwifi_start(void)
 	pmu_ll_hp_set_icg_modem(&PMU, PMU_MODE_HP_ACTIVE,
 	    PMU_HP_ICG_MODEM_CODE_ACTIVE);
 	pmu_ll_imm_update_dig_icg_modem_code(&PMU, true);
+	pmu_ll_imm_update_dig_icg_switch(&PMU, true);
 
 	/*
 	 * The ROM times its delays by the cycle counter and still believes
@@ -1347,8 +1469,6 @@ espwifi_start(void)
 			continue;
 		__asm__ volatile("rdcycle %0" : "=r"(c1));
 		esp_rom_set_cpu_ticks_per_us((c1 - c0 + 2000) / 4000);
-		espwifi_os_log("espwifi: %u cycles per microsecond\n",
-		    (unsigned)esp_rom_get_cpu_ticks_per_us());
 	}
 
 	/*
@@ -1357,9 +1477,14 @@ espwifi_start(void)
 	 */
 	REG_SET_BIT(PMU_HP_ACTIVE_BIAS_REG, PMU_HP_ACTIVE_XPD_BIAS);
 
+	/*
+	 * The vendor's boot loader trims the 1.1 V reference of the analog
+	 * part; the boot loaders of this board do not.
+	 */
+	REGI2C_WRITE_MASK(I2C_BIAS, I2C_BIAS_DREG_1P1, 12);
+	REGI2C_WRITE_MASK(I2C_BIAS, I2C_BIAS_DREG_1P1_PVT, 12);
+
 	/* Power the analog register bus, as the vendor's startup does. */
-	espwifi_os_log("espwifi: analog power control %#x\n",
-	    (unsigned)REG_READ(PMU_ANA_PERI_PWR_CTRL_REG));
 	regi2c_ctrl_ll_i2c_sar_periph_enable();
 
 	/*
@@ -1375,9 +1500,15 @@ espwifi_start(void)
 	modem_clock_select_lp_clock_source(PERIPH_WIFI_MODULE,
 	    MODEM_CLOCK_LPCLK_SRC_RC_SLOW, 0);
 
+	esp_wifi_internal_set_log_level(WIFI_LOG_WARNING);
 	error = esp_wifi_init_internal(&cfg);
 	if (error != ESP_OK) {
 		espwifi_os_log("espwifi: init: error %#x\n", error);
+		return error;
+	}
+	error = esp_supplicant_init();
+	if (error != ESP_OK) {
+		espwifi_os_log("espwifi: supplicant: error %#x\n", error);
 		return error;
 	}
 	error = esp_wifi_set_mode(WIFI_MODE_STA);
@@ -1392,18 +1523,6 @@ espwifi_start(void)
 	}
 	esp_wifi_internal_reg_rxcb(WIFI_IF_STA, rx_frame);
 	return 0;
-}
-
-static volatile unsigned sniffed;
-static int sniff_rssi;
-
-static void
-sniff(void *buf, wifi_promiscuous_pkt_type_t type)
-{
-	const wifi_promiscuous_pkt_t *p = buf;
-
-	sniffed++;
-	sniff_rssi = p->rx_ctrl.rssi;
 }
 
 int
@@ -1427,23 +1546,6 @@ espwifi_scan(void)
 		espwifi_os_log("espwifi: scan results: error %#x\n", error);
 		return error;
 	}
-	esp_wifi_set_promiscuous_rx_cb(sniff);
-	esp_wifi_set_promiscuous(true);
-	for (int ch = 1; ch <= 11; ch += 5) {
-		esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
-		sniffed = 0;
-		espwifi_os_task_delay(100);
-		espwifi_os_log("espwifi: channel %d: %u frames, last rssi %d\n",
-		    ch, sniffed, sniff_rssi);
-	}
-	esp_wifi_set_promiscuous(false);
-	for (unsigned r = 0x18; r <= 0x3c; r += 4)
-		espwifi_os_log(" pmu+%#x %#x", r,
-		    (unsigned)REG_READ(DR_REG_PMU_BASE + r));
-	espwifi_os_log(" rf %#x ldo %#x ana %#x\n",
-	    (unsigned)REG_READ(PMU_RF_PWC_REG),
-	    (unsigned)REG_READ(PMU_EXT_LDO_CTRL_REG),
-	    (unsigned)REG_READ(PMU_ANA_PERI_PWR_CTRL_REG));
 	espwifi_os_log("espwifi: %u networks, %lu bytes of internal RAM free\n",
 	    n, espwifi_os_free_heap());
 	for (unsigned i = 0; i < n; i++) {
@@ -1454,10 +1556,41 @@ espwifi_scan(void)
 	return n;
 }
 
+esp_err_t
+esp_wifi_connect(void)
+{
+	return esp_wifi_connect_internal();
+}
+
+esp_err_t
+esp_wifi_disconnect(void)
+{
+	return esp_wifi_disconnect_internal();
+}
+
 int
 espwifi_connect(const char *ssid, const char *psk)
 {
-	return -1;
+	static wifi_config_t cfg;
+	esp_err_t error;
+
+	memset(&cfg, 0, sizeof(cfg));
+	strlcpy((char *)cfg.sta.ssid, ssid, sizeof(cfg.sta.ssid));
+	if (psk != NULL && psk[0] != '\0') {
+		strlcpy((char *)cfg.sta.password, psk,
+		    sizeof(cfg.sta.password));
+		cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+	}
+	error = esp_wifi_set_config(WIFI_IF_STA, &cfg);
+	if (error == ESP_OK)
+		error = esp_wifi_connect_internal();
+	if (error != ESP_OK) {
+		espwifi_os_log("espwifi: connect: error %#x\n", error);
+		return error;
+	}
+	if (!espwifi_os_sem_take(link_change, 2000) || !link_up)
+		return -1;
+	return 0;
 }
 
 int
