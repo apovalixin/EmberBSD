@@ -53,6 +53,11 @@ sbitty* 	at fdt?			# firmware console
 options 	RISCV_CLIC
 espintmtx* 	at fdt? pass 2
 espsystimer* 	at fdt?
+awge* 		at fdt?			# ESP32-S31 Ethernet
+# Each receive slot holds a 2 KiB cluster: 256 of them would take 512 KiB.
+makeoptions 	CPPFLAGS+="-DAWGE_RX_RING_COUNT=32 -DAWGE_TX_RING_COUNT=32"
+mcommphy* 	at mii? phy ?		# Motorcomm YT8531
+ukphy* 		at mii? phy ?
 
 # QEMU virt
 gfrtc* 		at fdt?

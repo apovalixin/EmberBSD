@@ -35,8 +35,13 @@
  * around 512k Byte of RAM for mbuf clusters.
  * XXX Maybe fine-tune later, or reconsider unsharing of RX/TX dmamap.
  */
+/* Powers of two.  A small machine can build with shorter rings. */
+#ifndef AWGE_RX_RING_COUNT
 #define		AWGE_RX_RING_COUNT	256
+#endif
+#ifndef AWGE_TX_RING_COUNT
 #define		AWGE_TX_RING_COUNT	256
+#endif
 #define		AWGE_TOTAL_RING_COUNT	\
 			(AWGE_RX_RING_COUNT + AWGE_TX_RING_COUNT)
 

@@ -45,6 +45,7 @@ __RCSID("$NetBSD$");
 #include <uvm/uvm.h>
 #include <uvm/pmap/pmap_devmap.h>
 
+#include <machine/cpufunc.h>
 #include <machine/sbi.h>
 
 #include <riscv/fdt/riscv_fdtvar.h>
@@ -52,6 +53,9 @@ __RCSID("$NetBSD$");
 #define	SBI_EID_VENDOR_START	0x09000000
 #define	SBI_EID_VENDOR_MASK	0x00ffffff
 
+#define	S31_SBI_CACHE_WBACK		0
+#define	S31_SBI_CACHE_INVAL		1
+#define	S31_SBI_CACHE_WBACK_INVAL	2
 #define	S31_SBI_ICACHE_SYNC		3
 #define	S31_SBI_ICACHE_SYNC_RANGE	4
 
@@ -67,6 +71,30 @@ esp32s31_icache_sync(struct vm_page_md *mdpg)
 	/* The firmware takes the address in the PSRAM window: the physical one. */
 	const paddr_t pa = VM_PAGE_TO_PHYS(VM_MD_TO_PAGE(mdpg));
 	SBI_CALL2(esp32s31_sbi_eid, S31_SBI_ICACHE_SYNC_RANGE, pa, PAGE_SIZE);
+}
+
+/*
+ * The data cache in front of PSRAM is not coherent with bus masters such
+ * as the Ethernet controller, and only the firmware can maintain it.
+ * bus_dma reaches these through the outer-cache hooks, which carry the
+ * physical address the firmware wants.
+ */
+static void
+esp32s31_dcache_wbinv(vaddr_t va, paddr_t pa, psize_t len)
+{
+	SBI_CALL2(esp32s31_sbi_eid, S31_SBI_CACHE_WBACK_INVAL, pa, len);
+}
+
+static void
+esp32s31_dcache_inv(vaddr_t va, paddr_t pa, psize_t len)
+{
+	SBI_CALL2(esp32s31_sbi_eid, S31_SBI_CACHE_INVAL, pa, len);
+}
+
+static void
+esp32s31_dcache_wb(vaddr_t va, paddr_t pa, psize_t len)
+{
+	SBI_CALL2(esp32s31_sbi_eid, S31_SBI_CACHE_WBACK, pa, len);
 }
 
 static const struct pmap_devmap *
@@ -87,6 +115,9 @@ esp32s31_platform_bootstrap(void)
 	esp32s31_sbi_eid = SBI_EID_VENDOR_START +
 	    (sbi_get_mvendorid().value & SBI_EID_VENDOR_MASK);
 	riscv_icache_sync = esp32s31_icache_sync;
+	cpu_sdcache_wbinv_range = esp32s31_dcache_wbinv;
+	cpu_sdcache_inv_range = esp32s31_dcache_inv;
+	cpu_sdcache_wb_range = esp32s31_dcache_wb;
 }
 
 static u_int
