@@ -161,6 +161,7 @@
     "bwfm-sdio-intstatus.diff",
     "bwfm-sdio-report.diff",
     "bwfm-sdio-txctl.diff",
+    "bwfm-wnm.diff",
     "cemac-acpi.diff",
     "cemac-rp1.diff",
     "cm5-kernel-entry-trace.diff",
