@@ -11,9 +11,11 @@ include	"arch/riscv/conf/files.generic"
 maxusers 	2
 
 options 	FDT
-options 	FPE		# Floating-point extension support
 
-makeoptions 	COPTS="-Os -fno-unwind-tables -fno-asynchronous-unwind-tables"
+# The chip has F but no D; the kernel keeps no FPU state and is built
+# without floating-point instructions.  User programs are soft-float.
+makeoptions 	COPTS="-Os -fno-unwind-tables -fno-asynchronous-unwind-tables -march=rv32imac_zicsr_zifencei -mabi=ilp32"
+makeoptions 	AOPTS="-march=rv32imac_zicsr_zifencei -mabi=ilp32"
 
 no options 	AIO
 no options 	MQUEUE
@@ -29,7 +31,7 @@ options 	BUFCACHE=5	# percent of RAM for file system metadata
 options 	PIPE_SOCKETPAIR	# smaller, but slower pipe(2)
 
 file-system 	FFS
-file-system 	MFS
+file-system 	TMPFS		# work files of the agent
 options 	FFS_NO_SNAPSHOT
 
 options 	INET		# IP + ICMP + TCP + UDP
