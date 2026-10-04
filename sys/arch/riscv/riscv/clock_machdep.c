@@ -29,6 +29,8 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include "opt_riscv_clic.h"
+
 #include <sys/cdefs.h>
 
 __RCSID("$NetBSD: clock_machdep.c,v 1.9.2.1 2026/02/02 20:02:04 martin Exp $");
@@ -155,9 +157,26 @@ setstatclockrate(int newhz)
 {
 }
 
+/* A platform timer driver takes over delay() once it can count. */
+void (*riscv_delay_hook)(unsigned long);
+
 void
 delay(unsigned long us)
 {
+	if (riscv_delay_hook != NULL) {
+		(*riscv_delay_hook)(us);
+		return;
+	}
+#ifdef RISCV_CLIC
+	/*
+	 * The firmware of a CLIC machine has no timer device, so the time
+	 * CSR does not advance.  Spin on a rough estimate until the timer
+	 * driver attaches.
+	 */
+	for (volatile unsigned long n = us * 64; n != 0; n--)
+		continue;
+	return;
+#endif
 	const uint64_t ticks = (uint64_t)us * timer_ticks_per_usec;
 	const uint64_t finish = csr_time_read() + ticks;
 

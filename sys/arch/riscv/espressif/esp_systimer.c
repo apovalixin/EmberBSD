@@ -108,6 +108,17 @@ espsystimer_count(struct espsystimer_softc *sc)
 }
 
 static void
+espsystimer_delay(unsigned long us)
+{
+	struct espsystimer_softc * const sc = espsystimer_sc;
+	const uint64_t finish = espsystimer_count(sc) +
+	    (uint64_t)us * (sc->sc_freq / 1000000);
+
+	while (espsystimer_count(sc) < finish)
+		continue;
+}
+
+static void
 espsystimer_arm(struct espsystimer_softc *sc, uint64_t target)
 {
 	WR4(sc, ST_CONF, RD4(sc, ST_CONF) & ~ST_CONF_TARGET0_WORK_EN);
@@ -202,6 +213,7 @@ espsystimer_attach(device_t parent, device_t self, void *aux)
 		return;
 	}
 	espsystimer_sc = sc;
+	riscv_delay_hook = espsystimer_delay;
 	if (fdtbus_intr_establish_xname(phandle, 0, IPL_SCHED,
 	    FDT_INTR_MPSAFE, espsystimer_intr, NULL,
 	    device_xname(self)) == NULL) {
