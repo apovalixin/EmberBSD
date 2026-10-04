@@ -4,6 +4,5 @@ SRCS+=		__sigtramp2.S
 
 CPPFLAGS+=	-I.
 
-.if ${MKSOFTFLOAT} != "no"
-.include <softfloat/Makefile.inc>
-.endif
+# Without F and D the arithmetic comes from libgcc; there is no floating
+# point environment to keep.

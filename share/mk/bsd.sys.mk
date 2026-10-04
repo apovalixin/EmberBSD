@@ -207,7 +207,10 @@ COPTS+=	${${ACTIVE_CC} == "gcc":? --param ssp-buffer-size=1 :}
 
 .if ${MKSOFTFLOAT:Uno} != "no"
 # sh3 defaults to soft-float and specifies hard-float a different way
-.if ${MACHINE_CPU} != "sh3"
+.if ${MACHINE_ARCH} == "riscv32"
+# RISC-V names the ABI instead: no F or D registers in calls or in code.
+CPUFLAGS+=	-march=rv32imac_zicsr -mabi=ilp32
+.elif ${MACHINE_CPU} != "sh3"
 COPTS+=		${${ACTIVE_CC} == "gcc":? -msoft-float :}
 FOPTS+=		-msoft-float
 .endif

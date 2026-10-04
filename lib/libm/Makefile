@@ -218,11 +218,11 @@ WARNS?=5
 EXPSYM_SRCS=	m.common.expsym m.vax.expsym
 
 .elif (${LIBC_MACHINE_CPU} == "riscv")
-.PATH:	${.CURDIR}/arch/riscv
 
 COMMON_SRCS+= s_nexttoward.c s_rintl.c
 
 .if ${MKSOFTFLOAT} == "no"
+.PATH:	${.CURDIR}/arch/riscv
 COMMON_SRCS += fenv.c
 ARCH_SRCS = e_sqrt.S e_sqrtf.S
 ARCH_SRCS += s_copysign.S s_copysignf.S
@@ -297,7 +297,7 @@ COPTS+=	-fno-strict-aliasing
 .endif
 CPPFLAGS+=-DLIBM_SCCS
 
-.if (${MKSOFTFLOAT} != "no" || ${MACHINE_ARCH} == "m68000")
+.if ((${MKSOFTFLOAT} != "no" && ${LIBC_MACHINE_CPU} != "riscv") || ${MACHINE_ARCH} == "m68000")
 .PATH:	${.CURDIR}/softfloat
 .include "${.CURDIR}/../libc/libcincludes.mk"
 CPPFLAGS+=	-I${ARCHDIR}/softfloat
