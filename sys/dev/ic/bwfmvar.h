@@ -183,6 +183,7 @@ enum bwfm_task_cmd {
 	BWFM_TASK_KEY_SET,
 	BWFM_TASK_KEY_DELETE,
 	BWFM_TASK_RX_EVENT,
+	BWFM_TASK_REPORT,
 };
 
 struct bwfm_cmd_newstate {
@@ -264,6 +265,7 @@ int bwfm_chip_sr_capable(struct bwfm_softc *);
 struct bwfm_core *bwfm_chip_get_core(struct bwfm_softc *, int);
 struct bwfm_core *bwfm_chip_get_pmu(struct bwfm_softc *);
 void bwfm_rx(struct bwfm_softc *, struct mbuf *m);
+void bwfm_report(struct bwfm_softc *);
 
 void	bwfm_firmware_context_init(struct bwfm_firmware_context *,
 	    uint32_t, uint32_t, const char *, uint32_t);

@@ -27,6 +27,15 @@ their provenance and support future porting; do not apply them again.
 | ELM327 | Testing with a physical adapter is still pending |
 | BLE | Not implemented in the added Bluetooth management tools |
 
+The `bwfm` driver leaves roaming and WPA authentication to the host.
+It disables firmware WNM transitions as well as autonomous roaming:
+CYW43455 firmware 7.45.265 can otherwise select SAE after a band-steering
+request in a mixed WPA2/WPA3 network while the host still holds WPA2 keys.
+This does not add WPA3 or 802.11v support. An access point may disconnect
+a station, after which NetBSD scans and joins again. The on-demand
+`hw.bwfm0.report` diagnostic includes radio authentication and station
+counters to distinguish this failure from an SDIO transmit-window stall.
+
 ## Building
 
 The native build environment is NetBSD 11/aarch64 with gcc, config, dtc,
