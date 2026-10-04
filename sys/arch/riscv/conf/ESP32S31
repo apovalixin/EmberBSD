@@ -65,6 +65,7 @@ viornd* 	at virtio?
 # The root file system is read in place from the flash window: the boot
 # loader names its range as an initrd.
 pseudo-device 	md
+pseudo-device 	bpfilter	# the DHCP client of boardinit sends raw frames
 options 	MEMORY_DISK_HOOKS
 options 	MEMORY_DISK_DYNAMIC
 
