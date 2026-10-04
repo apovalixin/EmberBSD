@@ -81,6 +81,7 @@ void	espwifi_os_link(int);
 /* Entry points of the radio code; the caller is a thread made for it. */
 int	espwifi_start(void);
 int	espwifi_scan(void);
+int	espwifi_seen(const char *);
 int	espwifi_connect(const char *, const char *);
 int	espwifi_tx(const void *, unsigned int);
 void	espwifi_get_mac(unsigned char *);

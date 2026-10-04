@@ -51,6 +51,9 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/time.h>
 #include <sys/vmem.h>
 
+#include <dev/ofw/openfirm.h>
+#include <dev/fdt/fdtvar.h>
+
 #include <riscv/espressif/esp_intmtx.h>
 #include <riscv/espressif/esp_wifi_os.h>
 #include <riscv/espressif/esp_wifi_var.h>
@@ -924,6 +927,39 @@ espwifi_watch(vaddr_t pc)
  * up once the system runs.
  */
 
+/*
+ * Join the first network of the list in /chosen that is on the air.  The
+ * list holds name and key in turn, best network first.
+ */
+static void
+espwifi_join(void)
+{
+	const int chosen = OF_finddevice("/chosen");
+	int len;
+	const char *list = chosen < 0 ? NULL :
+	    fdtbus_get_prop(chosen, "netbsd,wifi-networks", &len);
+
+	if (espwifi_scan() <= 0 || list == NULL)
+		return;
+	for (const char *p = list; p < list + len; ) {
+		const char * const ssid = p;
+		p += strlen(p) + 1;
+		if (p >= list + len)
+			break;
+		const char * const key = p;
+		p += strlen(p) + 1;
+
+		if (!espwifi_seen(ssid))
+			continue;
+		printf("espwifi: joining %s\n", ssid);
+		if (espwifi_connect(ssid, key) == 0) {
+			printf("espwifi: joined %s\n", ssid);
+			return;
+		}
+		printf("espwifi: could not join %s\n", ssid);
+	}
+}
+
 static void
 espwifi_main(void *v)
 {
@@ -933,7 +969,7 @@ espwifi_main(void *v)
 	printf("espwifi: address %02x:%02x:%02x:%02x:%02x:%02x\n",
 	    mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 	if (espwifi_start() == 0)
-		espwifi_scan();
+		espwifi_join();
 	for (;;)
 		espwifi_os_task_delay(ESPWIFI_WAIT_FOREVER / 100);
 }

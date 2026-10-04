@@ -1525,12 +1525,27 @@ espwifi_start(void)
 	return 0;
 }
 
+static wifi_ap_record_t aps[16];
+static uint16_t naps;
+
+/* Was the network in the last scan? */
+int
+espwifi_seen(const char *ssid)
+{
+	for (unsigned i = 0; i < naps; i++) {
+		if (strcmp((const char *)aps[i].ssid, ssid) == 0)
+			return 1;
+	}
+	return 0;
+}
+
 int
 espwifi_scan(void)
 {
-	static wifi_ap_record_t aps[16];
 	uint16_t n = 16;
 	esp_err_t error;
+
+	naps = 0;
 
 	error = esp_wifi_scan_start(NULL, false);
 	if (error != ESP_OK) {
@@ -1546,6 +1561,7 @@ espwifi_scan(void)
 		espwifi_os_log("espwifi: scan results: error %#x\n", error);
 		return error;
 	}
+	naps = n;
 	espwifi_os_log("espwifi: %u networks, %lu bytes of internal RAM free\n",
 	    n, espwifi_os_free_heap());
 	for (unsigned i = 0; i < n; i++) {
@@ -1575,9 +1591,10 @@ espwifi_connect(const char *ssid, const char *psk)
 	esp_err_t error;
 
 	memset(&cfg, 0, sizeof(cfg));
-	strlcpy((char *)cfg.sta.ssid, ssid, sizeof(cfg.sta.ssid));
+	strncpy((char *)cfg.sta.ssid, ssid, sizeof(cfg.sta.ssid));
 	if (psk != NULL && psk[0] != '\0') {
-		strlcpy((char *)cfg.sta.password, psk,
+		/* A raw key is 64 hex digits and fills the field. */
+		strncpy((char *)cfg.sta.password, psk,
 		    sizeof(cfg.sta.password));
 		cfg.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
 	}
