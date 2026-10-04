@@ -21,7 +21,7 @@ driver.
 | Serial console | Tested | Tested | Tested | Tested |
 | All CPU cores | Tested | Not validated | Tested | Tested (8 cores) |
 | Ethernet | Tested | Not validated | No port | Tested (gigabit) |
-| Wi-Fi | Tested | Tested | Tested at 2.4 GHz; large transfers stall | Tested: WPA2 on 2.4 and 5 GHz at 802.11a/g rates; needs the vendor firmware file |
+| Wi-Fi | Tested | Tested | Tested at 2.4 GHz; large transfers stall | Tested: WPA2 on 2.4 and 5 GHz with 802.11n in 20 MHz channels (24-31 Mbit/s through SSH); needs the vendor firmware file |
 | Bluetooth | Classic: Tested; BLE: No | Not validated | Not validated | Classic: Tested (inquiry, service query, pairing with Secure Connections and reconnection to a MacBook); BLE: No; needs the vendor patch files |
 | Temperature sensor | Tested | Not validated | Tested | Tested (five sensors, factory calibration) |
 | Fan control | Tested | Not validated | No fan | No |

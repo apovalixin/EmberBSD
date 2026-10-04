@@ -12,10 +12,12 @@ writes its patch table, so that the controller answers HCI on its UART at
 1.5 Mbaud with RTS/CTS.
 
 Tested on the board: WPA2-PSK with CCMP on 2.4 and 5 GHz, DHCP, SSH and
-eight rounds of 32 MiB each way with matching hashes at 10-17 Mbit/s. The driver announces 802.11a/b/g
-only: with 802.11n the firmware leaves the reordering of aggregated
-frames to the host. TKIP, WEP, power saving and access point mode are not
-implemented.
+eight rounds of 32 MiB each way with matching hashes at 24-31 Mbit/s. The
+driver announces 802.11n with one stream in 20 MHz channels; the firmware
+leaves the reordering of aggregated frames to the host, so the driver
+keeps a window of 64 frames per traffic class and splits A-MSDUs. Wider
+channels, 802.11ac/ax, TKIP, WEP, power saving and access point mode are
+not implemented.
 
 --- sys/dev/sdmmc/files.sdmmc
 +++ sys/dev/sdmmc/files.sdmmc
@@ -33,7 +35,7 @@ implemented.
  file	dev/sdmmc/if_bwi_sdio.c		bwi_sdio
 --- /dev/null
 +++ sys/dev/sdmmc/if_aicwf.c
-@@ -0,0 +1,1953 @@
+@@ -0,0 +1,2223 @@
 +/*-
 + * Copyright (c) 2026 Anton and oxtorg contributors
 + * All rights reserved.
@@ -73,10 +75,12 @@ implemented.
 +
 +#include <sys/param.h>
 +#include <sys/bus.h>
++#include <sys/callout.h>
 +#include <sys/condvar.h>
 +#include <sys/device.h>
 +#include <sys/atomic.h>
 +#include <sys/endian.h>
++#include <sys/evcnt.h>
 +#include <sys/kernel.h>
 +#include <sys/kmem.h>
 +#include <sys/mbuf.h>
@@ -237,6 +241,33 @@ implemented.
 +#define	  AICWF_RX_DECR_WAPI		7
 +#define	AICWF_RXHDR_FLAGS		48
 +#define	 AICWF_RX_FLAG_UPLOAD		__BIT(6)
++#define	 AICWF_RX_FLAG_REORDER		__BIT(5)	/* part of an A-MPDU */
++#define	 AICWF_RX_FLAG_AMSDU		__BIT(0)
++
++/*
++ * With 802.11n the firmware answers the block acknowledgement itself but
++ * hands the frames up in the order they arrived; the host puts them in
++ * sequence. The window and the wait for a missing frame are the vendor
++ * driver's.
++ */
++#define	AICWF_REORDER_WINDOW		64
++#define	AICWF_REORDER_WAIT_MS		50
++#define	AICWF_NTID			16
++#define	AICWF_SEQ_MASK			0xfff
++#define	AICWF_SEQ_SUB(a, b)		(((a) - (b)) & AICWF_SEQ_MASK)
++#define	AICWF_SEQ_BEFORE(a, b)		(AICWF_SEQ_SUB(a, b) >= 0x800)
++
++/* ME_CONFIG_REQ: what the station announces. */
++#define	AICWF_ME_CONFIG_LEN		112
++#define	AICWF_ME_CONFIG_HT_INFO		0	/* 16 bits */
++#define	AICWF_ME_CONFIG_HT_AMPDU	2
++#define	AICWF_ME_CONFIG_HT_MCS		3	/* 16 bytes */
++#define	AICWF_ME_CONFIG_TX_LIFETIME	100	/* 16 bits, TU */
++#define	AICWF_ME_CONFIG_HT_SUPP		103
++/* LDPC, no SM power save, short guard interval, STBC receive. */
++#define	AICWF_HT_INFO			(0x0001 | 0x000c | 0x0020 | 0x0100)
++#define	AICWF_HT_AMPDU			0x1f	/* 64 KiB, 16 us apart */
++#define	AICWF_TX_LIFETIME		100
 +
 +#define	AICWF_SCAN_INTERVAL_MS		3000
 +
@@ -386,6 +417,19 @@ implemented.
 +	struct work		sc_txwork;
 +	volatile u_int		sc_txqueued;
 +
++	/* Frames of an A-MPDU waiting for the ones before them. */
++	kmutex_t		sc_reorder_lock;
++	callout_t		sc_reorder_ch;
++	struct aicwf_reorder {
++		bool		started;
++		uint16_t	head;	/* next sequence number to pass */
++		u_int		held;
++		struct mbuf	*slot[AICWF_REORDER_WINDOW];
++	}			sc_reorder[AICWF_NTID];
++	struct evcnt		sc_ev_ampdu;	/* frames of an A-MPDU */
++	struct evcnt		sc_ev_amsdu;	/* frames with several packets */
++	struct evcnt		sc_ev_gap;	/* waits that ran out */
++
 +	bool			sc_scanning;
 +	int			sc_scan_ticks;
 +	bool			sc_connecting;
@@ -407,6 +451,8 @@ implemented.
 +		    size_t);
 +static void	aicwf_disconnect_ind(struct aicwf_softc *);
 +static void	aicwf_rx_data(struct aicwf_softc *, const uint8_t *, size_t);
++static void	aicwf_reorder_flush(struct aicwf_softc *, int, bool);
++static void	aicwf_reorder_timeout(void *);
 +
 +CFATTACH_DECL_NEW(aicwf, sizeof(struct aicwf_softc),
 +    aicwf_match, aicwf_attach, NULL, NULL);
@@ -1055,12 +1101,16 @@ implemented.
 +	    le16dec(cfm + 24), cfm[26]);
 +
 +	/*
-+	 * Capabilities: 802.11a/b/g only. With 802.11n and later the
-+	 * firmware leaves the reordering of aggregated frames to the
-+	 * host, which this driver does not do yet.
++	 * Capabilities: 802.11n in 20 MHz channels with one stream. The
++	 * firmware builds the association request from them.
 +	 */
 +	memset(req, 0, sizeof(req));
-+	error = aicwf_cmd(sc, AICWF_ME_CONFIG_REQ, req, 112,
++	le16enc(req + AICWF_ME_CONFIG_HT_INFO, AICWF_HT_INFO);
++	req[AICWF_ME_CONFIG_HT_AMPDU] = AICWF_HT_AMPDU;
++	req[AICWF_ME_CONFIG_HT_MCS] = 0xff;		/* MCS 0-7 */
++	le16enc(req + AICWF_ME_CONFIG_TX_LIFETIME, AICWF_TX_LIFETIME);
++	req[AICWF_ME_CONFIG_HT_SUPP] = 1;
++	error = aicwf_cmd(sc, AICWF_ME_CONFIG_REQ, req, AICWF_ME_CONFIG_LEN,
 +	    AICWF_ME_CONFIG_CFM, NULL, 0);
 +	if (error != 0)
 +		return error;
@@ -1327,6 +1377,7 @@ implemented.
 +	if (!sc->sc_if_attached || !sc->sc_connected)
 +		return;
 +	sc->sc_connected = false;
++	aicwf_reorder_flush(sc, -1, false);
 +
 +	s = splnet();
 +	if (ic->ic_state == IEEE80211_S_RUN)
@@ -1343,6 +1394,7 @@ implemented.
 +		return;
 +	sc->sc_connected = false;
 +	sc->sc_connecting = false;
++	aicwf_reorder_flush(sc, -1, false);
 +
 +	memset(req, 0, sizeof(req));
 +	le16enc(req, IEEE80211_REASON_AUTH_LEAVE);
@@ -1633,18 +1685,213 @@ implemented.
 + * A received 802.11 data frame, already decrypted: turn it into an
 + * Ethernet frame.
 + */
++/* Pass a chain of received packets (linked by m_nextpkt) to the stack. */
++static void
++aicwf_rx_input(struct aicwf_softc *sc, struct mbuf *m)
++{
++	struct ifnet * const ifp = &sc->sc_if;
++	struct mbuf *next;
++	int s;
++
++	s = splnet();
++	for (; m != NULL; m = next) {
++		next = m->m_nextpkt;
++		m->m_nextpkt = NULL;
++		if_percpuq_enqueue(ifp->if_percpuq, m);
++	}
++	splx(s);
++}
++
++static void
++aicwf_rx_free(struct mbuf *m)
++{
++	struct mbuf *next;
++
++	for (; m != NULL; m = next) {
++		next = m->m_nextpkt;
++		m_freem(m);
++	}
++}
++
++/*
++ * Move what is ready from the window of one traffic class to the end of
++ * the chain at *tailp: everything before "upto", then the unbroken run
++ * that follows.
++ */
++static struct mbuf **
++aicwf_reorder_release(struct aicwf_reorder *ro, uint16_t upto,
++    struct mbuf **tailp)
++{
++	struct mbuf *m;
++
++	for (;;) {
++		m = ro->slot[ro->head % AICWF_REORDER_WINDOW];
++		if (m == NULL && (ro->head == upto || ro->held == 0))
++			break;
++		if (m != NULL) {
++			ro->slot[ro->head % AICWF_REORDER_WINDOW] = NULL;
++			ro->held--;
++			*tailp = m;
++			while (m->m_nextpkt != NULL)
++				m = m->m_nextpkt;
++			tailp = &m->m_nextpkt;
++		}
++		if (ro->head == upto)
++			upto = (upto + 1) & AICWF_SEQ_MASK;
++		ro->head = (ro->head + 1) & AICWF_SEQ_MASK;
++	}
++	if (ro->held == 0 && AICWF_SEQ_BEFORE(ro->head, upto))
++		ro->head = upto;
++	return tailp;
++}
++
++/* A frame of an A-MPDU: hold it until the frames before it have come. */
++static void
++aicwf_reorder(struct aicwf_softc *sc, u_int tid, uint16_t seq,
++    struct mbuf *m)
++{
++	struct aicwf_reorder * const ro = &sc->sc_reorder[tid];
++	struct mbuf *ready = NULL, **tailp = &ready;
++	u_int slot;
++
++	mutex_enter(&sc->sc_reorder_lock);
++	if (!ro->started) {
++		ro->started = true;
++		ro->head = seq;
++	}
++	if (AICWF_SEQ_BEFORE(seq, ro->head)) {
++		/* Late; the firmware has dropped the duplicates. */
++		mutex_exit(&sc->sc_reorder_lock);
++		aicwf_rx_input(sc, m);
++		return;
++	}
++	if (AICWF_SEQ_SUB(seq, ro->head) >= AICWF_REORDER_WINDOW) {
++		/* The window moves on; what falls out of it goes up. */
++		tailp = aicwf_reorder_release(ro, (seq -
++		    (AICWF_REORDER_WINDOW - 1)) & AICWF_SEQ_MASK, tailp);
++	}
++	slot = seq % AICWF_REORDER_WINDOW;
++	if (ro->slot[slot] != NULL) {
++		aicwf_rx_free(ro->slot[slot]);
++		ro->held--;
++	}
++	ro->slot[slot] = m;
++	ro->held++;
++	tailp = aicwf_reorder_release(ro, ro->head, tailp);
++	if (ro->held != 0 && !callout_pending(&sc->sc_reorder_ch))
++		callout_schedule(&sc->sc_reorder_ch,
++		    mstohz(AICWF_REORDER_WAIT_MS));
++	mutex_exit(&sc->sc_reorder_lock);
++
++	aicwf_rx_input(sc, ready);
++}
++
++/* Empty the windows: of one traffic class, or of all (tid < 0). */
++static void
++aicwf_reorder_flush(struct aicwf_softc *sc, int tid, bool deliver)
++{
++	struct mbuf *ready = NULL, **tailp = &ready;
++
++	mutex_enter(&sc->sc_reorder_lock);
++	for (u_int i = 0; i < AICWF_NTID; i++) {
++		struct aicwf_reorder * const ro = &sc->sc_reorder[i];
++
++		if (tid >= 0 && (u_int)tid != i)
++			continue;
++		if (ro->held != 0)
++			tailp = aicwf_reorder_release(ro, (ro->head +
++			    AICWF_REORDER_WINDOW) & AICWF_SEQ_MASK, tailp);
++		ro->started = false;
++	}
++	mutex_exit(&sc->sc_reorder_lock);
++
++	if (deliver)
++		aicwf_rx_input(sc, ready);
++	else
++		aicwf_rx_free(ready);
++}
++
++/* A frame did not come in time: go on without it. */
++static void
++aicwf_reorder_timeout(void *arg)
++{
++	struct aicwf_softc * const sc = arg;
++	struct mbuf *ready = NULL, **tailp = &ready;
++	bool again = false;
++
++	mutex_enter(&sc->sc_reorder_lock);
++	for (u_int i = 0; i < AICWF_NTID; i++) {
++		struct aicwf_reorder * const ro = &sc->sc_reorder[i];
++		uint16_t seq;
++
++		if (ro->held == 0)
++			continue;
++		for (seq = ro->head;
++		    ro->slot[seq % AICWF_REORDER_WINDOW] == NULL;
++		    seq = (seq + 1) & AICWF_SEQ_MASK)
++			continue;
++		sc->sc_ev_gap.ev_count++;
++		tailp = aicwf_reorder_release(ro, seq, tailp);
++		if (ro->held != 0)
++			again = true;
++	}
++	if (again)
++		callout_schedule(&sc->sc_reorder_ch,
++		    mstohz(AICWF_REORDER_WAIT_MS));
++	mutex_exit(&sc->sc_reorder_lock);
++
++	aicwf_rx_input(sc, ready);
++}
++
++/* One Ethernet packet from addresses and an LLC/SNAP payload. */
++static struct mbuf *
++aicwf_rx_ether(struct aicwf_softc *sc, const uint8_t *dst,
++    const uint8_t *src, const uint8_t *llc, size_t llc_len)
++{
++	static const uint8_t rfc1042[6] = { 0xaa, 0xaa, 0x03, 0, 0, 0 };
++	struct ether_header *eh;
++	struct mbuf *m;
++
++	if (llc_len < 8 || memcmp(llc, rfc1042, 6) != 0)
++		return NULL;
++	const size_t len = ETHER_HDR_LEN + llc_len - 8;
++	if (len + ETHER_ALIGN > MCLBYTES)
++		return NULL;
++
++	MGETHDR(m, M_DONTWAIT, MT_DATA);
++	if (m == NULL)
++		return NULL;
++	if (len + ETHER_ALIGN > MHLEN) {
++		MCLGET(m, M_DONTWAIT);
++		if ((m->m_flags & M_EXT) == 0) {
++			m_freem(m);
++			return NULL;
++		}
++	}
++	m->m_data += ETHER_ALIGN;
++	eh = mtod(m, struct ether_header *);
++	memcpy(eh->ether_dhost, dst, ETHER_ADDR_LEN);
++	memcpy(eh->ether_shost, src, ETHER_ADDR_LEN);
++	memcpy(&eh->ether_type, llc + 6, 2);
++	memcpy(eh + 1, llc + 8, llc_len - 8);
++	m->m_len = m->m_pkthdr.len = len;
++	m->m_nextpkt = NULL;
++	m_set_rcvif(m, &sc->sc_if);
++	return m;
++}
++
 +static void
 +aicwf_rx_data(struct aicwf_softc *sc, const uint8_t *pkt, size_t mpdu_len)
 +{
-+	static const uint8_t rfc1042[6] = { 0xaa, 0xaa, 0x03, 0, 0, 0 };
 +	struct ifnet * const ifp = &sc->sc_if;
 +	const uint8_t * const wh = pkt + AICWF_RXHDR_LEN;
 +	const uint32_t status = le32dec(pkt + AICWF_RXHDR_STATUS);
 +	const uint32_t flags = le32dec(pkt + AICWF_RXHDR_FLAGS);
-+	struct ether_header *eh;
-+	struct mbuf *m;
++	const uint16_t seq = le16dec(wh + 22) >> 4;
++	struct mbuf *m = NULL, **tailp = &m;
++	bool qos = false, amsdu = false;
++	u_int tid = 0;
 +	size_t hdr;
-+	int s;
 +
 +	if (!sc->sc_if_attached || (flags & AICWF_RX_FLAG_UPLOAD) == 0)
 +		return;
@@ -1660,9 +1907,9 @@ implemented.
 +
 +	hdr = sizeof(struct ieee80211_frame);
 +	if ((wh[0] & IEEE80211_FC0_SUBTYPE_QOS) != 0) {
-+		/* Aggregated frames need 802.11n, which is off. */
-+		if ((wh[hdr] & 0x80) != 0)
-+			goto drop;
++		qos = true;
++		tid = wh[hdr] & 0x0f;
++		amsdu = (wh[hdr] & 0x80) != 0;
 +		hdr += 2;
 +		if ((wh[1] & IEEE80211_FC1_ORDER) != 0)
 +			hdr += 4;
@@ -1679,36 +1926,52 @@ implemented.
 +		hdr += 8;
 +		break;
 +	}
-+	if (mpdu_len < hdr + 8 || memcmp(wh + hdr, rfc1042, 6) != 0)
-+		goto drop;
-+	const uint8_t * const payload = wh + hdr + 8;
-+	const size_t payload_len = mpdu_len - hdr - 8;
-+	const size_t len = ETHER_HDR_LEN + payload_len;
-+	if (len + ETHER_ALIGN > MCLBYTES)
++	if (mpdu_len < hdr + 8)
 +		goto drop;
 +
-+	MGETHDR(m, M_DONTWAIT, MT_DATA);
-+	if (m == NULL)
-+		goto drop;
-+	if (len + ETHER_ALIGN > MHLEN) {
-+		MCLGET(m, M_DONTWAIT);
-+		if ((m->m_flags & M_EXT) == 0) {
-+			m_freem(m);
++	if (!amsdu) {
++		m = aicwf_rx_ether(sc, wh + 4, wh + 16, wh + hdr,
++		    mpdu_len - hdr);
++		if (m == NULL)
 +			goto drop;
-+		}
-+	}
-+	m->m_data += ETHER_ALIGN;
-+	eh = mtod(m, struct ether_header *);
-+	memcpy(eh->ether_dhost, wh + 4, ETHER_ADDR_LEN);
-+	memcpy(eh->ether_shost, wh + 16, ETHER_ADDR_LEN);
-+	memcpy(&eh->ether_type, wh + hdr + 6, 2);
-+	memcpy(eh + 1, payload, payload_len);
-+	m->m_len = m->m_pkthdr.len = len;
-+	m_set_rcvif(m, ifp);
++	} else {
++		/* Several packets in one frame, each with its addresses. */
++		sc->sc_ev_amsdu.ev_count++;
++		const uint8_t *sub = wh + hdr;
++		size_t left = mpdu_len - hdr;
 +
-+	s = splnet();
-+	if_percpuq_enqueue(ifp->if_percpuq, m);
-+	splx(s);
++		while (left >= ETHER_HDR_LEN + 8) {
++			const size_t sub_len = be16dec(sub + 12);
++			struct mbuf *m0;
++
++			if (sub_len > left - ETHER_HDR_LEN)
++				break;
++			m0 = aicwf_rx_ether(sc, sub, sub + 6,
++			    sub + ETHER_HDR_LEN, sub_len);
++			if (m0 != NULL) {
++				*tailp = m0;
++				tailp = &m0->m_nextpkt;
++			}
++			const size_t step = roundup(ETHER_HDR_LEN + sub_len, 4);
++			if (step >= left)
++				break;
++			sub += step;
++			left -= step;
++		}
++		if (m == NULL)
++			goto drop;
++	}
++
++	if (qos && !ETHER_IS_MULTICAST(wh + 4)) {
++		if ((flags & AICWF_RX_FLAG_REORDER) != 0) {
++			sc->sc_ev_ampdu.ev_count++;
++			aicwf_reorder(sc, tid, seq, m);
++			return;
++		}
++		/* The aggregation on this traffic class has ended. */
++		aicwf_reorder_flush(sc, tid, true);
++	}
++	aicwf_rx_input(sc, m);
 +	return;
 +
 +drop:
@@ -1913,6 +2176,15 @@ implemented.
 +	sc->sc_sf = sf;
 +	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_NONE);
 +	mutex_init(&sc->sc_bus_lock, MUTEX_DEFAULT, IPL_NONE);
++	mutex_init(&sc->sc_reorder_lock, MUTEX_DEFAULT, IPL_SOFTNET);
++	callout_init(&sc->sc_reorder_ch, CALLOUT_MPSAFE);
++	callout_setfunc(&sc->sc_reorder_ch, aicwf_reorder_timeout, sc);
++	evcnt_attach_dynamic(&sc->sc_ev_ampdu, EVCNT_TYPE_MISC, NULL,
++	    device_xname(self), "A-MPDU frames");
++	evcnt_attach_dynamic(&sc->sc_ev_amsdu, EVCNT_TYPE_MISC, NULL,
++	    device_xname(self), "A-MSDU frames");
++	evcnt_attach_dynamic(&sc->sc_ev_gap, EVCNT_TYPE_MISC, NULL,
++	    device_xname(self), "A-MPDU gaps");
 +	cv_init(&sc->sc_cv, "aicwfcmd");
 +	sc->sc_txbuf = kmem_alloc(AICWF_RX_MAX, KM_SLEEP);
 +	sc->sc_rxbuf = kmem_alloc(AICWF_RX_MAX, KM_SLEEP);
