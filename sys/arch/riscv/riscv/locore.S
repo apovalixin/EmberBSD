@@ -217,9 +217,15 @@ ENTRY_NP(start)
 	 * The boot stack and the first page tables live in .data and come
 	 * zeroed from the image.  The bss does not: memory holds whatever
 	 * was there before, unless an emulator handed out clean pages.
+	 *
+	 * The bss lies next to the global pointer, which is not set yet:
+	 * the linker must not turn these into gp-relative references.
 	 */
+	.option push
+	.option norelax
 	PTR_LA	a0, _C_LABEL(__bss_start)
 	PTR_LA	a1, _C_LABEL(__bss_used_end)
+	.option pop
 
 	call	clear_bss
 

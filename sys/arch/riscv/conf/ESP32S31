@@ -55,7 +55,9 @@ espintmtx* 	at fdt? pass 2
 espsystimer* 	at fdt?
 awge* 		at fdt?			# ESP32-S31 Ethernet
 # Each receive slot holds a 2 KiB cluster: 256 of them would take 512 KiB.
-makeoptions 	CPPFLAGS+="-DAWGE_RX_RING_COUNT=32 -DAWGE_TX_RING_COUNT=32"
+# One descriptor per 64-byte cache line: the controller writes memory
+# past the cache (see dwc_gmac_reg.h).
+makeoptions 	CPPFLAGS+="-DAWGE_RX_RING_COUNT=32 -DAWGE_TX_RING_COUNT=32 -DAWGE_DESC_PAD=12"
 mcommphy* 	at mii? phy ?		# Motorcomm YT8531
 ukphy* 		at mii? phy ?
 

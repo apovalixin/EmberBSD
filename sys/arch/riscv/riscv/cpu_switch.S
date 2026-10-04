@@ -489,6 +489,25 @@ trap_doast:
  */
 
 intr_handler:
+#ifdef RISCV_CLIC
+	// Taking an interrupt raised the interrupt level of the hart to that
+	// of the source, and only an sret lowers it.  The handler may switch
+	// to another lwp long before this trap frame returns; everything of
+	// the same level would stay blocked until then.  Return to the next
+	// instruction now: supervisor mode, interrupts off, level zero.  The
+	// software levels and the mask at the controller do the blocking.
+	li	a4, 0x100		// SPP
+	csrs	sstatus, a4
+	li	a4, 0x20		// SPIE
+	csrc	sstatus, a4
+	lla	a4, 1f
+	csrw	sepc, a4
+	li	a4, 0x90000000		// interrupt, from supervisor, level 0
+	csrw	scause, a4
+	sret
+	.p2align 2
+1:
+#endif
 	beqz	t1, intr_user
 	PTR_LA	ra, exception_kernexit
 	tail	_C_LABEL(cpu_intr)

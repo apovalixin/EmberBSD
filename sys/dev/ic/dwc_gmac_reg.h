@@ -268,6 +268,16 @@ struct dwc_gmac_dev_dmadesc {
 
 	uint32_t ddesc_data;	/* pointer to buffer data */
 	uint32_t ddesc_next;	/* link to next descriptor */
+#ifdef AWGE_DESC_PAD
+	/*
+	 * Words of padding.  Behind a cache that the controller bypasses,
+	 * descriptors sharing a cache line overwrite each other: writing one
+	 * back from the CPU takes along stale copies of its neighbours, which
+	 * the controller may have updated meanwhile.  Padding gives every
+	 * descriptor a line of its own; the chain pointers skip over it.
+	 */
+	uint32_t ddesc_pad[AWGE_DESC_PAD];
+#endif
 };
 
 /* Common to enhanced descriptors */

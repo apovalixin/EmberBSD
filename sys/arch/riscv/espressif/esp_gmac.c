@@ -50,6 +50,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <net/if_ether.h>
 #include <net/if_media.h>
 
+#include <dev/mii/mii.h>
 #include <dev/mii/miivar.h>
 
 #include <dev/ic/dwc_gmac_var.h>
@@ -179,6 +180,7 @@ esp_gmac_ref_clock(struct esp_gmac_softc *esc, u_int rate)
 	    EMAC_REF_CLK_SEL | EMAC_REF_CLK_DIV,
 	    __SHIFTIN(div - 1, EMAC_REF_CLK_DIV) | EMAC_REF_CLK_EN);
 }
+
 
 static void
 esp_gmac_set_speed(struct dwc_gmac_softc *sc, int speed)
@@ -364,6 +366,21 @@ esp_gmac_attach(device_t parent, device_t self, void *aux)
 	/* The management clock derives from the 40 MHz crystal. */
 	if (dwc_gmac_attach(sc, MII_PHY_ANY, GMAC_MII_CLK_35_60M_DIV26) != 0)
 		return;
+
+	/*
+	 * The vendor limits this port to 100 Mbit/s ("max-speed"): keep
+	 * the PHY from offering more.
+	 */
+	uint32_t max_speed;
+	if (of_getprop_uint32(phandle, "max-speed", &max_speed) == 0 &&
+	    max_speed < 1000) {
+		struct mii_softc *phy;
+
+		LIST_FOREACH(phy, &sc->sc_mii.mii_phys, mii_list) {
+			phy->mii_capabilities &= ~BMSR_EXTSTAT;
+			phy->mii_extcapabilities = 0;
+		}
+	}
 
 	if (fdtbus_intr_establish_xname(phandle, 0, IPL_NET, FDT_INTR_MPSAFE,
 	    esp_gmac_intr, sc, device_xname(self)) == NULL) {

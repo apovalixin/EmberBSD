@@ -941,6 +941,12 @@ dwc_gmac_init(struct ifnet *ifp)
 	sc->sc_txbusy = false;
 	mutex_exit(&sc->sc_txq.t_mtx);
 
+	/*
+	 * Stopping took the PHY down.  Select the media again, or a PHY
+	 * that no firmware has set up stays without autonegotiation.
+	 */
+	mii_mediachg(&sc->sc_mii);
+
 	return 0;
 }
 

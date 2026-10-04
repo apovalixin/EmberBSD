@@ -79,22 +79,37 @@ esp32s31_icache_sync(struct vm_page_md *mdpg)
  * bus_dma reaches these through the outer-cache hooks, which carry the
  * physical address the firmware wants.
  */
+/*
+ * The ROM routines behind the firmware calls work on whole cache lines
+ * and do nothing for a range shorter than one, so widen the range here.
+ */
+#define	S31_CACHE_LINE	64
+
+static void
+esp32s31_dcache_op(int func, paddr_t pa, psize_t len)
+{
+	const paddr_t start = pa & ~(paddr_t)(S31_CACHE_LINE - 1);
+	const paddr_t end = roundup2(pa + len, S31_CACHE_LINE);
+
+	SBI_CALL2(esp32s31_sbi_eid, func, start, end - start);
+}
+
 static void
 esp32s31_dcache_wbinv(vaddr_t va, paddr_t pa, psize_t len)
 {
-	SBI_CALL2(esp32s31_sbi_eid, S31_SBI_CACHE_WBACK_INVAL, pa, len);
+	esp32s31_dcache_op(S31_SBI_CACHE_WBACK_INVAL, pa, len);
 }
 
 static void
 esp32s31_dcache_inv(vaddr_t va, paddr_t pa, psize_t len)
 {
-	SBI_CALL2(esp32s31_sbi_eid, S31_SBI_CACHE_INVAL, pa, len);
+	esp32s31_dcache_op(S31_SBI_CACHE_INVAL, pa, len);
 }
 
 static void
 esp32s31_dcache_wb(vaddr_t va, paddr_t pa, psize_t len)
 {
-	SBI_CALL2(esp32s31_sbi_eid, S31_SBI_CACHE_WBACK, pa, len);
+	esp32s31_dcache_op(S31_SBI_CACHE_WBACK, pa, len);
 }
 
 static const struct pmap_devmap *

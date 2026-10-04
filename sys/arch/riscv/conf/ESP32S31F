@@ -1,0 +1,6 @@
+# ESP32S31 with floating point: only for measuring ilp32d programs in QEMU.
+include "arch/riscv/conf/ESP32S31"
+no makeoptions 	COPTS
+no makeoptions 	AOPTS
+makeoptions 	COPTS="-Os -fno-unwind-tables -fno-asynchronous-unwind-tables"
+options 	FPE
