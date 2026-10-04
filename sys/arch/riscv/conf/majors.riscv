@@ -28,6 +28,7 @@ device-major	pci		char 66			pci
 
 device-major	kttcp		char 71			kttcp
 device-major	openfirm	char 77			openfirm
+device-major	sbitty		char 78			sbitty
 
 
 # obsolete, probably can be safely removed after 4.0 branch

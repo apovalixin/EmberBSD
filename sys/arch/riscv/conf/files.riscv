@@ -53,7 +53,8 @@ file	arch/riscv/riscv/riscv_machdep.c
 file	arch/riscv/riscv/sbi.c			# SBI
 file	arch/riscv/riscv/sig_machdep.c		# signal delivery
 file	arch/riscv/riscv/softint_machdep.c
-file	arch/riscv/riscv/spl.S
+file	arch/riscv/riscv/spl.S		!riscv_clic
+file	arch/riscv/riscv/spl_soft.c		riscv_clic
 file	arch/riscv/riscv/stubs.c
 file	arch/riscv/riscv/syscall.c		# syscall handler
 file	arch/riscv/riscv/sys_machdep.c
