@@ -1,0 +1,60 @@
+#
+# ESP32S31 -- small RV32 kernel for boards with 16 MB of RAM
+#
+# The chip drivers are not written yet, so the device list is still the
+# QEMU virt one.  The options are what the board will run with.
+#
+
+include	"arch/riscv/conf/std.riscv"
+include	"arch/riscv/conf/files.generic"
+
+maxusers 	2
+
+options 	FDT
+options 	FPE		# Floating-point extension support
+
+makeoptions 	COPTS="-Os -fno-unwind-tables -fno-asynchronous-unwind-tables"
+
+no options 	AIO
+no options 	MQUEUE
+no options 	COREDUMP
+no options 	PTRACE
+no options 	PTRACE_HOOKS
+no options 	SOC_SUN20I_D1
+no options 	PCI_NETBSD_CONFIGURE
+no options 	__HAVE_PCI_CONF_HOOK
+
+options 	COMPAT_100	# Go still calls the NetBSD 10 kevent
+options 	BUFCACHE=5	# percent of RAM for file system metadata
+options 	PIPE_SOCKETPAIR	# smaller, but slower pipe(2)
+
+file-system 	FFS
+file-system 	MFS
+options 	FFS_NO_SNAPSHOT
+
+options 	INET		# IP + ICMP + TCP + UDP
+
+config 		netbsd	root on ? type ?
+
+mainbus0 	at root
+simplebus* 	at fdt? pass 0
+
+cpus* 		at fdt? pass 0
+cpu* 		at fdt? pass 0
+intc* 		at cpu? pass 1
+fclock* 	at fdt? pass 1
+syscon* 	at fdt? pass 1
+plic* 		at fdt? pass 2
+com* 		at fdt?
+gfrtc* 		at fdt?
+
+virtio* 	at fdt?
+ld* 		at virtio?
+vioif* 		at virtio?
+viornd* 	at virtio?
+
+pseudo-device 	loop
+pseudo-device 	pty
+
+options 	PAX_MPROTECT=0
+options 	PAX_ASLR=0
