@@ -30,6 +30,7 @@
  */
 
 #include "opt_ddb.h"
+#include "opt_riscv_clic.h"
 
 #include <machine/asm.h>
 #include "assym.h"
@@ -219,6 +220,10 @@ END(cpu_fast_switchto)
  * and interrupts.
  */
 
+#ifdef RISCV_CLIC
+	// In CLIC mode the low six bits of stvec are forced to zero.
+	.p2align 6
+#endif
 ENTRY_NP(cpu_exception_handler)
 	csrrw	tp, sscratch, tp	// swap scratch and thread pointer
 	beqz	tp, .Lexception_kernel	//   tp == 0, already on kernel stack
@@ -302,6 +307,15 @@ ENTRY_NP(cpu_exception_handler)
 	csrr	a1, sepc		// get exception pc
 	csrr	a2, sstatus		// get status
 	csrr	a3, scause		// get cause
+#ifdef RISCV_CLIC
+	// In CLIC mode scause also carries the previous privilege and
+	// interrupt level in bits 30:12; keep the interrupt flag and the code.
+	slli	a4, a3, 20
+	srli	a4, a4, 20
+	srli	a3, a3, __riscv_xlen - 1
+	slli	a3, a3, __riscv_xlen - 1
+	or	a3, a3, a4
+#endif
 
 	REG_S	a1, TF_PC(sp)
 	REG_S	a2, TF_SR(sp)
@@ -326,6 +340,30 @@ ALTENTRY(exception_kernexit)
 	// exception PC and status, load the saved SP from the trapframe, and
 	// return from the exception
 
+#ifdef RISCV_CLIC
+	// In CLIC mode sret takes the interrupt level to return to from
+	// scause, and only when scause holds an interrupt.  A trap taken
+	// inside an interrupt handler leaves an exception there, the level
+	// then stays raised and nothing is delivered any more.  Every source
+	// runs at one level, so always return to level zero.  The copies of
+	// SPP and SPIE in scause must agree with the sstatus restored below.
+	REG_L	t0, TF_SR(sp)
+	srli	t1, t0, 8
+	andi	t1, t1, 1
+	slli	t1, t1, 28		// SPP
+	srli	t2, t0, 5
+	andi	t2, t2, 1
+	slli	t2, t2, 27		// SPIE
+	or	t1, t1, t2
+	REG_L	t2, TF_CAUSE(sp)
+	slli	t2, t2, 20
+	srli	t2, t2, 20		// exception code
+	or	t1, t1, t2
+	li	t2, 1
+	slli	t2, t2, __riscv_xlen - 1
+	or	t1, t1, t2		// interrupt, level zero
+	csrw	scause, t1
+#endif
 	REG_L	ra, TF_RA(sp)		// restore return address
 	REG_L	gp, TF_GP(sp)		// restore gp
 	REG_L	s0, TF_S0(sp)		// only restore from userland

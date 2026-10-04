@@ -71,6 +71,12 @@ void	riscv_timer_frequency_set(uint32_t);	// which header?
 uint32_t
 	riscv_timer_frequency_get(void);	// which header?
 void	riscv_timer_register(void (*timerfn)(void));
+
+/* Software interrupt priority levels (options RISCV_CLIC). */
+void	riscv_spl_source(u_int, int, void (*)(u_int, bool));
+bool	riscv_spl_intr_enter(u_int, int, int *);
+void	*riscv_intc_establish_source(u_int, int, int, int (*)(void *), void *,
+	    const char *, void (*)(u_int, bool));
 void	riscv_intr_set_handler(void (*intr_handler)(struct trapframe *,
 	    register_t, register_t, register_t));
 

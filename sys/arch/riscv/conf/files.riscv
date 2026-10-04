@@ -9,6 +9,7 @@ defparam opt_console.h		CONSADDR
 
 # RISC-V specific debug options
 defflag  opt_riscv_debug.h	VERBOSE_INIT_RISCV
+defflag	opt_riscv_clic.h	RISCV_CLIC
 
 defflag	opt_ddb.h		DDB_TRACE
 
@@ -68,6 +69,11 @@ file	uvm/pmap/pmap.c
 file	uvm/pmap/pmap_devmap.c
 file	uvm/pmap/pmap_segtab.c
 file	uvm/pmap/pmap_tlb.c
+
+# The firmware console as a tty
+device	sbitty: tty
+attach	sbitty at fdt
+file	arch/riscv/dev/sbitty.c			sbitty
 
 device  plic
 file	arch/riscv/dev/plic.c			plic

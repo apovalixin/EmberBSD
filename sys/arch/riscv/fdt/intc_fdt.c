@@ -31,6 +31,8 @@
 
 #include "opt_multiprocessor.h"
 
+#include "opt_riscv_clic.h"
+
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD: intc_fdt.c,v 1.8 2025/02/09 10:08:37 skrll Exp $");
 
@@ -57,6 +59,13 @@ static const struct device_compatible_entry compat_data[] = {
 
 struct intc_irqhandler;
 struct intc_irq;
+
+#ifdef RISCV_CLIC
+/* The CLIC delivers its sources as interrupt codes above the standard ones. */
+#define	INTC_NSOURCES	32
+#else
+#define	INTC_NSOURCES	IRQ_NSOURCES
+#endif
 
 typedef int (*intcih_t)(void *);
 
@@ -87,9 +96,9 @@ struct intc_fdt_softc {
 	bus_space_tag_t		 sc_bst;
 	bus_space_handle_t	 sc_bsh;
 
-	struct intc_irq		*sc_irq[IRQ_NSOURCES];
+	struct intc_irq		*sc_irq[INTC_NSOURCES];
 
-	struct evcnt		 sc_evs[IRQ_NSOURCES];
+	struct evcnt		 sc_evs[INTC_NSOURCES];
 
 	struct cpu_info 	*sc_ci;
 	cpuid_t			 sc_hartid;
@@ -135,11 +144,26 @@ intc_getsc(struct cpu_info *ci)
 #endif
 }
 
+#ifdef RISCV_CLIC
+static void
+intc_mask(u_int source, bool masked)
+{
+	if (masked)
+		csr_sie_clear(__BIT(source));
+	else
+		csr_sie_set(__BIT(source));
+}
+#endif
+
 static void *
 intc_intr_establish(struct intc_fdt_softc *sc, u_int source, u_int ipl,
-    u_int istflags, int (*func)(void *), void *arg, const char *xname)
+    u_int istflags, int (*func)(void *), void *arg, const char *xname
+#ifdef RISCV_CLIC
+    , void (*maskfn)(u_int, bool)
+#endif
+    )
 {
-	if (source > IRQ_NSOURCES)
+	if (source >= INTC_NSOURCES)
 		return NULL;
 
 	const device_t dev = sc->sc_dev;
@@ -156,7 +180,11 @@ intc_intr_establish(struct intc_fdt_softc *sc, u_int source, u_int ipl,
 		sc->sc_irq[source] = irq;
 
 		evcnt_attach_dynamic(&sc->sc_evs[source], EVCNT_TYPE_INTR, NULL,
-		    device_xname(sc->sc_dev), intc_sources[source]);
+		    device_xname(sc->sc_dev),
+		    source < IRQ_NSOURCES ? intc_sources[source] : xname);
+#ifdef RISCV_CLIC
+		riscv_spl_source(source, ipl, maskfn);
+#endif
 	} else {
 		if (irq->intr_arg == NULL || arg == NULL) {
 			device_printf(dev,
@@ -212,8 +240,31 @@ intc_fdt_establish(device_t dev, u_int *specifier, int ipl, int flags,
 	const u_int source = be32toh(specifier[0]);
 	const u_int mpsafe = (flags & FDT_INTR_MPSAFE) ? IST_MPSAFE : 0;
 
-	return intc_intr_establish(sc, source, ipl, mpsafe, func, arg, xname);
+	return intc_intr_establish(sc, source, ipl, mpsafe, func, arg, xname
+#ifdef RISCV_CLIC
+	    , intc_mask
+#endif
+	    );
 }
+
+#ifdef RISCV_CLIC
+/*
+ * For a CLIC driver: hook a handler to one CLIC source.  <maskfn> masks
+ * and unmasks the source at the controller.
+ */
+void *
+riscv_intc_establish_source(u_int source, int ipl, int flags,
+    int (*func)(void *), void *arg, const char *xname,
+    void (*maskfn)(u_int, bool))
+{
+	const u_int mpsafe = (flags & FDT_INTR_MPSAFE) ? IST_MPSAFE : 0;
+
+	if (intc_sc == NULL)
+		return NULL;
+	return intc_intr_establish(intc_sc, source, ipl, mpsafe, func, arg,
+	    xname, maskfn);
+}
+#endif
 
 static void
 intc_fdt_disestablish(device_t dev, void *ih)
@@ -252,6 +303,40 @@ static void
 intc_intr_handler(struct trapframe *tf, register_t epc, register_t status,
     register_t cause)
 {
+#ifdef RISCV_CLIC
+	struct cpu_info * const ci = curcpu();
+	struct intc_fdt_softc * const sc = intc_getsc(ci);
+	const u_int source = CAUSE_CODE(cause);
+	struct intc_irq * const irq =
+	    source < INTC_NSOURCES ? sc->sc_irq[source] : NULL;
+	int ppl;
+
+	KASSERT(CAUSE_INTERRUPT_P(cause));
+
+	if (irq == NULL)
+		panic("%s: stray interrupt %u", __func__, source);
+	if (!riscv_spl_intr_enter(source, irq->intr_ipl, &ppl))
+		return;
+
+	ci->ci_intr_depth++;
+	ci->ci_data.cpu_nintr++;
+	sc->sc_evs[source].ev_count++;
+
+	struct intc_irqhandler *iih;
+	struct clockframe cf = {
+		.cf_epc = epc,
+		.cf_status = status,
+		.cf_intr_depth = ci->ci_intr_depth
+	};
+
+	TAILQ_FOREACH(iih, &irq->intr_handlers, ih_next) {
+		if (iih->ih_fn(iih->ih_arg ? iih->ih_arg : &cf))
+			break;
+	}
+
+	ci->ci_intr_depth--;
+	splx(ppl);
+#else
 	const int ppl = splhigh();
 	struct cpu_info * const ci = curcpu();
 	unsigned long pending;
@@ -307,6 +392,7 @@ intc_intr_handler(struct trapframe *tf, register_t epc, register_t status,
 	}
 	ci->ci_intr_depth--;
 	splx(ppl);
+#endif
 }
 
 
@@ -348,8 +434,14 @@ intc_attach(device_t parent, device_t self, void *aux)
 	sc->sc_ci = ci;
 	sc->sc_hartid = ci->ci_cpuid;
 
+#ifdef RISCV_CLIC
+	intc_sc = sc;
+	intc_intr_establish(sc, IRQ_SUPERVISOR_TIMER, IPL_SCHED, IST_MPSAFE,
+	    riscv_timer_intr, NULL, "clock", intc_mask);
+#else
 	intc_intr_establish(sc, IRQ_SUPERVISOR_TIMER, IPL_SCHED, IST_MPSAFE,
 	    riscv_timer_intr, NULL, "clock");
+#endif
 #ifdef MULTIPROCESSOR
 	ci->ci_intcsoftc = sc;
 	intc_intr_establish(sc, IRQ_SUPERVISOR_SOFTWARE, IPL_HIGH, IST_MPSAFE,

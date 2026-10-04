@@ -32,6 +32,7 @@
 #include "opt_console.h"
 #include "opt_multiprocessor.h"
 #include "opt_riscv_debug.h"
+#include "opt_riscv_clic.h"
 
 #include <machine/asm.h>
 #include "assym.h"
@@ -347,7 +348,11 @@ ENTRY_NP(start)
 	sfence.vma
 	csrw	satp, t0
 
+#ifdef RISCV_CLIC
+	.p2align 6			// stvec alignment in CLIC mode
+#else
 	.align 2
+#endif
 	.global vstart
 vstart:
 	// MMU is on!
