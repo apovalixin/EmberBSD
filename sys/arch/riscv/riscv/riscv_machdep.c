@@ -840,6 +840,13 @@ init_riscv(register_t hartid, paddr_t dtb)
 	/* Perform PT build and VM init */
 	cpu_kernel_vm_init(memory_start, memory_end);
 
+#ifdef VERBOSE_INIT_RISCV
+	/* Startup ran on the reporting trap handler of locore until here. */
+	extern void cpu_exception_handler(void);
+	VPRINTF("stvec\n");
+	asm volatile("csrw stvec, %0" :: "r"((register_t)cpu_exception_handler));
+#endif
+
 	VPRINTF("bootargs: %s\n", boot_args);
 
 	parse_mi_bootargs(boot_args);
@@ -891,6 +898,12 @@ init_riscv(register_t hartid, paddr_t dtb)
 
 	/* XXX check all ranges for last one with a big enough hole */
 	msgbufaddr = memory_end - MSGBUFSIZE;
+	/*
+	 * A boot loader may leave the device tree at the very top of
+	 * memory; the kernel keeps using it there.  Stay below it.
+	 */
+	if (dtb + dtbsize > msgbufaddr && dtb < memory_end)
+		msgbufaddr = trunc_page(dtb) - MSGBUFSIZE;
 	KASSERT(msgbufaddr != 0);	/* no space for msgbuf */
 	fdt_memory_remove_range(msgbufaddr, MSGBUFSIZE);
 	const vaddr_t msgbufva = RISCV_PA_TO_KVA(msgbufaddr);

@@ -1,0 +1,3 @@
+# ESP32S31 with early boot messages, for bring-up on the board.
+include "arch/riscv/conf/ESP32S31"
+options 	VERBOSE_INIT_RISCV

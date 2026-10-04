@@ -206,16 +206,22 @@ ENTRY_NP(start)
 	PTR_LA	a0, _C_LABEL(__bss_start)
 	VPRINTX(a0)
 	VPRINTS(" - ")
-	VPRINTXNL(s7)
+	PTR_LA	a0, _C_LABEL(__bss_used_end)
+	VPRINTXNL(a0)
 
 	VPRINTS("\n\r")
 
 	// a0	start of memory to clear
 	// a1	end of memory to clear
+	/*
+	 * The boot stack and the first page tables live in .data and come
+	 * zeroed from the image.  The bss does not: memory holds whatever
+	 * was there before, unless an emulator handed out clean pages.
+	 */
 	PTR_LA	a0, _C_LABEL(__bss_start)
-	mv	a1, s7
+	PTR_LA	a1, _C_LABEL(__bss_used_end)
 
-	call	clear_bss		// zero through kernel_end (inc. stack)
+	call	clear_bss
 
 	li	s7, PTE_V		// page table pointer {X,W,R} = {0,0,0}
 
@@ -371,7 +377,12 @@ vstart:
 	PTR_LA	tp, _C_LABEL(lwp0)	// put curlwp in tp
 
 	/* Set supervisor trap vector base register */
+#if defined(VERBOSE_INIT_RISCV)
+	/* Report traps of early startup; init_riscv installs the real one. */
+	PTR_LA	a0, early_trap
+#else
 	PTR_LA	a0, _C_LABEL(cpu_exception_handler)
+#endif
 	csrw	stvec, a0
 
 	PTR_LA	t0, bootstk		// top of lwp0uspace
@@ -422,6 +433,35 @@ vstart:
 	/* No return from main */
 END(start)
 
+
+#if defined(VERBOSE_INIT_RISCV)
+/*
+ * A trap before the kernel can report one: print where and why, and stop.
+ */
+	.p2align 6
+early_trap:
+	csrr	s1, scause
+	csrr	s2, sepc
+	csrr	s3, stval
+	mv	s4, ra
+	mv	s5, sp
+	PRINTS("\n\rearly trap: scause ")
+	mv	a0, s1
+	call	locore_printxnl
+	PRINTS("sepc   ")
+	mv	a0, s2
+	call	locore_printxnl
+	PRINTS("stval  ")
+	mv	a0, s3
+	call	locore_printxnl
+	PRINTS("ra     ")
+	mv	a0, s4
+	call	locore_printxnl
+	PRINTS("sp     ")
+	mv	a0, s5
+	call	locore_printxnl
+1:	j	1b
+#endif
 
 #if defined(MULTIPROCESSOR)
 
