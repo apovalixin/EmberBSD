@@ -1,8 +1,8 @@
 #
 # ESP32S31 -- small RV32 kernel for boards with 16 MB of RAM
 #
-# The chip drivers are not written yet, so the device list is still the
-# QEMU virt one.  The options are what the board will run with.
+# The same kernel boots in QEMU virt: its devices stay in the list, and
+# the console is the firmware one on both machines.
 #
 
 include	"arch/riscv/conf/std.riscv"
@@ -47,7 +47,14 @@ intc* 		at cpu? pass 1
 fclock* 	at fdt? pass 1
 syscon* 	at fdt? pass 1
 plic* 		at fdt? pass 2
-com* 		at fdt?
+sbitty* 	at fdt?			# firmware console
+
+# The chip: interrupts through the matrix and the CLIC, system timer
+options 	RISCV_CLIC
+espintmtx* 	at fdt? pass 2
+espsystimer* 	at fdt?
+
+# QEMU virt
 gfrtc* 		at fdt?
 
 virtio* 	at fdt?

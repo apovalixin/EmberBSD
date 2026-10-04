@@ -90,6 +90,7 @@ file	arch/riscv/riscv/sig32_machdep.c	compat_netbsd32
 include "compat/netbsd32/files.netbsd32"
 
 include "arch/riscv/fdt/files.fdt"
+include "arch/riscv/espressif/files.espressif"
 
 #
 # Machine-independent drivers

@@ -1,0 +1,14 @@
+#	$NetBSD$
+#
+# Espressif SoC devices
+#
+
+# ESP32-S31 interrupt matrix and CLIC
+device	espintmtx
+attach	espintmtx at fdt
+file	arch/riscv/espressif/esp_intmtx.c	espintmtx & riscv_clic
+
+# ESP32-S31 system timer
+device	espsystimer
+attach	espsystimer at fdt
+file	arch/riscv/espressif/esp_systimer.c	espsystimer
