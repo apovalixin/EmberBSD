@@ -26,10 +26,12 @@ cpp -P -xassembler-with-cpp -I include -I arch/arm/boot/dts \
     arch/arm/boot/dts/bcm2837-rpi-zero-2-w.dts > "$out/zero-2.dts"
 dtc -I dts -O dtb -p 1024 -b 0 -@ -o "$out/bcm2837-rpi-zero-2-w.dtb" \
     "$out/zero-2.dts" 2> "$out/zero-2-dtb.log"
-cpp -P -xassembler-with-cpp -I include -I arch/arm64/boot/dts/allwinner \
-    arch/arm64/boot/dts/allwinner/sun60i-a733-orangepi-zero4.dts > "$out/orangepi-zero4.dts"
-dtc -I dts -O dtb -o "$out/sun60i-a733-orangepi-zero4.dtb" \
-    "$out/orangepi-zero4.dts" 2> "$out/orangepi-zero4-dtb.log"
+for board in orangepi-zero4 orangepi-zero3w; do
+    cpp -P -xassembler-with-cpp -I include -I arch/arm64/boot/dts/allwinner \
+        "arch/arm64/boot/dts/allwinner/sun60i-a733-$board.dts" > "$out/$board.dts"
+    dtc -I dts -O dtb -o "$out/sun60i-a733-$board.dtb" \
+        "$out/$board.dts" 2> "$out/$board-dtb.log"
+done
 for module in if_cemac_acpi bcm2712btcom rp1wmcodec; do
     cd "$src/sys/modules/$module"
     make OXTORG_KERNEL_CONFIG="$config" >> "$out/build.log" 2>&1

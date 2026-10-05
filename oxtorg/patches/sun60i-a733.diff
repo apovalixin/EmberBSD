@@ -6250,3 +6250,26 @@ which selects the same code silently.
 +
 +CFATTACH_DECL_NEW(sun60i_a733_combophy, sizeof(struct a733_combophy_softc),
 +	a733_combophy_match, a733_combophy_attach, NULL, NULL);
+--- /dev/null
++++ sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner/sun60i-a733-orangepi-zero3w.dts
+@@ -0,0 +1,20 @@
++// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
++/*
++ * Orange Pi Zero 3W.
++ *
++ * The same processor, power management chip, wireless module and Type-C
++ * data port as on the Orange Pi Zero 4, on a smaller board that carries
++ * no Ethernet PHY.
++ */
++
++#include "sun60i-a733-orangepi-zero4.dts"
++
++/ {
++	model = "OrangePi Zero 3W";
++	compatible = "xunlong,orangepi-zero3w", "allwinner,sun60i-a733";
++};
++
++/* Nothing is wired to the MAC: its pins are left to the pin header. */
++&gmac0 {
++	status = "disabled";
++};
