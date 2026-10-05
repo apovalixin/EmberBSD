@@ -17,11 +17,11 @@ driver.
 |---|---|---|---|---|
 | SoC | BCM2712 | BCM2712 | BCM2710A1 | Allwinner A733 |
 | Boot path | UEFI and ACPI, firmware built from this tree | UEFI and ACPI | Native firmware and device tree | Vendor boot0 and U-Boot, device tree |
-| Boot storage | microSD: Tested | eMMC: Tested | microSD: Tested | microSD: Tested |
+| Boot storage | microSD: Tested | eMMC: Tested | microSD: Tested | microSD: Tested, 1.8 V signalling in SDR104 at 150 MHz |
 | Serial console | Tested | Tested | Tested | Tested |
 | All CPU cores | Tested | Not validated | Tested | Tested (8 cores) |
 | Ethernet | Tested | Not validated | No port | Tested (gigabit) |
-| Wi-Fi | Tested | Tested | Tested at 2.4 GHz; large transfers stall | Tested: WPA2 on 2.4 and 5 GHz at 802.11a/g rates; needs the vendor firmware file |
+| Wi-Fi | Tested | Tested | Tested at 2.4 GHz; large transfers stall | Tested: WPA2 on 2.4 and 5 GHz with 802.11n in channels up to 40 MHz (30-48 Mbit/s on 5 GHz through SSH); needs the vendor firmware file |
 | Bluetooth | Classic: Tested; BLE: No | Not validated | Not validated | Classic: Tested (inquiry, service query, pairing with Secure Connections and reconnection to a MacBook); BLE: No; needs the vendor patch files |
 | Temperature sensor | Tested | Not validated | Tested | Tested (five sensors, factory calibration) |
 | Fan control | Tested | Not validated | No fan | No |
@@ -31,7 +31,9 @@ driver.
 | Audio | WM8960 HAT: Tested | Not validated | Not validated | No |
 | Pin multiplexing and GPIO | Not validated | Not validated | Not validated | Pin multiplexing and GPIO output: Tested; no pin interrupts |
 | Real-time clock | Not validated | Not validated | None on the board | Tested across a reboot |
-| Processor frequency control | Tested | Not validated | Not validated | Tested: full or half speed, halved automatically at 85 degC; the supply voltage is not changed |
+| Processor frequency control | Tested | Not validated | Not validated | Tested: 408 MHz to 1.8 GHz (little cores) and 2.0 GHz (big cores) with the supply voltage following, by the chip's speed grade; drops to 408 MHz at 85 degC |
+| Voltage regulators | Not validated | Not validated | None on the board | Tested: all outputs of the AXP8191 read; the two core supplies are driven; the chip's own switch for the card pins is driven |
+| USB | Not validated | Not validated | Not validated | Type-C data port at USB 2.0 rates: a flash drive reads at 22 MB/s, the port is powered only while a device is plugged in (FUSB302, polled); the serdes starts and clocks the controller, SuperSpeed itself not tried (no USB 3 device, one plug orientation only); the two USB 2.0 hosts attach, no device tried |
 | Hardware random numbers | Not validated | Not validated | Not validated | Tested: the crypto engine's generator seeds the kernel at boot |
 
 Long-run stability has not been established on any of these boards.

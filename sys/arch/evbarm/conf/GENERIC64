@@ -567,6 +567,8 @@ rkusbphy*	at rkusb?
 #rktcphy* 	at rktypec?
 sunxiusbphy*	at fdt? pass 9		# Allwinner USB PHY
 sunxiusb3phy*	at fdt? pass 9		# Allwinner USB3 PHY
+sun60iusb2phy*	at fdt? pass 9		# Allwinner A733 USB 2.0 PHY of the USB 3 port
+sun60icombophy*	at fdt? pass 9		# Allwinner A733 USB 3 serdes
 tegrausbphy*	at fdt?			# NVIDIA Tegra USB PHY
 dwctwo* 	at fdt?			# Designware USB DRD
 ehci*		at fdt?			# EHCI

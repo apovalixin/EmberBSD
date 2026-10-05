@@ -161,6 +161,7 @@ struct sunxi_mmc_softc {
 	int sc_mmc_present;
 
 	u_int sc_max_frequency;
+	bool sc_uhs;		/* 1.8 V modes of SD cards */
 
 	device_t sc_sdmmc_dev;
 
@@ -637,6 +638,15 @@ sunxi_mmc_attach_i(device_t self)
 	if ((flags & SUNXI_MMC_FLAG_HS200) != 0 && supports_hs200)
 		saa.saa_caps |= SMC_CAPS_MMC_HS200;
 
+	/* The 1.8 V modes of SD cards need the signalling supply switched. */
+	if (sc->sc_reg_vqmmc != NULL) {
+		if (of_hasprop(sc->sc_phandle, "sd-uhs-sdr50"))
+			saa.saa_caps |= SMC_CAPS_UHS_SDR50;
+		if (of_hasprop(sc->sc_phandle, "sd-uhs-sdr104"))
+			saa.saa_caps |= SMC_CAPS_UHS_SDR104;
+		sc->sc_uhs = (saa.saa_caps & SMC_CAPS_UHS_MASK) != 0;
+	}
+
 	if (width == 4)
 		saa.saa_caps |= SMC_CAPS_4BIT_MODE;
 	if (width == 8)
@@ -777,7 +787,13 @@ sunxi_mmc_host_reset(sdmmc_chipset_handle_t sch)
 static uint32_t
 sunxi_mmc_host_ocr(sdmmc_chipset_handle_t sch)
 {
-	return MMC_OCR_3_2V_3_3V | MMC_OCR_3_3V_3_4V | MMC_OCR_HCS;
+	struct sunxi_mmc_softc *sc = sch;
+	uint32_t ocr = MMC_OCR_3_2V_3_3V | MMC_OCR_3_3V_3_4V | MMC_OCR_HCS;
+
+	if (sc->sc_uhs)
+		ocr |= MMC_OCR_S18A;
+
+	return ocr;
 }
 
 static int
@@ -891,12 +907,12 @@ sunxi_mmc_bus_clock(sdmmc_chipset_handle_t sch, int freq, bool ddr)
 	clkcr = MMC_READ(sc, SUNXI_MMC_CLKCR);
 	if (clkcr & SUNXI_MMC_CLKCR_CARDCLKON) {
 		clkcr &= ~SUNXI_MMC_CLKCR_CARDCLKON;
-		if (flags & SUNXI_MMC_CLKCR_MASK_DATA0)
+		if (flags & SUNXI_MMC_FLAG_MASK_DATA0)
 			clkcr |= SUNXI_MMC_CLKCR_MASK_DATA0;
 		MMC_WRITE(sc, SUNXI_MMC_CLKCR, clkcr);
 		if (sunxi_mmc_update_clock(sc) != 0)
 			return 1;
-		if (flags & SUNXI_MMC_CLKCR_MASK_DATA0) {
+		if (flags & SUNXI_MMC_FLAG_MASK_DATA0) {
 			clkcr = MMC_READ(sc, SUNXI_MMC_CLKCR);
 			clkcr &= ~SUNXI_MMC_CLKCR_MASK_DATA0;
 			MMC_WRITE(sc, SUNXI_MMC_CLKCR, clkcr);
@@ -938,12 +954,12 @@ sunxi_mmc_bus_clock(sdmmc_chipset_handle_t sch, int freq, bool ddr)
 			return 1;
 
 		clkcr |= SUNXI_MMC_CLKCR_CARDCLKON;
-		if (flags & SUNXI_MMC_CLKCR_MASK_DATA0)
+		if (flags & SUNXI_MMC_FLAG_MASK_DATA0)
 			clkcr |= SUNXI_MMC_CLKCR_MASK_DATA0;
 		MMC_WRITE(sc, SUNXI_MMC_CLKCR, clkcr);
 		if (sunxi_mmc_update_clock(sc) != 0)
 			return 1;
-		if (flags & SUNXI_MMC_CLKCR_MASK_DATA0) {
+		if (flags & SUNXI_MMC_FLAG_MASK_DATA0) {
 			clkcr = MMC_READ(sc, SUNXI_MMC_CLKCR);
 			clkcr &= ~SUNXI_MMC_CLKCR_MASK_DATA0;
 			MMC_WRITE(sc, SUNXI_MMC_CLKCR, clkcr);
@@ -1021,6 +1037,8 @@ static int
 sunxi_mmc_execute_tuning(sdmmc_chipset_handle_t sch, int timing)
 {
 	switch (timing) {
+	case SDMMC_TIMING_UHS_SDR50:
+	case SDMMC_TIMING_UHS_SDR104:
 	case SDMMC_TIMING_MMC_HS200:
 		break;
 	default:

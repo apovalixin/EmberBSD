@@ -71,7 +71,7 @@ which selects the same code silently.
  # CCU (H6 PRCM)
  device	sun50ih6rccu: sunxi_ccu
  attach	sun50ih6rccu at fdt with sunxi_h6_r_ccu
-@@ -296,6 +320,16 @@ device	sunxithermal: sysmon_envsys, sysmon_taskq
+@@ -296,6 +320,26 @@ device	sunxithermal: sysmon_envsys, sysmon_taskq
  attach	sunxithermal at fdt with sunxi_thermal
  file	arch/arm/sunxi/sunxi_thermal.c		sunxi_thermal
  
@@ -79,6 +79,16 @@ which selects the same code silently.
 +device	sun60ia733ths: sysmon_envsys
 +attach	sun60ia733ths at fdt with sun60i_a733_ths
 +file	arch/arm/sunxi/sun60i_a733_ths.c	sun60i_a733_ths
++
++# USB 2.0 PHY of the USB 3 controller (A733)
++device	sun60iusb2phy
++attach	sun60iusb2phy at fdt with sun60i_a733_usb2phy
++file	arch/arm/sunxi/sun60i_a733_usb2phy.c	sun60i_a733_usb2phy
++
++# USB 3 serdes of the Type-C port (A733)
++device	sun60icombophy
++attach	sun60icombophy at fdt with sun60i_a733_combophy
++file	arch/arm/sunxi/sun60i_a733_combophy.c	sun60i_a733_combophy
 +
 +# A733 crypto engine (random numbers)
 +device	sun60icrypto
@@ -90,7 +100,7 @@ which selects the same code silently.
  file	arch/arm/sunxi/sunxi_sata.c		sunxi_sata
 --- /dev/null
 +++ sys/arch/arm/sunxi/sun60i_a733_ccu.c
-@@ -0,0 +1,331 @@
+@@ -0,0 +1,386 @@
 +/*-
 + * Copyright (c) 2026 Anton and oxtorg contributors
 + * All rights reserved.
@@ -160,6 +170,14 @@ which selects the same code silently.
 +#define	USB0_BGR_REG		0x1304
 +#define	USB1_CLK_REG		0x1308
 +#define	USB1_BGR_REG		0x130c
++#define	USB2_U2_REF_CLK_REG	0x1348
++#define	USB2_SUSPEND_CLK_REG	0x1350
++#define	USB2_MF_CLK_REG		0x1354
++#define	USB2_BGR_REG		0x135c
++#define	USB2_U3_UTMI_CLK_REG	0x1360
++#define	USB2_U2_PIPE_CLK_REG	0x1364
++#define	SERDES_PHY_CLK_REG	0x13c0
++#define	SERDES_BGR_REG		0x13c4
 +#define	GMAC0_PHY_CLK_REG	0x1410
 +#define	GMAC0_BGR_REG		0x141c
 +
@@ -204,6 +222,8 @@ which selects the same code silently.
 +	SUNXI_CCU_RESET(A733_RST_USB_PHY1, USB1_CLK_REG, 30),
 +	SUNXI_CCU_RESET(A733_RST_BUS_OHCI1, USB1_BGR_REG, 16),
 +	SUNXI_CCU_RESET(A733_RST_BUS_EHCI1, USB1_BGR_REG, 20),
++	SUNXI_CCU_RESET(A733_RST_BUS_USB2, USB2_BGR_REG, 16),
++	SUNXI_CCU_RESET(A733_RST_BUS_SERDES, SERDES_BGR_REG, 16),
 +
 +	SUNXI_CCU_RESET(A733_RST_BUS_GMAC0, GMAC0_BGR_REG, 16),
 +	SUNXI_CCU_RESET(A733_RST_BUS_GMAC0_AXI, GMAC0_BGR_REG, 17),
@@ -223,6 +243,16 @@ which selects the same code silently.
 +};
 +static const char *ce_parents[] = {
 +	"sys-24M", "pll-periph0-400M", "pll-periph0-600M"
++};
++static const char *usb2_suspend_parents[] = { "losc", "sys-24M" };
++static const char *usb2_300M_parents[] = {
++	"sys-24M", "pll-periph0-300M", "hosc"
++};
++static const char *serdes_phy_parents[] = {
++	"sys-24M", "pll-periph0-600M"
++};
++static const char *usb2_480M_parents[] = {
++	"sys-24M", "pll-periph0-480M", "hosc"
 +};
 +static const char *gpadc_24m_parents[] = { "sys-24M", "hosc" };
 +static const char *emmc_parents[] = {
@@ -380,6 +410,41 @@ which selects the same code silently.
 +	SUNXI_CCU_GATE(A733_CLK_BUS_EHCI1, "bus-ehci1", "ahb",
 +	    USB1_BGR_REG, 4),
 +
++	/* The USB 3 controller: the third USB port of the chip. */
++	SUNXI_CCU_GATE(A733_CLK_USB2_U2_REF, "usb2-u2-ref", "hosc",
++	    USB2_U2_REF_CLK_REG, 31),
++	SUNXI_CCU_DIV_GATE(A733_CLK_USB2_SUSPEND, "usb2-suspend",
++	    usb2_suspend_parents, USB2_SUSPEND_CLK_REG,
++	    __BITS(4,0),		/* div */
++	    __BIT(24),			/* sel */
++	    __BIT(31),			/* enable */
++	    0),
++	SUNXI_CCU_DIV_GATE(A733_CLK_USB2_MF, "usb2-mf",
++	    usb2_300M_parents, USB2_MF_CLK_REG,
++	    __BITS(4,0),		/* div */
++	    __BITS(26,24),		/* sel */
++	    __BIT(31),			/* enable */
++	    0),
++	SUNXI_CCU_DIV_GATE(A733_CLK_USB2_U3_UTMI, "usb2-u3-utmi",
++	    usb2_300M_parents, USB2_U3_UTMI_CLK_REG,
++	    __BITS(4,0),		/* div */
++	    __BITS(26,24),		/* sel */
++	    __BIT(31),			/* enable */
++	    0),
++	SUNXI_CCU_DIV_GATE(A733_CLK_USB2_U2_PIPE, "usb2-u2-pipe",
++	    usb2_480M_parents, USB2_U2_PIPE_CLK_REG,
++	    __BITS(4,0),		/* div */
++	    __BITS(26,24),		/* sel */
++	    __BIT(31),			/* enable */
++	    0),
++
++	SUNXI_CCU_DIV_GATE(A733_CLK_SERDES_PHY, "serdes-phy-cfg",
++	    serdes_phy_parents, SERDES_PHY_CLK_REG,
++	    __BITS(4,0),		/* div */
++	    __BITS(26,24),		/* sel */
++	    __BIT(31),			/* enable */
++	    0),
++
 +	SUNXI_CCU_DIV_GATE(A733_CLK_GMAC0_PHY, "gmac0-phy",
 +	    pll_periph0_150M_parent, GMAC0_PHY_CLK_REG,
 +	    __BITS(4,0),		/* div */
@@ -424,7 +489,7 @@ which selects the same code silently.
 +}
 --- /dev/null
 +++ sys/arch/arm/sunxi/sun60i_a733_ccu.h
-@@ -0,0 +1,113 @@
+@@ -0,0 +1,121 @@
 +/*-
 + * Copyright (c) 2026 Anton and oxtorg contributors
 + * All rights reserved.
@@ -507,6 +572,12 @@ which selects the same code silently.
 +#define	A733_CLK_USB_OHCI1		214
 +#define	A733_CLK_BUS_OHCI1		215
 +#define	A733_CLK_BUS_EHCI1		216
++#define	A733_CLK_USB2_U2_REF		218
++#define	A733_CLK_USB2_SUSPEND		219
++#define	A733_CLK_USB2_MF		220
++#define	A733_CLK_USB2_U3_UTMI		221
++#define	A733_CLK_USB2_U2_PIPE		222
++#define	A733_CLK_SERDES_PHY		225
 +#define	A733_CLK_GMAC0_PHY		227
 +#define	A733_CLK_BUS_GMAC0		228
 +
@@ -534,6 +605,8 @@ which selects the same code silently.
 +#define	A733_RST_USB_PHY1		86
 +#define	A733_RST_BUS_OHCI1		87
 +#define	A733_RST_BUS_EHCI1		88
++#define	A733_RST_BUS_USB2		89
++#define	A733_RST_BUS_SERDES		92
 +#define	A733_RST_BUS_GMAC0		93
 +#define	A733_RST_BUS_GMAC0_AXI		94
 +
@@ -548,7 +621,15 @@ which selects the same code silently.
  	const struct sunxi_mmc_delay *delays;
  	uint32_t dma_ftrglevel;
  };
-@@ -256,6 +257,21 @@ static const struct sunxi_mmc_config sun20i_d1_mmc_config = {
+@@ -160,6 +161,7 @@ struct sunxi_mmc_softc {
+ 	int sc_mmc_present;
+ 
+ 	u_int sc_max_frequency;
++	bool sc_uhs;		/* 1.8 V modes of SD cards */
+ 
+ 	device_t sc_sdmmc_dev;
+ 
+@@ -256,6 +258,21 @@ static const struct sunxi_mmc_config sun20i_d1_mmc_config = {
  		 SUNXI_MMC_FLAG_MASK_DATA0,
  };
  
@@ -570,7 +651,7 @@ which selects the same code silently.
  static const struct sunxi_mmc_config sun50i_a64_mmc_config = {
  	.idma_xferlen = 0x10000,
  	.dma_ftrglevel = 0x20070008,
-@@ -301,6 +317,12 @@ static const struct device_compatible_entry compat_data[] = {
+@@ -301,6 +318,12 @@ static const struct device_compatible_entry compat_data[] = {
  	  .data = &sun8i_a83t_emmc_config },
  	{ .compat = "allwinner,sun9i-a80-mmc",
  	  .data = &sun9i_a80_mmc_config },
@@ -583,7 +664,23 @@ which selects the same code silently.
  	{ .compat = "allwinner,sun20i-d1-mmc",
  	  .data = &sun20i_d1_mmc_config },
  	{ .compat = "allwinner,sun50i-a64-mmc",
-@@ -736,6 +758,9 @@ sunxi_mmc_host_reset(sdmmc_chipset_handle_t sch)
+@@ -615,6 +638,15 @@ sunxi_mmc_attach_i(device_t self)
+ 	if ((flags & SUNXI_MMC_FLAG_HS200) != 0 && supports_hs200)
+ 		saa.saa_caps |= SMC_CAPS_MMC_HS200;
+ 
++	/* The 1.8 V modes of SD cards need the signalling supply switched. */
++	if (sc->sc_reg_vqmmc != NULL) {
++		if (of_hasprop(sc->sc_phandle, "sd-uhs-sdr50"))
++			saa.saa_caps |= SMC_CAPS_UHS_SDR50;
++		if (of_hasprop(sc->sc_phandle, "sd-uhs-sdr104"))
++			saa.saa_caps |= SMC_CAPS_UHS_SDR104;
++		sc->sc_uhs = (saa.saa_caps & SMC_CAPS_UHS_MASK) != 0;
++	}
++
+ 	if (width == 4)
+ 		saa.saa_caps |= SMC_CAPS_4BIT_MODE;
+ 	if (width == 8)
+@@ -736,6 +768,9 @@ sunxi_mmc_host_reset(sdmmc_chipset_handle_t sch)
  
  	MMC_WRITE(sc, SUNXI_MMC_TIMEOUT, 0xffffffff);
  
@@ -593,6 +690,60 @@ which selects the same code silently.
  	MMC_WRITE(sc, SUNXI_MMC_IMASK, 0);
  
  	MMC_WRITE(sc, SUNXI_MMC_RINT, 0xffffffff);
+@@ -752,7 +787,13 @@ sunxi_mmc_host_reset(sdmmc_chipset_handle_t sch)
+ static uint32_t
+ sunxi_mmc_host_ocr(sdmmc_chipset_handle_t sch)
+ {
+-	return MMC_OCR_3_2V_3_3V | MMC_OCR_3_3V_3_4V | MMC_OCR_HCS;
++	struct sunxi_mmc_softc *sc = sch;
++	uint32_t ocr = MMC_OCR_3_2V_3_3V | MMC_OCR_3_3V_3_4V | MMC_OCR_HCS;
++
++	if (sc->sc_uhs)
++		ocr |= MMC_OCR_S18A;
++
++	return ocr;
+ }
+ 
+ static int
+@@ -866,12 +907,12 @@ sunxi_mmc_bus_clock(sdmmc_chipset_handle_t sch, int freq, bool ddr)
+ 	clkcr = MMC_READ(sc, SUNXI_MMC_CLKCR);
+ 	if (clkcr & SUNXI_MMC_CLKCR_CARDCLKON) {
+ 		clkcr &= ~SUNXI_MMC_CLKCR_CARDCLKON;
+-		if (flags & SUNXI_MMC_CLKCR_MASK_DATA0)
++		if (flags & SUNXI_MMC_FLAG_MASK_DATA0)
+ 			clkcr |= SUNXI_MMC_CLKCR_MASK_DATA0;
+ 		MMC_WRITE(sc, SUNXI_MMC_CLKCR, clkcr);
+ 		if (sunxi_mmc_update_clock(sc) != 0)
+ 			return 1;
+-		if (flags & SUNXI_MMC_CLKCR_MASK_DATA0) {
++		if (flags & SUNXI_MMC_FLAG_MASK_DATA0) {
+ 			clkcr = MMC_READ(sc, SUNXI_MMC_CLKCR);
+ 			clkcr &= ~SUNXI_MMC_CLKCR_MASK_DATA0;
+ 			MMC_WRITE(sc, SUNXI_MMC_CLKCR, clkcr);
+@@ -913,12 +954,12 @@ sunxi_mmc_bus_clock(sdmmc_chipset_handle_t sch, int freq, bool ddr)
+ 			return 1;
+ 
+ 		clkcr |= SUNXI_MMC_CLKCR_CARDCLKON;
+-		if (flags & SUNXI_MMC_CLKCR_MASK_DATA0)
++		if (flags & SUNXI_MMC_FLAG_MASK_DATA0)
+ 			clkcr |= SUNXI_MMC_CLKCR_MASK_DATA0;
+ 		MMC_WRITE(sc, SUNXI_MMC_CLKCR, clkcr);
+ 		if (sunxi_mmc_update_clock(sc) != 0)
+ 			return 1;
+-		if (flags & SUNXI_MMC_CLKCR_MASK_DATA0) {
++		if (flags & SUNXI_MMC_FLAG_MASK_DATA0) {
+ 			clkcr = MMC_READ(sc, SUNXI_MMC_CLKCR);
+ 			clkcr &= ~SUNXI_MMC_CLKCR_MASK_DATA0;
+ 			MMC_WRITE(sc, SUNXI_MMC_CLKCR, clkcr);
+@@ -996,6 +1037,8 @@ static int
+ sunxi_mmc_execute_tuning(sdmmc_chipset_handle_t sch, int timing)
+ {
+ 	switch (timing) {
++	case SDMMC_TIMING_UHS_SDR50:
++	case SDMMC_TIMING_UHS_SDR104:
+ 	case SDMMC_TIMING_MMC_HS200:
+ 		break;
+ 	default:
 --- sys/arch/arm/sunxi/sunxi_mmc.h
 +++ sys/arch/arm/sunxi/sunxi_mmc.h
 @@ -59,6 +59,7 @@
@@ -632,6 +783,15 @@ which selects the same code silently.
  tegrasoctherm*	at fdt?			# NVIDIA Tegra SOC_THERM
  rktsadc*	at fdt?			# RockChip TSASC
  
+@@ -561,6 +567,8 @@ rkusbphy*	at rkusb?
+ #rktcphy* 	at rktypec?
+ sunxiusbphy*	at fdt? pass 9		# Allwinner USB PHY
+ sunxiusb3phy*	at fdt? pass 9		# Allwinner USB3 PHY
++sun60iusb2phy*	at fdt? pass 9		# Allwinner A733 USB 2.0 PHY of the USB 3 port
++sun60icombophy*	at fdt? pass 9		# Allwinner A733 USB 3 serdes
+ tegrausbphy*	at fdt?			# NVIDIA Tegra USB PHY
+ dwctwo* 	at fdt?			# Designware USB DRD
+ ehci*		at fdt?			# EHCI
 --- sys/dev/ic/dwc_eqos.c
 +++ sys/dev/ic/dwc_eqos.c
 @@ -1490,7 +1490,7 @@ eqos_attach(struct eqos_softc *sc)
@@ -645,7 +805,7 @@ which selects the same code silently.
  		return ENXIO;
 --- /dev/null
 +++ sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner/sun60i-a733-orangepi-zero4.dts
-@@ -0,0 +1,141 @@
+@@ -0,0 +1,394 @@
 +// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
 +/*
 + * Orange Pi Zero 4.
@@ -677,6 +837,16 @@ which selects the same code silently.
 +	 * The enable pins of the AIC8800 wireless module: PM1 for the
 +	 * network half, PM2 for the Bluetooth half.
 +	 */
++	/* Power of the Type-C data port, switched by PL8. */
++	reg_usb3_vbus: regulator-usb3-vbus {
++		compatible = "regulator-fixed";
++		regulator-name = "usb3-vbus";
++		regulator-min-microvolt = <5000000>;
++		regulator-max-microvolt = <5000000>;
++		gpio = <&r_pio 0 8 GPIO_ACTIVE_HIGH>;
++		enable-active-high;
++	};
++
 +	wifi_pwrseq: wifi-pwrseq {
 +		compatible = "mmc-pwrseq-simple";
 +		reset-gpios = <&r_pio 1 1 GPIO_ACTIVE_LOW>,
@@ -719,8 +889,11 @@ which selects the same code silently.
 +	pinctrl-names = "default";
 +	pinctrl-0 = <&mmc0_pins>;
 +	bus-width = <4>;
-+	/* PMIC rails are not described yet: stay at 3.3 V signalling. */
-+	max-frequency = <50000000>;
++	/* The chip switches the supply of the card's pins to 1.8 V. */
++	vqmmc-supply = <&reg_pf>;
++	sd-uhs-sdr50;
++	sd-uhs-sdr104;
++	max-frequency = <150000000>;
 +	broken-cd;
 +	status = "okay";
 +};
@@ -760,6 +933,41 @@ which selects the same code silently.
 +	status = "okay";
 +};
 +
++/* The Type-C data port as a USB 2.0 host. */
++&usb3_u2phy {
++	status = "okay";
++};
++
++/*
++ * The Type-C controller of the data port. It powers the port only while
++ * a device is plugged in. Its interrupt line (PL9) is not described: the
++ * pin controller has no interrupts, the driver polls.
++ */
++&r_i2c1 {
++	status = "okay";
++
++	typec@22 {
++		compatible = "fcs,fusb302";
++		reg = <0x22>;
++		vbus-supply = <&reg_usb3_vbus>;
++
++		connector {
++			compatible = "usb-c-connector";
++			label = "USB-C";
++			data-role = "host";
++			power-role = "source";
++		};
++	};
++};
++
++&combophy {
++	status = "okay";
++};
++
++&usb3 {
++	status = "okay";
++};
++
 +/*
 + * The power management chip. The vendor tree also lists an AXP515 at
 + * 0x34; this board does not carry one.
@@ -770,7 +978,212 @@ which selects the same code silently.
 +	pmic@36 {
 +		compatible = "x-powers,axp8191";
 +		reg = <0x36>;
++
++		regulators {
++			reg_dcdc1: dcdc1 {
++				regulator-name = "dcdc1";
++			};
++
++			reg_dcdc2: dcdc2 {
++				regulator-name = "dcdc2";
++			};
++
++			/* The big cores. */
++			reg_dcdc3: dcdc3 {
++				regulator-name = "dcdc3";
++				regulator-min-microvolt = <800000>;
++				regulator-max-microvolt = <1050000>;
++			};
++
++			reg_dcdc4: dcdc4 {
++				regulator-name = "dcdc4";
++			};
++
++			/* The little cores. */
++			reg_dcdc5: dcdc5 {
++				regulator-name = "dcdc5";
++				regulator-min-microvolt = <800000>;
++				regulator-max-microvolt = <1050000>;
++			};
++
++			reg_dcdc6: dcdc6 {
++				regulator-name = "dcdc6";
++			};
++
++			reg_dcdc7: dcdc7 {
++				regulator-name = "dcdc7";
++			};
++
++			reg_dcdc8: dcdc8 {
++				regulator-name = "dcdc8";
++			};
++
++			reg_dcdc9: dcdc9 {
++				regulator-name = "dcdc9";
++			};
++
++			reg_dc1sw1: dc1sw1 {
++				regulator-name = "dc1sw1";
++			};
++
++			reg_dc1sw2: dc1sw2 {
++				regulator-name = "dc1sw2";
++			};
++
++			reg_aldo1: aldo1 {
++				regulator-name = "aldo1";
++			};
++
++			reg_aldo2: aldo2 {
++				regulator-name = "aldo2";
++			};
++
++			reg_aldo3: aldo3 {
++				regulator-name = "aldo3";
++			};
++
++			reg_aldo4: aldo4 {
++				regulator-name = "aldo4";
++			};
++
++			reg_aldo5: aldo5 {
++				regulator-name = "aldo5";
++			};
++
++			reg_aldo6: aldo6 {
++				regulator-name = "aldo6";
++			};
++
++			reg_bldo1: bldo1 {
++				regulator-name = "bldo1";
++			};
++
++			reg_bldo2: bldo2 {
++				regulator-name = "bldo2";
++			};
++
++			reg_bldo3: bldo3 {
++				regulator-name = "bldo3";
++			};
++
++			reg_bldo4: bldo4 {
++				regulator-name = "bldo4";
++			};
++
++			reg_bldo5: bldo5 {
++				regulator-name = "bldo5";
++			};
++
++			reg_cldo1: cldo1 {
++				regulator-name = "cldo1";
++			};
++
++			reg_cldo2: cldo2 {
++				regulator-name = "cldo2";
++			};
++
++			reg_cldo3: cldo3 {
++				regulator-name = "cldo3";
++			};
++
++			reg_cldo4: cldo4 {
++				regulator-name = "cldo4";
++			};
++
++			reg_cldo5: cldo5 {
++				regulator-name = "cldo5";
++			};
++
++			reg_dldo1: dldo1 {
++				regulator-name = "dldo1";
++			};
++
++			reg_dldo2: dldo2 {
++				regulator-name = "dldo2";
++			};
++
++			reg_dldo3: dldo3 {
++				regulator-name = "dldo3";
++			};
++
++			reg_dldo4: dldo4 {
++				regulator-name = "dldo4";
++			};
++
++			reg_dldo5: dldo5 {
++				regulator-name = "dldo5";
++			};
++
++			reg_dldo6: dldo6 {
++				regulator-name = "dldo6";
++			};
++
++			reg_eldo1: eldo1 {
++				regulator-name = "eldo1";
++			};
++
++			reg_eldo2: eldo2 {
++				regulator-name = "eldo2";
++			};
++
++			reg_eldo3: eldo3 {
++				regulator-name = "eldo3";
++			};
++
++			reg_eldo4: eldo4 {
++				regulator-name = "eldo4";
++			};
++
++			reg_eldo5: eldo5 {
++				regulator-name = "eldo5";
++			};
++
++			reg_eldo6: eldo6 {
++				regulator-name = "eldo6";
++			};
++		};
 +	};
++};
++
++/* Six little cores on one supply, two big ones on another. */
++&cpu0 {
++	operating-points-v2 = <&cluster0_opp_table>;
++	cpu-supply = <&reg_dcdc5>;
++};
++
++&cpu1 {
++	operating-points-v2 = <&cluster0_opp_table>;
++	cpu-supply = <&reg_dcdc5>;
++};
++
++&cpu2 {
++	operating-points-v2 = <&cluster0_opp_table>;
++	cpu-supply = <&reg_dcdc5>;
++};
++
++&cpu3 {
++	operating-points-v2 = <&cluster0_opp_table>;
++	cpu-supply = <&reg_dcdc5>;
++};
++
++&cpu4 {
++	operating-points-v2 = <&cluster0_opp_table>;
++	cpu-supply = <&reg_dcdc5>;
++};
++
++&cpu5 {
++	operating-points-v2 = <&cluster0_opp_table>;
++	cpu-supply = <&reg_dcdc5>;
++};
++
++&cpu6 {
++	operating-points-v2 = <&cluster1_opp_table>;
++	cpu-supply = <&reg_dcdc3>;
++};
++
++&cpu7 {
++	operating-points-v2 = <&cluster1_opp_table>;
++	cpu-supply = <&reg_dcdc3>;
 +};
 +
 +&uart0 {
@@ -789,7 +1202,7 @@ which selects the same code silently.
 +};
 --- /dev/null
 +++ sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner/sun60i-a733.dtsi
-@@ -0,0 +1,494 @@
+@@ -0,0 +1,1068 @@
 +// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
 +/*
 + * Allwinner A733 (sun60iw2).
@@ -810,37 +1223,523 @@ which selects the same code silently.
 +	#size-cells = <2>;
 +
 +	/*
-+	 * What the divider behind each cluster's PLL offers at the PLL rate
-+	 * and the supply voltage the boot loader leaves. No regulator is
-+	 * described, so the voltages are placeholders.
++	 * Rates and supply voltages per speed grade. Bit n of
++	 * "opp-supported-hw" stands for the n-th of the grades 0x00, 0x01,
++	 * 0x02, 0x03, 0x04, 0x05, 0x06, 0x14 and 0x15 in the EFUSE. A board
++	 * points its cores here together with their supplies: without a
++	 * supply the higher rates must not be used.
 +	 */
 +	cluster0_opp_table: opp-table-cluster0 {
-+		compatible = "operating-points-v2";
++		compatible = "allwinner,sun60i-a733-operating-points";
 +		opp-shared;
 +
-+		opp-468000000 {
-+			opp-hz = /bits/ 64 <468000000>;
-+			opp-microvolt = <0>;
++		opp-408-800 {
++			opp-hz = /bits/ 64 <408000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x1ff>;
++			clock-latency-ns = <2000000>;
 +		};
 +
-+		opp-936000000 {
-+			opp-hz = /bits/ 64 <936000000>;
-+			opp-microvolt = <0>;
++		opp-720-800 {
++			opp-hz = /bits/ 64 <720000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x001>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-792-800 {
++			opp-hz = /bits/ 64 <792000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x1fe>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1008-800 {
++			opp-hz = /bits/ 64 <1008000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x1ff>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1104-800 {
++			opp-hz = /bits/ 64 <1104000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x002>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1200-800 {
++			opp-hz = /bits/ 64 <1200000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x1fd>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1200-850 {
++			opp-hz = /bits/ 64 <1200000000>;
++			opp-microvolt = <850000>;
++			opp-supported-hw = <0x002>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1296-800 {
++			opp-hz = /bits/ 64 <1296000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x004>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1296-900 {
++			opp-hz = /bits/ 64 <1296000000>;
++			opp-microvolt = <900000>;
++			opp-supported-hw = <0x002>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1392-800 {
++			opp-hz = /bits/ 64 <1392000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x1a0>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1392-840 {
++			opp-hz = /bits/ 64 <1392000000>;
++			opp-microvolt = <840000>;
++			opp-supported-hw = <0x050>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1392-850 {
++			opp-hz = /bits/ 64 <1392000000>;
++			opp-microvolt = <850000>;
++			opp-supported-hw = <0x004>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1392-860 {
++			opp-hz = /bits/ 64 <1392000000>;
++			opp-microvolt = <860000>;
++			opp-supported-hw = <0x008>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1392-950 {
++			opp-hz = /bits/ 64 <1392000000>;
++			opp-microvolt = <950000>;
++			opp-supported-hw = <0x002>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1416-800 {
++			opp-hz = /bits/ 64 <1416000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x001>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1512-820 {
++			opp-hz = /bits/ 64 <1512000000>;
++			opp-microvolt = <820000>;
++			opp-supported-hw = <0x1a0>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1512-880 {
++			opp-hz = /bits/ 64 <1512000000>;
++			opp-microvolt = <880000>;
++			opp-supported-hw = <0x010>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1512-900 {
++			opp-hz = /bits/ 64 <1512000000>;
++			opp-microvolt = <900000>;
++			opp-supported-hw = <0x004>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1512-1000 {
++			opp-hz = /bits/ 64 <1512000000>;
++			opp-microvolt = <1000000>;
++			opp-supported-hw = <0x002>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1608-840 {
++			opp-hz = /bits/ 64 <1608000000>;
++			opp-microvolt = <840000>;
++			opp-supported-hw = <0x100>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1608-860 {
++			opp-hz = /bits/ 64 <1608000000>;
++			opp-microvolt = <860000>;
++			opp-supported-hw = <0x0a0>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1608-900 {
++			opp-hz = /bits/ 64 <1608000000>;
++			opp-microvolt = <900000>;
++			opp-supported-hw = <0x001>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1608-920 {
++			opp-hz = /bits/ 64 <1608000000>;
++			opp-microvolt = <920000>;
++			opp-supported-hw = <0x010>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1608-950 {
++			opp-hz = /bits/ 64 <1608000000>;
++			opp-microvolt = <950000>;
++			opp-supported-hw = <0x004>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1608-1050 {
++			opp-hz = /bits/ 64 <1608000000>;
++			opp-microvolt = <1050000>;
++			opp-supported-hw = <0x002>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1704-860 {
++			opp-hz = /bits/ 64 <1704000000>;
++			opp-microvolt = <860000>;
++			opp-supported-hw = <0x100>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1704-900 {
++			opp-hz = /bits/ 64 <1704000000>;
++			opp-microvolt = <900000>;
++			opp-supported-hw = <0x0a0>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1704-960 {
++			opp-hz = /bits/ 64 <1704000000>;
++			opp-microvolt = <960000>;
++			opp-supported-hw = <0x010>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1704-1000 {
++			opp-hz = /bits/ 64 <1704000000>;
++			opp-microvolt = <1000000>;
++			opp-supported-hw = <0x004>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1800-900 {
++			opp-hz = /bits/ 64 <1800000000>;
++			opp-microvolt = <900000>;
++			opp-supported-hw = <0x100>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1800-950 {
++			opp-hz = /bits/ 64 <1800000000>;
++			opp-microvolt = <950000>;
++			opp-supported-hw = <0x0a0>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1800-1000 {
++			opp-hz = /bits/ 64 <1800000000>;
++			opp-microvolt = <1000000>;
++			opp-supported-hw = <0x011>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1800-1050 {
++			opp-hz = /bits/ 64 <1800000000>;
++			opp-microvolt = <1050000>;
++			opp-supported-hw = <0x004>;
++			clock-latency-ns = <2000000>;
 +		};
 +	};
 +
 +	cluster1_opp_table: opp-table-cluster1 {
-+		compatible = "operating-points-v2";
++		compatible = "allwinner,sun60i-a733-operating-points";
 +		opp-shared;
 +
-+		opp-468000000 {
-+			opp-hz = /bits/ 64 <468000000>;
-+			opp-microvolt = <0>;
++		opp-408-800 {
++			opp-hz = /bits/ 64 <408000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x1ff>;
++			clock-latency-ns = <2000000>;
 +		};
 +
-+		opp-936000000 {
-+			opp-hz = /bits/ 64 <936000000>;
-+			opp-microvolt = <0>;
++		opp-720-800 {
++			opp-hz = /bits/ 64 <720000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x001>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-792-800 {
++			opp-hz = /bits/ 64 <792000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x1fe>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1008-800 {
++			opp-hz = /bits/ 64 <1008000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x1ff>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1200-800 {
++			opp-hz = /bits/ 64 <1200000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x1ff>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1296-800 {
++			opp-hz = /bits/ 64 <1296000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x002>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1392-800 {
++			opp-hz = /bits/ 64 <1392000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x1f5>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1392-820 {
++			opp-hz = /bits/ 64 <1392000000>;
++			opp-microvolt = <820000>;
++			opp-supported-hw = <0x008>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1392-850 {
++			opp-hz = /bits/ 64 <1392000000>;
++			opp-microvolt = <850000>;
++			opp-supported-hw = <0x002>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1512-800 {
++			opp-hz = /bits/ 64 <1512000000>;
++			opp-microvolt = <800000>;
++			opp-supported-hw = <0x1e5>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1512-820 {
++			opp-hz = /bits/ 64 <1512000000>;
++			opp-microvolt = <820000>;
++			opp-supported-hw = <0x010>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1512-860 {
++			opp-hz = /bits/ 64 <1512000000>;
++			opp-microvolt = <860000>;
++			opp-supported-hw = <0x008>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1512-900 {
++			opp-hz = /bits/ 64 <1512000000>;
++			opp-microvolt = <900000>;
++			opp-supported-hw = <0x002>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1608-820 {
++			opp-hz = /bits/ 64 <1608000000>;
++			opp-microvolt = <820000>;
++			opp-supported-hw = <0x1a0>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1608-840 {
++			opp-hz = /bits/ 64 <1608000000>;
++			opp-microvolt = <840000>;
++			opp-supported-hw = <0x010>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1608-850 {
++			opp-hz = /bits/ 64 <1608000000>;
++			opp-microvolt = <850000>;
++			opp-supported-hw = <0x045>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1608-900 {
++			opp-hz = /bits/ 64 <1608000000>;
++			opp-microvolt = <900000>;
++			opp-supported-hw = <0x008>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1608-950 {
++			opp-hz = /bits/ 64 <1608000000>;
++			opp-microvolt = <950000>;
++			opp-supported-hw = <0x002>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1704-840 {
++			opp-hz = /bits/ 64 <1704000000>;
++			opp-microvolt = <840000>;
++			opp-supported-hw = <0x100>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1704-850 {
++			opp-hz = /bits/ 64 <1704000000>;
++			opp-microvolt = <850000>;
++			opp-supported-hw = <0x0a0>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1704-870 {
++			opp-hz = /bits/ 64 <1704000000>;
++			opp-microvolt = <870000>;
++			opp-supported-hw = <0x010>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1704-900 {
++			opp-hz = /bits/ 64 <1704000000>;
++			opp-microvolt = <900000>;
++			opp-supported-hw = <0x005>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1704-1000 {
++			opp-hz = /bits/ 64 <1704000000>;
++			opp-microvolt = <1000000>;
++			opp-supported-hw = <0x002>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1800-870 {
++			opp-hz = /bits/ 64 <1800000000>;
++			opp-microvolt = <870000>;
++			opp-supported-hw = <0x100>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1800-900 {
++			opp-hz = /bits/ 64 <1800000000>;
++			opp-microvolt = <900000>;
++			opp-supported-hw = <0x0a0>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1800-920 {
++			opp-hz = /bits/ 64 <1800000000>;
++			opp-microvolt = <920000>;
++			opp-supported-hw = <0x010>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1800-950 {
++			opp-hz = /bits/ 64 <1800000000>;
++			opp-microvolt = <950000>;
++			opp-supported-hw = <0x005>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1800-1050 {
++			opp-hz = /bits/ 64 <1800000000>;
++			opp-microvolt = <1050000>;
++			opp-supported-hw = <0x002>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1896-900 {
++			opp-hz = /bits/ 64 <1896000000>;
++			opp-microvolt = <900000>;
++			opp-supported-hw = <0x100>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1896-940 {
++			opp-hz = /bits/ 64 <1896000000>;
++			opp-microvolt = <940000>;
++			opp-supported-hw = <0x0a0>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1896-970 {
++			opp-hz = /bits/ 64 <1896000000>;
++			opp-microvolt = <970000>;
++			opp-supported-hw = <0x010>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1896-1000 {
++			opp-hz = /bits/ 64 <1896000000>;
++			opp-microvolt = <1000000>;
++			opp-supported-hw = <0x004>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1920-1000 {
++			opp-hz = /bits/ 64 <1920000000>;
++			opp-microvolt = <1000000>;
++			opp-supported-hw = <0x001>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1944-930 {
++			opp-hz = /bits/ 64 <1944000000>;
++			opp-microvolt = <930000>;
++			opp-supported-hw = <0x100>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1944-970 {
++			opp-hz = /bits/ 64 <1944000000>;
++			opp-microvolt = <970000>;
++			opp-supported-hw = <0x0a0>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1944-1000 {
++			opp-hz = /bits/ 64 <1944000000>;
++			opp-microvolt = <1000000>;
++			opp-supported-hw = <0x010>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1992-960 {
++			opp-hz = /bits/ 64 <1992000000>;
++			opp-microvolt = <960000>;
++			opp-supported-hw = <0x100>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1992-1000 {
++			opp-hz = /bits/ 64 <1992000000>;
++			opp-microvolt = <1000000>;
++			opp-supported-hw = <0x0a0>;
++			clock-latency-ns = <2000000>;
++		};
++
++		opp-1992-1050 {
++			opp-hz = /bits/ 64 <1992000000>;
++			opp-microvolt = <1050000>;
++			opp-supported-hw = <0x011>;
++			clock-latency-ns = <2000000>;
 +		};
 +	};
 +
@@ -854,7 +1753,6 @@ which selects the same code silently.
 +			reg = <0x000>;
 +			enable-method = "psci";
 +			clocks = <&cpupll 0>;
-+			operating-points-v2 = <&cluster0_opp_table>;
 +		};
 +
 +		cpu1: cpu@100 {
@@ -863,7 +1761,6 @@ which selects the same code silently.
 +			reg = <0x100>;
 +			enable-method = "psci";
 +			clocks = <&cpupll 0>;
-+			operating-points-v2 = <&cluster0_opp_table>;
 +		};
 +
 +		cpu2: cpu@200 {
@@ -872,7 +1769,6 @@ which selects the same code silently.
 +			reg = <0x200>;
 +			enable-method = "psci";
 +			clocks = <&cpupll 0>;
-+			operating-points-v2 = <&cluster0_opp_table>;
 +		};
 +
 +		cpu3: cpu@300 {
@@ -881,7 +1777,6 @@ which selects the same code silently.
 +			reg = <0x300>;
 +			enable-method = "psci";
 +			clocks = <&cpupll 0>;
-+			operating-points-v2 = <&cluster0_opp_table>;
 +		};
 +
 +		cpu4: cpu@400 {
@@ -890,7 +1785,6 @@ which selects the same code silently.
 +			reg = <0x400>;
 +			enable-method = "psci";
 +			clocks = <&cpupll 0>;
-+			operating-points-v2 = <&cluster0_opp_table>;
 +		};
 +
 +		cpu5: cpu@500 {
@@ -899,7 +1793,6 @@ which selects the same code silently.
 +			reg = <0x500>;
 +			enable-method = "psci";
 +			clocks = <&cpupll 0>;
-+			operating-points-v2 = <&cluster0_opp_table>;
 +		};
 +
 +		cpu6: cpu@600 {
@@ -908,7 +1801,6 @@ which selects the same code silently.
 +			reg = <0x600>;
 +			enable-method = "psci";
 +			clocks = <&cpupll 1>;
-+			operating-points-v2 = <&cluster1_opp_table>;
 +		};
 +
 +		cpu7: cpu@700 {
@@ -917,7 +1809,6 @@ which selects the same code silently.
 +			reg = <0x700>;
 +			enable-method = "psci";
 +			clocks = <&cpupll 1>;
-+			operating-points-v2 = <&cluster1_opp_table>;
 +		};
 +	};
 +
@@ -990,6 +1881,13 @@ which selects the same code silently.
 +				allwinner,pinmux = <5>;
 +				drive-strength = <20>;
 +				bias-pull-up;
++			};
++
++			/* The chip switches the supply of bank PF itself. */
++			reg_pf: pf-supply {
++				regulator-name = "vcc-pf";
++				regulator-min-microvolt = <1800000>;
++				regulator-max-microvolt = <3300000>;
 +			};
 +
 +			mmc0_pins: mmc0-pins {
@@ -1189,6 +2087,74 @@ which selects the same code silently.
 +		};
 +
 +		/*
++		 * The USB 3 port. Its controller and PHYs belong to the
++		 * high speed subsystem at 0x06c00000, whose bus gates the
++		 * USB 2.0 PHY driver opens; that is the PHY's second
++		 * register range. The compatible string of the PHY is not
++		 * an upstream binding. The serdes for SuperSpeed is not
++		 * described, so the port runs at USB 2.0 rates.
++		 */
++		usb3_u2phy: phy@6b00000 {
++			compatible = "allwinner,sun60i-a733-usb3-u2phy";
++			reg = <0x06b00000 0x800>, <0x06c00000 0x400>;
++			clocks = <&ccu CLK_USB2_U2_REF>,
++				 <&ccu CLK_USB2_U2_PIPE>;
++			assigned-clocks = <&ccu CLK_USB2_U2_PIPE>;
++			assigned-clock-parents = <&ccu CLK_PLL_PERIPH0_480M>;
++			assigned-clock-rates = <120000000>;
++			allwinner,phy-tune = <0x143338d6>;
++			#phy-cells = <0>;
++			status = "disabled";
++		};
++
++		/*
++		 * The serdes behind the SuperSpeed lanes of the Type-C
++		 * port. Registers: the PHY's pins, the PHY itself, the
++		 * lane routing, the subsystem's gates, and the gate of
++		 * the oscillator's outputs in the real-time clock. The
++		 * compatible string is not an upstream binding.
++		 */
++		combophy: phy@6c01000 {
++			compatible = "allwinner,sun60i-a733-combophy";
++			reg = <0x06c01000 0xa00>, <0x06c80000 0x20000>,
++			      <0x06c06000 0x2000>, <0x06c00000 0x400>,
++			      <0x0709016c 0x4>;
++			clocks = <&ccu CLK_SERDES_PHY>;
++			assigned-clocks = <&ccu CLK_SERDES_PHY>;
++			assigned-clock-parents = <&ccu CLK_PLL_PERIPH0_600M>;
++			assigned-clock-rates = <100000000>;
++			resets = <&ccu RST_BUS_SERDES>;
++			#phy-cells = <0>;
++			status = "disabled";
++		};
++
++		usb3: usb@6a00000 {
++			compatible = "snps,dwc3";
++			reg = <0x06a00000 0x100000>;
++			interrupts = <GIC_SPI 155 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&ccu CLK_USB2_MF>, <&ccu CLK_USB2_U2_REF>,
++				 <&ccu CLK_USB2_SUSPEND>;
++			clock-names = "bus_clk", "ref_clk", "suspend";
++			/*
++			 * The controller counts its frames from the
++			 * bus clock and expects 24 MHz there.
++			 */
++			assigned-clocks = <&ccu CLK_USB2_SUSPEND>,
++					  <&ccu CLK_USB2_MF>;
++			assigned-clock-parents = <&ccu CLK_SYS_24M>,
++						 <&ccu CLK_SYS_24M>;
++			resets = <&ccu RST_BUS_USB2>;
++			dr_mode = "host";
++			phy_type = "utmi";
++			snps,dis_enblslpm_quirk;
++			snps,dis_u3_susphy_quirk;
++			snps,dis_u2_susphy_quirk;
++			phys = <&usb3_u2phy>, <&combophy>;
++			phy-names = "usb2-phy", "usb3-phy";
++			status = "disabled";
++		};
++
++		/*
 +		 * The compatible string is not an upstream binding yet;
 +		 * the Linux driver for the A523 calls its controller
 +		 * allwinner,sun55i-a523-gmac200.
@@ -1261,6 +2227,13 @@ which selects the same code silently.
 +				allwinner,pinmux = <2>;
 +				bias-pull-up;
 +			};
++
++			r_i2c1_pins: r-i2c1-pins {
++				pins = "PL12", "PL13";
++				function = "s_twi1";
++				allwinner,pinmux = <3>;
++				bias-pull-up;
++			};
 +		};
 +
 +		rtc: rtc@7090000 {
@@ -1278,6 +2251,20 @@ which selects the same code silently.
 +			resets = <&r_ccu RST_BUS_R_I2C0>;
 +			pinctrl-names = "default";
 +			pinctrl-0 = <&r_i2c0_pins>;
++			#address-cells = <1>;
++			#size-cells = <0>;
++			status = "disabled";
++		};
++
++		r_i2c1: i2c@7084000 {
++			compatible = "allwinner,sun60i-a733-i2c",
++				     "allwinner,sun6i-a31-i2c";
++			reg = <0x07084000 0x400>;
++			interrupts = <GIC_SPI 204 IRQ_TYPE_LEVEL_HIGH>;
++			clocks = <&r_ccu CLK_BUS_R_I2C1>;
++			resets = <&r_ccu RST_BUS_R_I2C1>;
++			pinctrl-names = "default";
++			pinctrl-0 = <&r_i2c1_pins>;
 +			#address-cells = <1>;
 +			#size-cells = <0>;
 +			status = "disabled";
@@ -2044,7 +3031,7 @@ which selects the same code silently.
 +	sun60i_a733_eqos_match, sun60i_a733_eqos_attach, NULL, NULL);
 --- /dev/null
 +++ sys/arch/arm/sunxi/sun60i_a733_gpio.c
-@@ -0,0 +1,363 @@
+@@ -0,0 +1,465 @@
 +/*-
 + * Copyright (c) 2026 Anton and oxtorg contributors
 + * All rights reserved.
@@ -2114,6 +3101,16 @@ which selects the same code silently.
 +#define	  A733_GPIO_PULL_UP	1
 +#define	  A733_GPIO_PULL_DOWN	2
 +
++/*
++ * The chip feeds bank PF, where the card sits, with 3.3 V or 1.8 V by
++ * itself. Bit PF_POW_VAL follows the supply; which level means what
++ * depends on the chip revision, so only its change is watched.
++ */
++#define	A733_PIO_POW_VAL	0x48
++#define	 A733_PIO_POW_VAL_PF	__BIT(10)
++#define	A733_PIO_PF_POW		0x70
++#define	 A733_PIO_PF_POW_3V3	__BIT(0)
++
 +struct a733_gpio_config {
 +	char		first_bank;	/* letter of the first bank */
 +	u_int		nbanks;
@@ -2121,6 +3118,7 @@ which selects the same code silently.
 +	bus_size_t	bank_size;
 +	bus_size_t	drv_offset;	/* drive strength, inside a bank */
 +	bus_size_t	pull_offset;	/* pull-up and pull-down */
++	bool		pf_supply;	/* switches the supply of bank PF */
 +};
 +
 +static const struct a733_gpio_config a733_pio_config = {
@@ -2130,6 +3128,7 @@ which selects the same code silently.
 +	.bank_size = 0x80,
 +	.drv_offset = 0x20,
 +	.pull_offset = 0x30,
++	.pf_supply = true,
 +};
 +
 +static const struct a733_gpio_config a733_r_pio_config = {
@@ -2352,6 +3351,85 @@ which selects the same code silently.
 +	.write = a733_gpio_write,
 +};
 +
++/*
++ * The supply of bank PF as a regulator, so that the card driver can ask
++ * for 1.8 V signalling.
++ */
++static int
++a733_pf_supply_acquire(device_t dev)
++{
++	return 0;
++}
++
++static void
++a733_pf_supply_release(device_t dev)
++{
++}
++
++static int
++a733_pf_supply_enable(device_t dev, bool enable)
++{
++	return enable ? 0 : EINVAL;
++}
++
++static int
++a733_pf_supply_get_voltage(device_t dev, u_int *puvol)
++{
++	struct a733_gpio_softc * const sc = device_private(dev);
++
++	*puvol = (GPIO_READ(sc, A733_PIO_PF_POW) & A733_PIO_PF_POW_3V3) ?
++	    3300000 : 1800000;
++
++	return 0;
++}
++
++static int
++a733_pf_supply_set_voltage(device_t dev, u_int min_uvol, u_int max_uvol)
++{
++	struct a733_gpio_softc * const sc = device_private(dev);
++	uint32_t before, pow;
++	u_int cur;
++	int retry;
++
++	if (min_uvol <= 1800000 && 1800000 <= max_uvol)
++		pow = 0;
++	else if (min_uvol <= 3300000 && 3300000 <= max_uvol)
++		pow = A733_PIO_PF_POW_3V3;
++	else
++		return ERANGE;
++
++	a733_pf_supply_get_voltage(dev, &cur);
++	if ((pow != 0) == (cur == 3300000))
++		return 0;
++
++	mutex_enter(&sc->sc_lock);
++	before = GPIO_READ(sc, A733_PIO_POW_VAL) & A733_PIO_POW_VAL_PF;
++	GPIO_WRITE(sc, A733_PIO_PF_POW, pow);
++	mutex_exit(&sc->sc_lock);
++
++	for (retry = 100; retry > 0; retry--) {
++		if ((GPIO_READ(sc, A733_PIO_POW_VAL) & A733_PIO_POW_VAL_PF) !=
++		    before)
++			break;
++		delay(100);
++	}
++	if (retry == 0) {
++		device_printf(dev, "supply of bank PF did not change\n");
++		return ETIMEDOUT;
++	}
++	delay(10);
++
++	return 0;
++}
++
++static const struct fdtbus_regulator_controller_func a733_pf_supply_funcs = {
++	.acquire = a733_pf_supply_acquire,
++	.release = a733_pf_supply_release,
++	.enable = a733_pf_supply_enable,
++	.set_voltage = a733_pf_supply_set_voltage,
++	.get_voltage = a733_pf_supply_get_voltage,
++};
++
 +static int
 +a733_gpio_match(device_t parent, cfdata_t cf, void *aux)
 +{
@@ -2398,6 +3476,17 @@ which selects the same code silently.
 +	fdtbus_register_gpio_controller(self, phandle, &a733_gpio_funcs);
 +
 +	for (child = OF_child(phandle); child; child = OF_peer(child)) {
++		if (sc->sc_config->pf_supply &&
++		    of_hasprop(child, "regulator-name")) {
++			aprint_normal_dev(self, "bank PF at %s V "
++			    "(POW_VAL 0x%08x)\n",
++			    (GPIO_READ(sc, A733_PIO_PF_POW) &
++			    A733_PIO_PF_POW_3V3) ? "3.3" : "1.8",
++			    GPIO_READ(sc, A733_PIO_POW_VAL));
++			fdtbus_register_regulator_controller(self, child,
++			    &a733_pf_supply_funcs);
++			continue;
++		}
 +		if (!of_hasprop(child, "pins") ||
 +		    !of_hasprop(child, "allwinner,pinmux"))
 +			continue;
@@ -3170,7 +4259,7 @@ which selects the same code silently.
 +#endif /* _SUN60I_A733_R_CCU_H */
 --- /dev/null
 +++ sys/dev/i2c/axp8191.c
-@@ -0,0 +1,183 @@
+@@ -0,0 +1,447 @@
 +/*-
 + * Copyright (c) 2026 Anton and oxtorg contributors
 + * All rights reserved.
@@ -3232,6 +4321,88 @@ which selects the same code silently.
 +
 +#define	AXP8191_POLL_MS		500
 +
++/*
++ * Regulators. Nine switching converters, two switches behind the first
++ * of them and 28 linear regulators. A converter's voltage code runs
++ * through up to four ranges with their own steps.
++ */
++#define	AXP8191_DCDC_CTL1	0x10	/* enable bits of DCDC1-8 */
++#define	AXP8191_DCDC_CTL2	0x11	/* DCDC9 and the switches */
++#define	AXP8191_DCDC_VOL(n)	(0x12 + (n))
++#define	AXP8191_LDO_CTL(n)	(0x20 + (n) / NBBY)
++#define	AXP8191_LDO_VOL(n)	(0x24 + (n))
++#define	AXP8191_NRANGES		4
++/* How fast an output follows a new setting, and a margin on top. */
++#define	AXP8191_RAMP_UV_PER_US	250
++#define	AXP8191_RAMP_MARGIN_US	200
++
++struct axp8191_range {
++	u_int			r_uv;		/* at the first code */
++	uint8_t			r_first;
++	uint8_t			r_last;
++	u_int			r_step;
++};
++
++struct axp8191_ctrl {
++	const char		*c_name;
++	uint8_t			c_enable_reg;
++	uint8_t			c_enable_mask;
++	uint8_t			c_vol_reg;	/* 0: a switch */
++	uint8_t			c_vol_mask;
++	struct axp8191_range	c_ranges[AXP8191_NRANGES];
++};
++
++#define	AXP8191_LOW_RANGES							{ 500000, 0x00, 0x46, 10000 }, { 1220000, 0x47, 0x57, 20000 }
++#define	AXP8191_DCDC(_n, ...)							{ .c_name = "dcdc" #_n,							  .c_enable_reg = (_n) < 9 ? AXP8191_DCDC_CTL1 : AXP8191_DCDC_CTL2, 	  .c_enable_mask = __BIT(((_n) - 1) % NBBY),				  .c_vol_reg = AXP8191_DCDC_VOL((_n) - 1), .c_vol_mask = 0x7f,		  .c_ranges = { __VA_ARGS__ } }
++#define	AXP8191_SWITCH(_name, _bit)						{ .c_name = (_name), .c_enable_reg = AXP8191_DCDC_CTL2,		  .c_enable_mask = __BIT(_bit) }
++/* _k counts the linear regulators through all five groups. */
++#define	AXP8191_LDO(_name, _k, _mask, _last, _step)				{ .c_name = (_name), .c_enable_reg = AXP8191_LDO_CTL(_k),		  .c_enable_mask = __BIT((_k) % NBBY),					  .c_vol_reg = AXP8191_LDO_VOL(_k), .c_vol_mask = (_mask),		  .c_ranges = { { 500000, 0x00, (_last), (_step) } } }
++#define	AXP8191_LDO_100MV(_name, _k)						AXP8191_LDO(_name, _k, 0x1f, 0x1d, 100000)
++#define	AXP8191_LDO_25MV(_name, _k)						AXP8191_LDO(_name, _k, 0x3f, 0x28, 25000)
++
++static const struct axp8191_ctrl axp8191_ctrls[] = {
++	AXP8191_DCDC(1, { 1000000, 0x00, 0x1c, 100000 }),
++	AXP8191_DCDC(2, AXP8191_LOW_RANGES),
++	AXP8191_DCDC(3, AXP8191_LOW_RANGES),
++	AXP8191_DCDC(4, AXP8191_LOW_RANGES),
++	AXP8191_DCDC(5, AXP8191_LOW_RANGES),
++	AXP8191_DCDC(6, AXP8191_LOW_RANGES, { 1800000, 0x58, 0x67, 20000 },
++	    { 2440000, 0x68, 0x70, 40000 }),
++	AXP8191_DCDC(7, AXP8191_LOW_RANGES),
++	AXP8191_DCDC(8, AXP8191_LOW_RANGES, { 1900000, 0x58, 0x67, 100000 }),
++	AXP8191_DCDC(9, AXP8191_LOW_RANGES, { 1900000, 0x58, 0x67, 100000 }),
++	AXP8191_SWITCH("dc1sw1", 3),
++	AXP8191_SWITCH("dc1sw2", 4),
++	AXP8191_LDO_100MV("aldo1", 0),
++	AXP8191_LDO_100MV("aldo2", 1),
++	AXP8191_LDO_100MV("aldo3", 2),
++	AXP8191_LDO_100MV("aldo4", 3),
++	AXP8191_LDO_100MV("aldo5", 4),
++	AXP8191_LDO_100MV("aldo6", 5),
++	AXP8191_LDO_100MV("bldo1", 6),
++	AXP8191_LDO_100MV("bldo2", 7),
++	AXP8191_LDO_100MV("bldo3", 8),
++	AXP8191_LDO_100MV("bldo4", 9),
++	AXP8191_LDO_100MV("bldo5", 10),
++	AXP8191_LDO_100MV("cldo1", 11),
++	AXP8191_LDO_100MV("cldo2", 12),
++	AXP8191_LDO_100MV("cldo3", 13),
++	AXP8191_LDO_100MV("cldo4", 14),
++	AXP8191_LDO_100MV("cldo5", 15),
++	AXP8191_LDO_100MV("dldo1", 16),
++	AXP8191_LDO_100MV("dldo2", 17),
++	AXP8191_LDO_100MV("dldo3", 18),
++	AXP8191_LDO_100MV("dldo4", 19),
++	AXP8191_LDO_100MV("dldo5", 20),
++	AXP8191_LDO_100MV("dldo6", 21),
++	AXP8191_LDO_25MV("eldo1", 22),
++	AXP8191_LDO_25MV("eldo2", 23),
++	AXP8191_LDO_25MV("eldo3", 24),
++	AXP8191_LDO_25MV("eldo4", 25),
++	AXP8191_LDO_25MV("eldo5", 26),
++	AXP8191_LDO_25MV("eldo6", 27),
++};
++
 +struct axp8191_softc {
 +	device_t		sc_dev;
 +	i2c_tag_t		sc_i2c;
@@ -3239,6 +4410,20 @@ which selects the same code silently.
 +
 +	struct sysmon_pswitch	sc_smpsw;
 +	callout_t		sc_tick;
++};
++
++struct axp8191reg_softc {
++	device_t		sc_dev;
++	struct axp8191_softc	*sc_pmic;
++	const struct axp8191_ctrl *sc_ctrl;
++	/* Limits from the device tree; zero when it gives none. */
++	u_int			sc_min_uvol;
++	u_int			sc_max_uvol;
++};
++
++struct axp8191reg_attach_args {
++	const struct axp8191_ctrl *reg_ctrl;
++	int			reg_phandle;
 +};
 +
 +static const struct device_compatible_entry compat_data[] = {
@@ -3297,6 +4482,157 @@ which selects the same code silently.
 +}
 +
 +static int
++axp8191reg_acquire(device_t dev)
++{
++	return 0;
++}
++
++static void
++axp8191reg_release(device_t dev)
++{
++}
++
++static int
++axp8191reg_enable(device_t dev, bool enable)
++{
++	struct axp8191reg_softc * const sc = device_private(dev);
++	const struct axp8191_ctrl *c = sc->sc_ctrl;
++	uint8_t val;
++	int error;
++
++	if ((error = axp8191_read(sc->sc_pmic, c->c_enable_reg, &val)) != 0)
++		return error;
++	if (enable)
++		val |= c->c_enable_mask;
++	else
++		val &= ~c->c_enable_mask;
++
++	return axp8191_write(sc->sc_pmic, c->c_enable_reg, val);
++}
++
++static int
++axp8191reg_get_voltage(device_t dev, u_int *uvol)
++{
++	struct axp8191reg_softc * const sc = device_private(dev);
++	const struct axp8191_ctrl *c = sc->sc_ctrl;
++	uint8_t val;
++	int error;
++	u_int i;
++
++	if (c->c_vol_reg == 0)
++		return ENXIO;
++	if ((error = axp8191_read(sc->sc_pmic, c->c_vol_reg, &val)) != 0)
++		return error;
++	val &= c->c_vol_mask;
++	for (i = 0; i < AXP8191_NRANGES; i++) {
++		const struct axp8191_range *r = &c->c_ranges[i];
++
++		if (r->r_step != 0 && val >= r->r_first && val <= r->r_last) {
++			*uvol = r->r_uv + (val - r->r_first) * r->r_step;
++			return 0;
++		}
++	}
++
++	return EIO;
++}
++
++/* The lowest voltage the regulator offers within the limits. */
++static int
++axp8191reg_set_voltage(device_t dev, u_int min_uvol, u_int max_uvol)
++{
++	struct axp8191reg_softc * const sc = device_private(dev);
++	const struct axp8191_ctrl *c = sc->sc_ctrl;
++	uint8_t val;
++	int error;
++	u_int i, old_uvol, new_uvol;
++
++	if (c->c_vol_reg == 0)
++		return ENXIO;
++	if (sc->sc_max_uvol != 0 &&
++	    (min_uvol < sc->sc_min_uvol || min_uvol > sc->sc_max_uvol))
++		return ERANGE;
++	if ((error = axp8191reg_get_voltage(dev, &old_uvol)) != 0)
++		return error;
++	for (i = 0; i < AXP8191_NRANGES; i++) {
++		const struct axp8191_range *r = &c->c_ranges[i];
++		const u_int last = r->r_uv +
++		    (r->r_last - r->r_first) * r->r_step;
++		u_int code = r->r_first;
++
++		if (r->r_step == 0 || min_uvol > last)
++			continue;
++		if (min_uvol > r->r_uv)
++			code += howmany(min_uvol - r->r_uv, r->r_step);
++		new_uvol = r->r_uv + (code - r->r_first) * r->r_step;
++		if (new_uvol > max_uvol)
++			return ERANGE;
++
++		error = axp8191_read(sc->sc_pmic, c->c_vol_reg, &val);
++		if (error != 0)
++			return error;
++		val = (val & ~c->c_vol_mask) | code;
++		error = axp8191_write(sc->sc_pmic, c->c_vol_reg, val);
++		/* A consumer about to draw more must find the voltage up. */
++		if (error == 0 && new_uvol > old_uvol)
++			delay(howmany(new_uvol - old_uvol,
++			    AXP8191_RAMP_UV_PER_US) + AXP8191_RAMP_MARGIN_US);
++		return error;
++	}
++
++	return ERANGE;
++}
++
++static const struct fdtbus_regulator_controller_func axp8191reg_funcs = {
++	.acquire = axp8191reg_acquire,
++	.release = axp8191reg_release,
++	.enable = axp8191reg_enable,
++	.set_voltage = axp8191reg_set_voltage,
++	.get_voltage = axp8191reg_get_voltage,
++};
++
++static int
++axp8191reg_match(device_t parent, cfdata_t match, void *aux)
++{
++	return 1;
++}
++
++/*
++ * A regulator is registered as the boot loader left it: nothing is
++ * switched and no voltage is moved until a consumer asks.
++ */
++static void
++axp8191reg_attach(device_t parent, device_t self, void *aux)
++{
++	struct axp8191reg_softc * const sc = device_private(self);
++	struct axp8191reg_attach_args * const aaa = aux;
++	const struct axp8191_ctrl *c = aaa->reg_ctrl;
++	uint8_t val = 0;
++	u_int uvol;
++
++	sc->sc_dev = self;
++	sc->sc_pmic = device_private(parent);
++	sc->sc_ctrl = c;
++	if (of_getprop_uint32(aaa->reg_phandle, "regulator-min-microvolt",
++	    &sc->sc_min_uvol) != 0 ||
++	    of_getprop_uint32(aaa->reg_phandle, "regulator-max-microvolt",
++	    &sc->sc_max_uvol) != 0)
++		sc->sc_min_uvol = sc->sc_max_uvol = 0;
++
++	(void)axp8191_read(sc->sc_pmic, c->c_enable_reg, &val);
++	const bool on = (val & c->c_enable_mask) != 0;
++
++	aprint_naive("\n");
++	if (axp8191reg_get_voltage(self, &uvol) == 0)
++		aprint_normal(": %s, %u.%03u V, %s\n", c->c_name,
++		    uvol / 1000000, uvol / 1000 % 1000, on ? "on" : "off");
++	else
++		aprint_normal(": %s, %s\n", c->c_name, on ? "on" : "off");
++
++	fdtbus_register_regulator_controller(self, aaa->reg_phandle,
++	    &axp8191reg_funcs);
++}
++
++static int
 +axp8191_match(device_t parent, cfdata_t match, void *aux)
 +{
 +	struct i2c_attach_args * const ia = aux;
@@ -3313,7 +4649,10 @@ which selects the same code silently.
 +{
 +	struct axp8191_softc * const sc = device_private(self);
 +	struct i2c_attach_args * const ia = aux;
++	struct axp8191reg_attach_args aaa;
 +	uint8_t type, id, ver, enable;
++	int regulators, child;
++	u_int i;
 +
 +	sc->sc_dev = self;
 +	sc->sc_i2c = ia->ia_tag;
@@ -3328,6 +4667,17 @@ which selects the same code silently.
 +	}
 +	aprint_normal(": AXP8191, type 0x%02x, ID 0x%02x, version 0x%02x\n",
 +	    type, id, ver);
++
++	regulators = of_find_firstchild_byname(ia->ia_cookie, "regulators");
++	for (i = 0; regulators > 0 && i < __arraycount(axp8191_ctrls); i++) {
++		child = of_find_firstchild_byname(regulators,
++		    axp8191_ctrls[i].c_name);
++		if (child <= 0)
++			continue;
++		aaa.reg_ctrl = &axp8191_ctrls[i];
++		aaa.reg_phandle = child;
++		config_found(self, &aaa, NULL, CFARGS_NONE);
++	}
 +
 +	/* Let the chip record a short press and drop what is recorded. */
 +	if (axp8191_read(sc, AXP8191_IRQ_ENABLE2, &enable) != 0 ||
@@ -3354,15 +4704,20 @@ which selects the same code silently.
 +
 +CFATTACH_DECL_NEW(axp8191pm, sizeof(struct axp8191_softc),
 +    axp8191_match, axp8191_attach, NULL, NULL);
++
++CFATTACH_DECL_NEW(axp8191reg, sizeof(struct axp8191reg_softc),
++    axp8191reg_match, axp8191reg_attach, NULL, NULL);
 --- sys/dev/i2c/files.i2c
 +++ sys/dev/i2c/files.i2c
-@@ -242,6 +242,11 @@ attach	axppmic at iic
+@@ -242,6 +242,13 @@ attach	axppmic at iic
  attach	axpreg at axppmic
  file	dev/i2c/axppmic.c			axppmic
  
 +# AXP8191 Power Management Unit: the power key
-+device	axp8191pm: sysmon_power, sysmon_taskq
++device	axp8191pm { }: sysmon_power, sysmon_taskq
++device	axp8191reg
 +attach	axp8191pm at iic
++attach	axp8191reg at axp8191pm
 +file	dev/i2c/axp8191.c			axp8191pm
 +
  # AXP809 Power Management Unit
@@ -3723,7 +5078,7 @@ which selects the same code silently.
 +    sun60i_a733_crypto_match, sun60i_a733_crypto_attach, NULL, NULL);
 --- /dev/null
 +++ sys/arch/arm/sunxi/sun60i_a733_cpupll.c
-@@ -0,0 +1,238 @@
+@@ -0,0 +1,397 @@
 +/*-
 + * Copyright (c) 2026 Anton and oxtorg contributors
 + * All rights reserved.
@@ -3756,10 +5111,12 @@ which selects the same code silently.
 + *
 + * Each of the two core clusters runs from its own PLL: 24 MHz times N,
 + * then divided by a power of two in the cluster's clock register. The
-+ * boot loader leaves the PLLs locked. This driver only moves the
-+ * divider, which needs no relock and no change of the supply voltage:
-+ * a cluster can be slowed to a half, a quarter or an eighth of what the
-+ * boot loader set, and brought back.
++ * PLLs are put into the mode in which a new N is approached as a ramp,
++ * so the cores keep running from their PLL while it moves.
++ *
++ * Which rates a chip may use, and at what supply voltage, depends on
++ * its speed grade in the EFUSE; the operating point tables in the
++ * device tree carry a mask of grades per entry.
 + */
 +
 +#include <sys/cdefs.h>
@@ -3773,17 +5130,42 @@ which selects the same code silently.
 +#include <dev/clk/clk_backend.h>
 +#include <dev/fdt/fdtvar.h>
 +
++#include <arm/sunxi/sunxi_sid.h>
++
 +#define	CPUPLL_REF_HZ		24000000
 +
 +/* Offsets within a cluster's block. */
 +#define	PLL_CTRL_REG		0x00
++#define	 PLL_CTRL_ENABLE	__BIT(31)
++#define	 PLL_CTRL_LDO_EN	__BIT(30)
++#define	 PLL_CTRL_LOCK_EN	__BIT(29)
++#define	 PLL_CTRL_LOCK		__BIT(28)
++#define	 PLL_CTRL_OUTPUT	__BIT(27)
++#define	 PLL_CTRL_UPDATE	__BIT(26)	/* clears itself */
 +#define	 PLL_CTRL_N		__BITS(15,8)
++#define	PLL_PAT0_REG		0x04
++#define	 PLL_PAT0_TRIANGULAR	__BITS(30,29)
++#define	PLL_PAT1_REG		0x08
++#define	 PLL_PAT1_RAMP_EN	__BIT(31)
++#define	PLL_RAMP_REG		0x18
++#define	 PLL_RAMP_ENABLE	__BIT(31)
++#define	 PLL_RAMP_STEP		__BIT(8)	/* 1.125 MHz per microsecond */
++#define	 PLL_RAMP_BYPASS	__BIT(0)
 +#define	CPU_CLK_REG		0x1c
 +#define	 CPU_CLK_SRC		__BITS(26,24)
 +#define	 CPU_CLK_SRC_PLL	3
 +#define	 CPU_CLK_P		__BITS(17,16)
 +
 +#define	CPUPLL_NCLUSTERS	2
++/* The range of N the PLL locks in, and how long to wait for it. */
++#define	CPUPLL_N_MIN		28
++#define	CPUPLL_N_MAX		94
++#define	CPUPLL_TIMEOUT_US	70000
++
++/* The speed grade: a byte of the EFUSE, with a spare copy that wins. */
++#define	CPUPLL_GRADE_OFFSET	0x4c
++#define	 CPUPLL_GRADE		__BITS(15,8)
++#define	 CPUPLL_GRADE_SPARE	__BITS(23,16)
 +
 +struct sun60i_a733_cpupll_softc;
 +
@@ -3861,30 +5243,129 @@ which selects the same code silently.
 +}
 +
 +static int
++sun60i_a733_cpupll_wait(struct sun60i_a733_cpupll_softc *sc, bus_size_t reg,
++    uint32_t mask, uint32_t want)
++{
++	u_int waited;
++
++	for (waited = 0; (RD4(sc, reg) & mask) != want; waited += 10) {
++		if (waited >= CPUPLL_TIMEOUT_US)
++			return ETIMEDOUT;
++		delay(10);
++	}
++
++	return 0;
++}
++
++/*
++ * Write the PLL's control register and tell the PLL to take the new
++ * settings over. Until it has, the register reads back the old ones.
++ */
++static int
++sun60i_a733_cpupll_update(struct sun60i_a733_cpupll_softc *sc,
++    struct sun60i_a733_cpupll_clk *clk, uint32_t val)
++{
++	const bus_size_t reg = clk->reg + PLL_CTRL_REG;
++
++	WR4(sc, reg, val);
++	WR4(sc, reg, val | PLL_CTRL_UPDATE);
++
++	return sun60i_a733_cpupll_wait(sc, reg, PLL_CTRL_UPDATE, 0);
++}
++
++static void
++sun60i_a733_cpupll_set_p(struct sun60i_a733_cpupll_softc *sc,
++    struct sun60i_a733_cpupll_clk *clk, u_int p)
++{
++	uint32_t val;
++
++	val = RD4(sc, clk->reg + CPU_CLK_REG);
++	val &= ~CPU_CLK_P;
++	val |= __SHIFTIN(p, CPU_CLK_P);
++	WR4(sc, clk->reg + CPU_CLK_REG, val);
++}
++
++static int
 +sun60i_a733_cpupll_set_rate(void *priv, struct clk *clkp, u_int rate)
 +{
 +	struct sun60i_a733_cpupll_softc * const sc = priv;
 +	struct sun60i_a733_cpupll_clk *clk =
 +	    (struct sun60i_a733_cpupll_clk *)clkp;
-+	const u_int pll = sun60i_a733_cpupll_pll_rate(sc, clk);
 +	uint32_t val;
-+	u_int p;
++	u_int n, p, old_p;
++	int error;
 +
 +	val = RD4(sc, clk->reg + CPU_CLK_REG);
 +	if (__SHIFTOUT(val, CPU_CLK_SRC) != CPU_CLK_SRC_PLL)
 +		return ENXIO;
++	old_p = __SHIFTOUT(val, CPU_CLK_P);
++
++	/* The smallest divider that keeps N in the PLL's range. */
 +	for (p = 0; p <= __SHIFTOUT_MASK(CPU_CLK_P); p++) {
-+		if (pll >> p == rate)
++		n = ((uint64_t)rate << p) / CPUPLL_REF_HZ;
++		if (n >= CPUPLL_N_MIN && n <= CPUPLL_N_MAX &&
++		    (CPUPLL_REF_HZ * n) >> p == rate)
 +			break;
 +	}
 +	if (p > __SHIFTOUT_MASK(CPU_CLK_P))
 +		return EINVAL;
 +
-+	val &= ~CPU_CLK_P;
-+	val |= __SHIFTIN(p, CPU_CLK_P);
-+	WR4(sc, clk->reg + CPU_CLK_REG, val);
++	/*
++	 * A larger divider goes in before the PLL moves and a smaller
++	 * one after, so the cores never see more than either rate.
++	 */
++	if (p > old_p)
++		sun60i_a733_cpupll_set_p(sc, clk, p);
++
++	val = RD4(sc, clk->reg + PLL_CTRL_REG);
++	if (__SHIFTOUT(val, PLL_CTRL_N) != n) {
++		val &= ~PLL_CTRL_N;
++		val |= __SHIFTIN(n, PLL_CTRL_N);
++		error = sun60i_a733_cpupll_update(sc, clk, val);
++		if (error == 0)
++			error = sun60i_a733_cpupll_wait(sc,
++			    clk->reg + PLL_CTRL_REG, PLL_CTRL_LOCK,
++			    PLL_CTRL_LOCK);
++		if (error != 0) {
++			device_printf(sc->sc_dev, "%s: PLL did not settle\n",
++			    clk->base.name);
++			return error;
++		}
++	}
++
++	if (p < old_p)
++		sun60i_a733_cpupll_set_p(sc, clk, p);
 +
 +	return 0;
++}
++
++/* Switch a running PLL to ramping between rates. */
++static int
++sun60i_a733_cpupll_ramp_enable(struct sun60i_a733_cpupll_softc *sc,
++    struct sun60i_a733_cpupll_clk *clk)
++{
++	uint32_t val;
++	int error;
++
++	WR4(sc, clk->reg + PLL_PAT0_REG,
++	    RD4(sc, clk->reg + PLL_PAT0_REG) | PLL_PAT0_TRIANGULAR);
++	WR4(sc, clk->reg + PLL_PAT1_REG,
++	    RD4(sc, clk->reg + PLL_PAT1_REG) | PLL_PAT1_RAMP_EN);
++	val = RD4(sc, clk->reg + PLL_RAMP_REG);
++	val &= ~PLL_RAMP_BYPASS;
++	val |= PLL_RAMP_ENABLE | PLL_RAMP_STEP;
++	WR4(sc, clk->reg + PLL_RAMP_REG, val);
++	val = RD4(sc, clk->reg + PLL_CTRL_REG);
++	if ((error = sun60i_a733_cpupll_update(sc, clk, val)) != 0)
++		return error;
++
++	val |= PLL_CTRL_ENABLE | PLL_CTRL_LDO_EN | PLL_CTRL_LOCK_EN |
++	    PLL_CTRL_OUTPUT;
++	if ((error = sun60i_a733_cpupll_update(sc, clk, val)) != 0)
++		return error;
++
++	return sun60i_a733_cpupll_wait(sc, clk->reg + PLL_CTRL_REG,
++	    PLL_CTRL_LOCK, PLL_CTRL_LOCK);
 +}
 +
 +static const struct clk_funcs sun60i_a733_cpupll_clk_funcs = {
@@ -3950,6 +5431,8 @@ which selects the same code silently.
 +		clk->base.domain = &sc->sc_clkdom;
 +		clk->base.name = sun60i_a733_cpupll_clusters[i].name;
 +		clk->reg = sun60i_a733_cpupll_clusters[i].reg;
++		if (sun60i_a733_cpupll_ramp_enable(sc, clk) != 0)
++			aprint_error(" (%s: no ramp)", clk->base.name);
 +		clk_attach(&clk->base);
 +		aprint_normal("%s %s %u MHz", i == 0 ? ":" : ",",
 +		    clk->base.name, clk_get_rate(&clk->base) / 1000000);
@@ -3962,3 +5445,808 @@ which selects the same code silently.
 +
 +CFATTACH_DECL_NEW(sun60i_a733_cpupll, sizeof(struct sun60i_a733_cpupll_softc),
 +    sun60i_a733_cpupll_match, sun60i_a733_cpupll_attach, NULL, NULL);
++
++/*
++ * An operating point lists the speed grades it is for as bits of
++ * "opp-supported-hw", numbered in the order of this table.
++ */
++static const uint8_t sun60i_a733_grades[] = {
++	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x14, 0x15
++};
++
++static bool
++sun60i_a733_opp_supported(const int opp_table, const int opp_node)
++{
++	uint32_t word, mask;
++	u_int grade, i;
++
++	if (of_getprop_uint32(opp_node, "opp-supported-hw", &mask) != 0 ||
++	    sunxi_sid_read(CPUPLL_GRADE_OFFSET, &word, 1) != 0)
++		return false;
++	grade = __SHIFTOUT(word, CPUPLL_GRADE_SPARE);
++	if (grade == 0)
++		grade = __SHIFTOUT(word, CPUPLL_GRADE);
++	for (i = 0; i < __arraycount(sun60i_a733_grades); i++) {
++		if (sun60i_a733_grades[i] == grade)
++			return (mask & __BIT(i)) != 0;
++	}
++
++	return false;
++}
++
++FDT_OPP(sun60i_a733, "allwinner,sun60i-a733-operating-points",
++    sun60i_a733_opp_supported);
+--- /dev/null
++++ sys/arch/arm/sunxi/sun60i_a733_usb2phy.c
+@@ -0,0 +1,217 @@
++/* $NetBSD$ */
++
++/*-
++ * Copyright (c) 2026 The NetBSD Foundation, Inc.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE NETBSD FOUNDATION, INC. AND CONTRIBUTORS
++ * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
++ * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
++ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR CONTRIBUTORS
++ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ */
++
++/*
++ * The USB 2.0 PHY of the USB 3 controller of the Allwinner A733.
++ *
++ * The controller and this PHY sit behind the bus gates of the high speed
++ * subsystem (the block the serdes belongs to); until those are opened
++ * both read as zeros. The gates are opened here, at attach, because the
++ * controller driver reads its registers before it enables its PHYs.
++ */
++
++#include <sys/cdefs.h>
++__KERNEL_RCSID(0, "$NetBSD$");
++
++#include <sys/param.h>
++#include <sys/bus.h>
++#include <sys/device.h>
++#include <sys/systm.h>
++
++#include <dev/fdt/fdtvar.h>
++
++/* The PHY's own registers. */
++#define	U2PHY_CTL		0x10
++#define	 U2PHY_CTL_OTGDISABLE	__BIT(10)
++#define	 U2PHY_CTL_VBUSVLDEXT	__BIT(5)
++#define	 U2PHY_CTL_SIDDQ	__BIT(3)	/* power down */
++#define	 U2PHY_CTL_COMMONONN	__BIT(2)
++#define	U2PHY_TUNE		0x18
++
++/* The high speed subsystem. */
++#define	HSI_USB3_BGR		0x08
++#define	 HSI_USB3_BGR_PIPE_CCU	__BIT(20)	/* pipe clock from the CCU */
++#define	 HSI_USB3_BGR_ACLK	__BIT(17)
++#define	 HSI_USB3_BGR_HCLK	__BIT(16)
++#define	 HSI_USB3_BGR_PHY_RSTN	__BIT(4)	/* this PHY out of reset */
++#define	 HSI_USB3_BGR_RESETS	0x23		/* the other resets released */
++#define	HSI_DBG_CTL		0xf0
++#define	 HSI_DBG_CTL_NORMAL	0x20000000	/* no test multiplexer */
++
++static const struct device_compatible_entry compat_data[] = {
++	{ .compat = "allwinner,sun60i-a733-usb3-u2phy" },
++	DEVICE_COMPAT_EOL
++};
++
++struct a733_usb2phy_softc {
++	device_t		sc_dev;
++	bus_space_tag_t		sc_bst;
++	bus_space_handle_t	sc_bsh;
++	bus_space_handle_t	sc_hsi_bsh;
++	struct fdtbus_regulator	*sc_vbus;
++	uint32_t		sc_tune;
++	bool			sc_has_tune;
++};
++
++#define	PHY_READ(sc, reg)		\
++	bus_space_read_4((sc)->sc_bst, (sc)->sc_bsh, (reg))
++#define	PHY_WRITE(sc, reg, val)		\
++	bus_space_write_4((sc)->sc_bst, (sc)->sc_bsh, (reg), (val))
++
++static void *
++a733_usb2phy_acquire(device_t dev, const void *data, size_t len)
++{
++	return device_private(dev);
++}
++
++static void
++a733_usb2phy_release(device_t dev, void *priv)
++{
++}
++
++static int
++a733_usb2phy_enable(device_t dev, void *priv, bool enable)
++{
++	struct a733_usb2phy_softc * const sc = priv;
++	uint32_t val;
++
++	/*
++	 * The PHY must be powered before its reset is released, or it
++	 * gives the controller no clock and the controller's own reset
++	 * never ends.
++	 */
++	val = bus_space_read_4(sc->sc_bst, sc->sc_hsi_bsh, HSI_USB3_BGR);
++	bus_space_write_4(sc->sc_bst, sc->sc_hsi_bsh, HSI_USB3_BGR,
++	    val & ~HSI_USB3_BGR_PHY_RSTN);
++
++	val = PHY_READ(sc, U2PHY_CTL);
++	if (enable) {
++		val |= U2PHY_CTL_OTGDISABLE | U2PHY_CTL_VBUSVLDEXT |
++		    U2PHY_CTL_COMMONONN;
++		val &= ~U2PHY_CTL_SIDDQ;
++	} else {
++		val &= ~(U2PHY_CTL_OTGDISABLE | U2PHY_CTL_VBUSVLDEXT);
++		val |= U2PHY_CTL_SIDDQ;
++	}
++	PHY_WRITE(sc, U2PHY_CTL, val);
++
++	if (enable) {
++		if (sc->sc_has_tune)
++			PHY_WRITE(sc, U2PHY_TUNE, sc->sc_tune);
++		delay(1000);
++		val = bus_space_read_4(sc->sc_bst, sc->sc_hsi_bsh,
++		    HSI_USB3_BGR);
++		bus_space_write_4(sc->sc_bst, sc->sc_hsi_bsh, HSI_USB3_BGR,
++		    val | HSI_USB3_BGR_PHY_RSTN);
++		delay(1000);
++	}
++
++	if (sc->sc_vbus == NULL)
++		return 0;
++
++	return enable ? fdtbus_regulator_enable(sc->sc_vbus) :
++	    fdtbus_regulator_disable(sc->sc_vbus);
++}
++
++static const struct fdtbus_phy_controller_func a733_usb2phy_funcs = {
++	.acquire = a733_usb2phy_acquire,
++	.release = a733_usb2phy_release,
++	.enable = a733_usb2phy_enable,
++};
++
++static int
++a733_usb2phy_match(device_t parent, cfdata_t cf, void *aux)
++{
++	struct fdt_attach_args * const faa = aux;
++
++	return of_compatible_match(faa->faa_phandle, compat_data);
++}
++
++static void
++a733_usb2phy_attach(device_t parent, device_t self, void *aux)
++{
++	struct a733_usb2phy_softc * const sc = device_private(self);
++	struct fdt_attach_args * const faa = aux;
++	const int phandle = faa->faa_phandle;
++	struct fdtbus_reset *rst;
++	struct clk *clk;
++	bus_addr_t addr;
++	bus_size_t size;
++	u_int n;
++
++	sc->sc_dev = self;
++	sc->sc_bst = faa->faa_bst;
++
++	fdtbus_clock_assign(phandle);
++	for (n = 0; (clk = fdtbus_clock_get_index(phandle, n)) != NULL; n++) {
++		if (clk_enable(clk) != 0) {
++			aprint_error(": couldn't enable clock #%u\n", n);
++			return;
++		}
++	}
++	for (n = 0; (rst = fdtbus_reset_get_index(phandle, n)) != NULL; n++) {
++		if (fdtbus_reset_deassert(rst) != 0) {
++			aprint_error(": couldn't de-assert reset #%u\n", n);
++			return;
++		}
++	}
++
++	/* Open the subsystem's gates for the controller and the PHY. */
++	if (fdtbus_get_reg(phandle, 1, &addr, &size) != 0 ||
++	    bus_space_map(sc->sc_bst, addr, size, 0, &sc->sc_hsi_bsh) != 0) {
++		aprint_error(": couldn't map the subsystem registers\n");
++		return;
++	}
++	/*
++	 * Without the serdes there is no pipe clock, and the controller
++	 * does not leave its reset; it takes the one of the CCU instead.
++	 */
++	bus_space_write_4(sc->sc_bst, sc->sc_hsi_bsh, HSI_USB3_BGR,
++	    HSI_USB3_BGR_PIPE_CCU | HSI_USB3_BGR_ACLK | HSI_USB3_BGR_HCLK |
++	    HSI_USB3_BGR_RESETS);
++	bus_space_write_4(sc->sc_bst, sc->sc_hsi_bsh, HSI_DBG_CTL,
++	    HSI_DBG_CTL_NORMAL);
++
++	if (fdtbus_get_reg(phandle, 0, &addr, &size) != 0 ||
++	    bus_space_map(sc->sc_bst, addr, size, 0, &sc->sc_bsh) != 0) {
++		aprint_error(": couldn't map registers\n");
++		return;
++	}
++
++	sc->sc_has_tune = of_getprop_uint32(phandle, "allwinner,phy-tune",
++	    &sc->sc_tune) == 0;
++	sc->sc_vbus = fdtbus_regulator_acquire(phandle, "vbus-supply");
++
++	aprint_naive("\n");
++	aprint_normal(": USB 2.0 PHY of the USB 3 controller\n");
++
++	fdtbus_register_phy_controller(self, phandle, &a733_usb2phy_funcs);
++}
++
++CFATTACH_DECL_NEW(sun60i_a733_usb2phy, sizeof(struct a733_usb2phy_softc),
++	a733_usb2phy_match, a733_usb2phy_attach, NULL, NULL);
+--- sys/dev/i2c/fusbtc.c
++++ sys/dev/i2c/fusbtc.c
+@@ -21,6 +21,7 @@
+ #include <sys/kernel.h>
+ #include <sys/device.h>
+ #include <sys/gpio.h>
++#include <sys/kthread.h>
+ 
+ #include <dev/i2c/i2cvar.h>
+ 
+@@ -195,6 +196,7 @@ struct fusbtc_softc {
+ 	i2c_addr_t		 sc_addr;
+ 	int			 sc_phandle;
+ 	void			*sc_ih;
++	bool			 sc_poll;	/* no interrupt line */
+ #if 0
+ 	struct task		 sc_task;
+ #endif
+@@ -216,6 +218,7 @@ struct fusbtc_softc {
+ 
+ int	 fusbtc_intr(void *);
+ void	 fusbtc_task(void *);
++static void fusbtc_poll(void *);
+ void	 fusbtc_toggle(struct fusbtc_softc *, int);
+ void	 fusbtc_toggle_change(struct fusbtc_softc *);
+ void	 fusbtc_power_change(struct fusbtc_softc *);
+@@ -299,8 +302,9 @@ fusbtc_attach(device_t parent, device_t self, void *aux)
+ 	sc->sc_ih = fdtbus_intr_establish_xname(sc->sc_phandle, 0, IPL_BIO, 0,
+ 	    fusbtc_intr, sc, device_xname(self));
+ 	if (sc->sc_ih == NULL) {
+-		aprint_error(": unable to establish interrupt\n");
+-		return;
++		/* The pin controller may not offer interrupts: poll. */
++		aprint_normal_dev(self, "no interrupt, polling\n");
++		sc->sc_poll = true;
+ 	}
+ 
+ 	fusbtc_write_reg(sc, FUSB_RESET, FUSB_RESET_SW);
+@@ -341,6 +345,21 @@ fusbtc_attach(device_t parent, device_t self, void *aux)
+ 	reg = fusbtc_read_reg(sc, FUSB_CONTROL2);
+ 	reg |= FUSB_CONTROL2_TOGGLE;
+ 	fusbtc_write_reg(sc, FUSB_CONTROL2, reg);
++
++	if (sc->sc_poll && kthread_create(PRI_NONE, 0, NULL, fusbtc_poll, sc,
++	    NULL, "%s", device_xname(self)) != 0)
++		aprint_error_dev(self, "unable to start the polling thread\n");
++}
++
++static void
++fusbtc_poll(void *args)
++{
++	struct fusbtc_softc *sc = args;
++
++	for (;;) {
++		fusbtc_intr(sc);
++		kpause("fusbtc", false, hz / 4, NULL);
++	}
+ }
+ 
+ int
+@@ -349,7 +368,8 @@ fusbtc_intr(void *args)
+ 	struct fusbtc_softc *sc = args;
+ 	uint8_t intr, intra, intrb;
+ 
+-	fdtbus_intr_mask(sc->sc_phandle, sc->sc_ih);
++	if (!sc->sc_poll)
++		fdtbus_intr_mask(sc->sc_phandle, sc->sc_ih);
+ 
+ 	intr = fusbtc_read_reg(sc, FUSB_INTERRUPT);
+ 	intra = fusbtc_read_reg(sc, FUSB_INTERRUPTA);
+@@ -360,7 +380,7 @@ fusbtc_intr(void *args)
+ 	if (intr & FUSB_INTERRUPT_VBUSOK)
+ 		fusbtc_power_change(sc);
+ 
+-	if (intra & FUSB_INTERRUPTA_TOGDONE)
++	if ((intra & FUSB_INTERRUPTA_TOGDONE) && !sc->sc_attached)
+ 		fusbtc_toggle_change(sc);
+ 
+ 	if (intr)
+@@ -382,7 +402,8 @@ fusbtc_intr(void *args)
+ 	task_add(systq, &sc->sc_task);
+ #endif
+ 
+-	fdtbus_intr_unmask(sc->sc_phandle, sc->sc_ih);
++	if (!sc->sc_poll)
++		fdtbus_intr_unmask(sc->sc_phandle, sc->sc_ih);
+ 
+ 	return 1;
+ }
+@@ -516,8 +537,8 @@ fusbtc_toggle_change(struct fusbtc_softc *sc)
+ 		fusbtc_set_vbus(sc, 0, 0);
+ 		sc->sc_attached = 1;
+ 	} else {
+-		panic("%s: unknown combination %x", device_xname(sc->sc_dev),
+-		   status);
++		/* Still toggling: nothing is attached yet. */
++		DPRINTF((sc->sc_dev, "toggle state %x\n", status));
+ 	}
+ }
+ 
+--- /dev/null
++++ sys/arch/arm/sunxi/sun60i_a733_combophy.c
+@@ -0,0 +1,451 @@
++/* $NetBSD$ */
++
++/*-
++ * Copyright (c) 2026 The NetBSD Foundation, Inc.
++ * All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ * 1. Redistributions of source code must retain the above copyright
++ *    notice, this list of conditions and the following disclaimer.
++ * 2. Redistributions in binary form must reproduce the above copyright
++ *    notice, this list of conditions and the following disclaimer in the
++ *    documentation and/or other materials provided with the distribution.
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE NETBSD FOUNDATION, INC. AND CONTRIBUTORS
++ * ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
++ * TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
++ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION OR CONTRIBUTORS
++ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
++ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
++ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
++ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
++ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
++ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++ * POSSIBILITY OF SUCH DAMAGE.
++ */
++
++/*
++ * The serdes of the Type-C data port of the Allwinner A733: a Cadence
++ * combo PHY that carries USB 3 SuperSpeed (and DisplayPort, not handled
++ * here) on the four high speed lanes of the connector.
++ *
++ * The register values below are the ones the vendor's driver programs
++ * for USB 3 with spread spectrum and a 100 MHz configuration clock.
++ * Which pair of lanes carries USB depends on how the plug is turned;
++ * nothing tells this driver yet, so it sets up the unflipped case only
++ * ("allwinner,flipped" in the device tree selects the other one).
++ */
++
++#include <sys/cdefs.h>
++__KERNEL_RCSID(0, "$NetBSD$");
++
++#include <sys/param.h>
++#include <sys/bus.h>
++#include <sys/device.h>
++#include <sys/systm.h>
++
++#include <dev/fdt/fdtvar.h>
++
++/* The PHY's pins (register block 0). */
++#define	CPHY_CTRL0		0x000
++#define	 CPHY_CTRL0_FLIPPED	__BIT(12)
++#define	 CPHY_CTRL0_DP_RSTN	__BIT(8)
++#define	 CPHY_CTRL0_PIPE_MASK	__BIT(5)
++#define	 CPHY_CTRL0_PIPE_RSTN	__BIT(4)
++#define	 CPHY_CTRL0_RSTN	__BIT(0)
++#define	CPHY_CTRL1		0x004
++#define	 CPHY_CTRL1_PLL1_REFSEL	__BIT(24)
++#define	 CPHY_CTRL1_PLL0_REFSEL	__BIT(20)
++#define	 CPHY_CTRL1_DIG_REFSEL	__BIT(0)
++#define	CPHY_CTRL2		0x008
++#define	 CPHY_CTRL2_IDDQ_SEL	__BIT(1)
++#define	 CPHY_CTRL2_IDDQ	__BIT(0)
++#define	CPHY_CTRL3		0x00c
++#define	 CPHY_CTRL3_POWER_REQ	__BITS(9,4)
++#define	 CPHY_CTRL3_PLLCLK_EN	__BIT(0)
++#define	CPHY_STATUS0		0x900
++#define	 CPHY_STATUS0_READY	__BIT(0)
++
++/* The PHY's own 16-bit registers (block 1), two bytes apart. */
++#define	CPHY_REG(n)		((n) << 1)
++#define	CPHY_PMA_ISO		0xc008
++#define	 CPHY_PMA_ISO_LANES	__BITS(11,8)
++
++/* Lane routing of the serdes block (block 2). */
++#define	SDS_DP_CONV		0x004
++#define	 SDS_DP_CONV_ON		0xff1
++#define	SDS_PIPE_CLK_MAP	0x100
++#define	SDS_PIPE_RXD_MAP	0x104
++#define	 SDS_PIPE_MAP		__BITS(3,0)	/* 0: this PHY */
++
++/* The high speed subsystem (block 3). */
++#define	HSI_USB3_BGR		0x08
++#define	 HSI_USB3_BGR_PIPE_CCU	__BIT(20)
++
++/* The crystal oscillator's outputs, in the real-time clock (block 4). */
++#define	DCXO_SERDES_ON		0x530
++
++struct a733_combophy_regval {
++	uint16_t	reg;
++	uint16_t	val;
++};
++
++/* Lane defaults, the same for either plug orientation. */
++static const struct a733_combophy_regval a733_combophy_lanes[] = {
++	{ 0xe005, 0x0003 }, { 0xe006, 0x1124 }, { 0x4100, 0x00ff },
++	{ 0x4300, 0x00ff }, { 0x4102, 0x04ae }, { 0x4302, 0x04ae },
++	{ 0x4103, 0x04ae }, { 0x4303, 0x04ae }, { 0x8000, 0x0000 },
++	{ 0x8200, 0x091d }, { 0x8002, 0x0000 }, { 0x8202, 0x0900 },
++	{ 0x8003, 0x0000 }, { 0x8203, 0x0000 }, { 0x8006, 0x0000 },
++	{ 0x8206, 0x010f }, { 0x40ea, 0x00ff }, { 0x42ea, 0x00ff },
++	{ 0x8108, 0x0000 }, { 0x8308, 0x0009 }, { 0x8110, 0x0000 },
++	{ 0x8310, 0x0009 }, { 0x8118, 0x0000 }, { 0x8318, 0x000d },
++	{ 0x4040, 0x2a84 }, { 0x4240, 0x2a84 }, { 0x40c6, 0x00a3 },
++	{ 0x42c6, 0x00a3 }, { 0x4050, 0x0000 }, { 0x4250, 0x0000 },
++	{ 0x404c, 0x001c }, { 0x424c, 0x001c }, { 0x4500, 0x00ff },
++	{ 0x4700, 0x00ff }, { 0x4502, 0x04ae }, { 0x4702, 0x04ae },
++	{ 0x4503, 0x04ae }, { 0x4703, 0x04ae }, { 0x8400, 0x091d },
++	{ 0x8600, 0x0000 }, { 0x8402, 0x0900 }, { 0x8602, 0x0000 },
++	{ 0x8403, 0x0000 }, { 0x8603, 0x0000 }, { 0x8406, 0x010f },
++	{ 0x8606, 0x0000 }, { 0x44ea, 0x00ff }, { 0x46ea, 0x00ff },
++	{ 0x8508, 0x0009 }, { 0x8708, 0x0000 }, { 0x8510, 0x0009 },
++	{ 0x8710, 0x0000 }, { 0x8518, 0x000d }, { 0x8718, 0x0000 },
++	{ 0x4440, 0x2a84 }, { 0x4640, 0x2a84 }, { 0x44c6, 0x00a3 },
++	{ 0x46c6, 0x00a3 }, { 0x4450, 0x0000 }, { 0x4650, 0x0000 },
++	{ 0x444c, 0x001c }, { 0x464c, 0x001c },
++};
++
++/* Common block and PLL setup, first part. */
++static const struct a733_combophy_regval a733_combophy_common1[] = {
++	{ 0x0022, 0x001a }, { 0x002a, 0x0034 }, { 0x002c, 0x00da },
++	{ 0x0032, 0x0034 }, { 0x0034, 0x00da }, { 0x0064, 0x0082 },
++	{ 0x0065, 0x0082 }, { 0x0074, 0x001a }, { 0x0104, 0x0020 },
++	{ 0x0105, 0x0007 }, { 0x010c, 0x0020 }, { 0x010d, 0x0007 },
++	{ 0x0114, 0x030c }, { 0x0115, 0x0007 }, { 0x0124, 0x0007 },
++	{ 0x0125, 0x0003 }, { 0x0126, 0x000f }, { 0x0128, 0x0132 },
++	{ 0x8044, 0x001a }, { 0x8244, 0x001a }, { 0x8444, 0x001a },
++	{ 0x8644, 0x001a }, { 0x8045, 0x0082 }, { 0x8245, 0x0082 },
++	{ 0x8445, 0x0082 }, { 0x8645, 0x0082 }, { 0x804c, 0x001a },
++	{ 0x824c, 0x001a }, { 0x844c, 0x001a }, { 0x864c, 0x001a },
++	{ 0x804d, 0x0082 }, { 0x824d, 0x0082 }, { 0x844d, 0x0082 },
++	{ 0x864d, 0x0082 }, { 0x4123, 0x0a28 }, { 0x4323, 0x0a28 },
++	{ 0x4523, 0x0a28 }, { 0x4723, 0x0a28 }, { 0x01a1, 0x8600 },
++	{ 0x01c1, 0x0601 },
++};
++
++/* Lane roles, plug not flipped. */
++static const struct a733_combophy_regval a733_combophy_norm1[] = {
++	{ 0x44e5, 0x0012 }, { 0x46e5, 0x0012 }, { 0x40e6, 0x0000 },
++	{ 0x42e6, 0x0000 }, { 0x40e7, 0x0001 }, { 0x42e7, 0x0001 },
++	{ 0x40e5, 0x0012 }, { 0x42e5, 0x0012 }, { 0x40e5, 0x0041 },
++	{ 0x42e5, 0x0041 }, { 0x44e6, 0x0001 }, { 0x46e6, 0x0001 },
++	{ 0x44e7, 0x0000 }, { 0x46e7, 0x0000 }, { 0x44e5, 0x0019 },
++	{ 0x46e5, 0x0019 },
++};
++
++/* Lane roles, plug flipped. */
++static const struct a733_combophy_regval a733_combophy_flip1[] = {
++	{ 0x40e5, 0x0012 }, { 0x42e5, 0x0012 }, { 0x44e6, 0x0000 },
++	{ 0x46e6, 0x0000 }, { 0x44e7, 0x0001 }, { 0x46e7, 0x0001 },
++	{ 0x44e5, 0x0012 }, { 0x46e5, 0x0012 }, { 0x44e5, 0x0041 },
++	{ 0x46e5, 0x0041 }, { 0x40e6, 0x0001 }, { 0x42e6, 0x0001 },
++	{ 0x40e7, 0x0000 }, { 0x42e7, 0x0000 }, { 0x40e5, 0x0019 },
++	{ 0x42e5, 0x0019 },
++};
++
++/* PLL setup with spread spectrum, PIPE layer. */
++static const struct a733_combophy_regval a733_combophy_common2[] = {
++	{ 0x0094, 0x0004 }, { 0x00d4, 0x0004 }, { 0x01a4, 0x0509 },
++	{ 0x01c4, 0x0509 }, { 0x01a5, 0x0f00 }, { 0x01c5, 0x0f00 },
++	{ 0x01a6, 0x0f08 }, { 0x01c6, 0x0f08 }, { 0x0090, 0x0180 },
++	{ 0x00d0, 0x019f }, { 0x0091, 0x9d8a }, { 0x00d1, 0x6276 },
++	{ 0x0092, 0x0002 }, { 0x00d2, 0x0002 }, { 0x0093, 0x0102 },
++	{ 0x00d3, 0x0116 }, { 0x01a0, 0x0002 }, { 0x01c0, 0x0002 },
++	{ 0x0098, 0x0001 }, { 0x00d8, 0x0001 }, { 0x0099, 0x045f },
++	{ 0x00d9, 0x04c4 }, { 0x009a, 0x006b }, { 0x00da, 0x006a },
++	{ 0x009b, 0x0004 }, { 0x00db, 0x0004 }, { 0x0084, 0x0104 },
++	{ 0x00c4, 0x0104 }, { 0x0085, 0x0005 }, { 0x00c5, 0x0005 },
++	{ 0x0086, 0x0337 }, { 0x00c6, 0x0337 }, { 0x0088, 0x0335 },
++	{ 0x00c8, 0x0335 }, { 0x0082, 0x0003 }, { 0x00c2, 0x0003 },
++	{ 0x009c, 0x00cf }, { 0x00dc, 0x00cf }, { 0x009e, 0x00ce },
++	{ 0x00de, 0x00ce }, { 0x009f, 0x0005 }, { 0x00df, 0x0005 },
++	{ 0xc010, 0x5100 }, { 0xc011, 0x0100 }, { 0xc011, 0x010f },
++	{ 0xc018, 0x0a0a }, { 0xc01a, 0x1008 }, { 0xc01b, 0x0010 },
++	{ 0x0041, 0x8200 }, { 0x0047, 0x8200 },
++};
++
++/* Transmitter and receiver tuning, plug not flipped. */
++static const struct a733_combophy_regval a733_combophy_norm2[] = {
++	{ 0x4700, 0x00ff }, { 0x4701, 0x04af }, { 0x4702, 0x04ae },
++	{ 0x4703, 0x04ae }, { 0x8400, 0x091d }, { 0x8401, 0x091d },
++	{ 0x8402, 0x0900 }, { 0x8403, 0x0000 }, { 0x4640, 0x2a84 },
++	{ 0x464d, 0x0011 }, { 0x8490, 0x000c }, { 0x8508, 0x0009 },
++	{ 0x8549, 0x0c02 }, { 0x8577, 0x06f6 }, { 0x8578, 0x4606 },
++	{ 0x44eb, 0x0006 }, { 0x8571, 0x0519 }, { 0x8572, 0x0519 },
++	{ 0x85e8, 0x1002 }, { 0x85e5, 0x0b98 }, { 0x85e2, 0x0c01 },
++	{ 0x85e3, 0x0000 }, { 0x85f5, 0x0000 }, { 0x85f4, 0x0311 },
++	{ 0x85ff, 0x0000 }, { 0x87ff, 0x0000 }, { 0x8480, 0x010a },
++	{ 0x8482, 0x0003 }, { 0x46ea, 0x00ff }, { 0x44ea, 0x00ff },
++	{ 0x4100, 0x02ff }, { 0x4101, 0x06af }, { 0x4102, 0x06ae },
++	{ 0x4103, 0x06ae }, { 0x8200, 0x0d1d }, { 0x8201, 0x0d1d },
++	{ 0x8202, 0x0d00 }, { 0x8203, 0x0500 }, { 0x4040, 0x2a82 },
++	{ 0x404d, 0x0014 }, { 0x8290, 0x0013 }, { 0x8308, 0x0000 },
++	{ 0x8349, 0x0c02 }, { 0x8377, 0x0330 }, { 0x8378, 0x0300 },
++	{ 0x42eb, 0x0003 }, { 0x8371, 0x0019 }, { 0x8372, 0x0019 },
++	{ 0x83e8, 0x1004 }, { 0x83e5, 0x00f9 }, { 0x83e2, 0x0c01 },
++	{ 0x83e3, 0x0002 }, { 0x83f5, 0x0000 }, { 0x83f4, 0x0031 },
++	{ 0x83ff, 0x0001 }, { 0x81ff, 0x0002 }, { 0x8280, 0x018c },
++	{ 0x8282, 0x0003 }, { 0x40ea, 0x000f }, { 0x42ea, 0x00f0 },
++};
++
++/* Transmitter and receiver tuning, plug flipped. */
++static const struct a733_combophy_regval a733_combophy_flip2[] = {
++	{ 0x4100, 0x00ff }, { 0x4101, 0x04af }, { 0x4102, 0x04ae },
++	{ 0x4103, 0x04ae }, { 0x8200, 0x091d }, { 0x8201, 0x091d },
++	{ 0x8202, 0x0900 }, { 0x8203, 0x0000 }, { 0x4040, 0x2a84 },
++	{ 0x404d, 0x0011 }, { 0x8290, 0x000c }, { 0x8308, 0x0009 },
++	{ 0x8349, 0x0c02 }, { 0x8377, 0x06f6 }, { 0x8378, 0x4606 },
++	{ 0x42eb, 0x0006 }, { 0x8371, 0x0519 }, { 0x8372, 0x0519 },
++	{ 0x83e8, 0x1002 }, { 0x83e5, 0x0b98 }, { 0x83e2, 0x0c01 },
++	{ 0x83e3, 0x0000 }, { 0x83f5, 0x0000 }, { 0x83f4, 0x0311 },
++	{ 0x83ff, 0x0000 }, { 0x81ff, 0x0000 }, { 0x8280, 0x010a },
++	{ 0x8282, 0x0003 }, { 0x40ea, 0x00ff }, { 0x42ea, 0x00ff },
++	{ 0x4700, 0x02ff }, { 0x4701, 0x06af }, { 0x4702, 0x06ae },
++	{ 0x4703, 0x06ae }, { 0x8400, 0x0d1d }, { 0x8401, 0x0d1d },
++	{ 0x8402, 0x0d00 }, { 0x8403, 0x0500 }, { 0x4640, 0x2a82 },
++	{ 0x464d, 0x0014 }, { 0x8490, 0x0013 }, { 0x8508, 0x0000 },
++	{ 0x8549, 0x0c02 }, { 0x8577, 0x0330 }, { 0x8578, 0x0300 },
++	{ 0x44eb, 0x0003 }, { 0x8571, 0x0019 }, { 0x8572, 0x0019 },
++	{ 0x85e8, 0x1004 }, { 0x85e5, 0x00f9 }, { 0x85e2, 0x0c01 },
++	{ 0x85e3, 0x0002 }, { 0x85f5, 0x0000 }, { 0x85f4, 0x0031 },
++	{ 0x85ff, 0x0001 }, { 0x87ff, 0x0002 }, { 0x8480, 0x018c },
++	{ 0x8482, 0x0003 }, { 0x46ea, 0x000f }, { 0x44ea, 0x00f0 },
++};
++
++/* Closing writes. */
++static const struct a733_combophy_regval a733_combophy_last[] = {
++	{ 0xe003, 0x0001 }, { 0x0103, 0x007f }, { 0x010b, 0x007f },
++};
++
++static const struct device_compatible_entry compat_data[] = {
++	{ .compat = "allwinner,sun60i-a733-combophy" },
++	DEVICE_COMPAT_EOL
++};
++
++struct a733_combophy_softc {
++	device_t		sc_dev;
++	bus_space_tag_t		sc_bst;
++	bus_space_handle_t	sc_pins_bsh;
++	bus_space_handle_t	sc_phy_bsh;
++	bus_space_handle_t	sc_sds_bsh;
++	bus_space_handle_t	sc_hsi_bsh;
++	bool			sc_flipped;
++};
++
++#define	PINS_READ(sc, reg)		\
++	bus_space_read_4((sc)->sc_bst, (sc)->sc_pins_bsh, (reg))
++#define	PINS_WRITE(sc, reg, val)	\
++	bus_space_write_4((sc)->sc_bst, (sc)->sc_pins_bsh, (reg), (val))
++#define	SDS_READ(sc, reg)		\
++	bus_space_read_4((sc)->sc_bst, (sc)->sc_sds_bsh, (reg))
++#define	SDS_WRITE(sc, reg, val)		\
++	bus_space_write_4((sc)->sc_bst, (sc)->sc_sds_bsh, (reg), (val))
++
++static void
++a733_combophy_load(struct a733_combophy_softc *sc,
++    const struct a733_combophy_regval *tab, size_t n)
++{
++	for (size_t i = 0; i < n; i++)
++		bus_space_write_2(sc->sc_bst, sc->sc_phy_bsh,
++		    CPHY_REG(tab[i].reg), tab[i].val);
++}
++
++#define	LOAD(sc, tab)	a733_combophy_load((sc), (tab), __arraycount(tab))
++
++static bool
++a733_combophy_ready(struct a733_combophy_softc *sc)
++{
++	for (int retry = 2000; retry > 0; retry--) {
++		if (PINS_READ(sc, CPHY_STATUS0) & CPHY_STATUS0_READY)
++			return true;
++		delay(5);
++	}
++	return false;
++}
++
++static int
++a733_combophy_start(struct a733_combophy_softc *sc)
++{
++	uint32_t val;
++	uint16_t iso;
++
++	/* Out of power-down; the reference comes from the oscillator. */
++	val = PINS_READ(sc, CPHY_CTRL2);
++	PINS_WRITE(sc, CPHY_CTRL2,
++	    val & ~(CPHY_CTRL2_IDDQ_SEL | CPHY_CTRL2_IDDQ));
++	val = PINS_READ(sc, CPHY_CTRL1);
++	PINS_WRITE(sc, CPHY_CTRL1, val | CPHY_CTRL1_PLL1_REFSEL |
++	    CPHY_CTRL1_PLL0_REFSEL | CPHY_CTRL1_DIG_REFSEL);
++	SDS_WRITE(sc, SDS_PIPE_CLK_MAP,
++	    SDS_READ(sc, SDS_PIPE_CLK_MAP) & ~SDS_PIPE_MAP);
++	SDS_WRITE(sc, SDS_PIPE_RXD_MAP,
++	    SDS_READ(sc, SDS_PIPE_RXD_MAP) & ~SDS_PIPE_MAP);
++
++	val = PINS_READ(sc, CPHY_CTRL0);
++	PINS_WRITE(sc, CPHY_CTRL0, val & ~CPHY_CTRL0_PIPE_MASK);
++
++	LOAD(sc, a733_combophy_lanes);
++	LOAD(sc, a733_combophy_common1);
++	if (sc->sc_flipped)
++		LOAD(sc, a733_combophy_flip1);
++	else
++		LOAD(sc, a733_combophy_norm1);
++	val = PINS_READ(sc, CPHY_CTRL0);
++	if (sc->sc_flipped)
++		val |= CPHY_CTRL0_FLIPPED;
++	else
++		val &= ~CPHY_CTRL0_FLIPPED;
++	PINS_WRITE(sc, CPHY_CTRL0, val);
++	LOAD(sc, a733_combophy_common2);
++	if (sc->sc_flipped)
++		LOAD(sc, a733_combophy_flip2);
++	else
++		LOAD(sc, a733_combophy_norm2);
++	LOAD(sc, a733_combophy_last);
++
++	/* Pulse the reset, then bring the PIPE side and the PLL up. */
++	val = PINS_READ(sc, CPHY_CTRL0);
++	PINS_WRITE(sc, CPHY_CTRL0, val & ~CPHY_CTRL0_RSTN);
++	delay(1000);
++	PINS_WRITE(sc, CPHY_CTRL0, val | CPHY_CTRL0_RSTN);
++	SDS_WRITE(sc, SDS_DP_CONV, SDS_READ(sc, SDS_DP_CONV) | SDS_DP_CONV_ON);
++	delay(1000);
++
++	val = PINS_READ(sc, CPHY_CTRL0);
++	PINS_WRITE(sc, CPHY_CTRL0, val | CPHY_CTRL0_PIPE_RSTN);
++	val = PINS_READ(sc, CPHY_CTRL3);
++	PINS_WRITE(sc, CPHY_CTRL3, val | CPHY_CTRL3_PLLCLK_EN);
++	delay(1000);
++	val = PINS_READ(sc, CPHY_CTRL3);
++	PINS_WRITE(sc, CPHY_CTRL3, val | __SHIFTIN(1, CPHY_CTRL3_POWER_REQ));
++	val = PINS_READ(sc, CPHY_CTRL0);
++	PINS_WRITE(sc, CPHY_CTRL0, val | CPHY_CTRL0_DP_RSTN);
++
++	if ((PINS_READ(sc, CPHY_STATUS0) & CPHY_STATUS0_READY) == 0) {
++		delay(10000);
++		iso = bus_space_read_2(sc->sc_bst, sc->sc_phy_bsh,
++		    CPHY_REG(CPHY_PMA_ISO));
++		bus_space_write_2(sc->sc_bst, sc->sc_phy_bsh,
++		    CPHY_REG(CPHY_PMA_ISO), iso & ~CPHY_PMA_ISO_LANES);
++		if (!a733_combophy_ready(sc)) {
++			aprint_error_dev(sc->sc_dev, "PLL did not lock\n");
++			return EIO;
++		}
++	}
++
++	/* The controller now takes its pipe clock from this PHY. */
++	val = bus_space_read_4(sc->sc_bst, sc->sc_hsi_bsh, HSI_USB3_BGR);
++	bus_space_write_4(sc->sc_bst, sc->sc_hsi_bsh, HSI_USB3_BGR,
++	    val & ~HSI_USB3_BGR_PIPE_CCU);
++
++	return 0;
++}
++
++static void *
++a733_combophy_acquire(device_t dev, const void *data, size_t len)
++{
++	return device_private(dev);
++}
++
++static void
++a733_combophy_release(device_t dev, void *priv)
++{
++}
++
++static int
++a733_combophy_enable(device_t dev, void *priv, bool enable)
++{
++	struct a733_combophy_softc * const sc = priv;
++
++	if (!enable)
++		return 0;
++	return a733_combophy_start(sc);
++}
++
++static const struct fdtbus_phy_controller_func a733_combophy_funcs = {
++	.acquire = a733_combophy_acquire,
++	.release = a733_combophy_release,
++	.enable = a733_combophy_enable,
++};
++
++static int
++a733_combophy_match(device_t parent, cfdata_t cf, void *aux)
++{
++	struct fdt_attach_args * const faa = aux;
++
++	return of_compatible_match(faa->faa_phandle, compat_data);
++}
++
++static void
++a733_combophy_attach(device_t parent, device_t self, void *aux)
++{
++	struct a733_combophy_softc * const sc = device_private(self);
++	struct fdt_attach_args * const faa = aux;
++	const int phandle = faa->faa_phandle;
++	bus_space_handle_t *bshp[] = {
++		&sc->sc_pins_bsh, &sc->sc_phy_bsh, &sc->sc_sds_bsh,
++		&sc->sc_hsi_bsh
++	};
++	bus_space_handle_t bsh;
++	struct fdtbus_reset *rst;
++	struct clk *clk;
++	bus_addr_t addr;
++	bus_size_t size;
++	u_int n;
++
++	sc->sc_dev = self;
++	sc->sc_bst = faa->faa_bst;
++
++	for (n = 0; n < __arraycount(bshp); n++) {
++		if (fdtbus_get_reg(phandle, n, &addr, &size) != 0 ||
++		    bus_space_map(sc->sc_bst, addr, size, 0, bshp[n]) != 0) {
++			aprint_error(": couldn't map registers #%u\n", n);
++			return;
++		}
++	}
++
++	/* The oscillator's outputs to the serdes are gated in the RTC. */
++	if (fdtbus_get_reg(phandle, n, &addr, &size) != 0 ||
++	    bus_space_map(sc->sc_bst, addr, size, 0, &bsh) != 0) {
++		aprint_error(": couldn't map the oscillator gate\n");
++		return;
++	}
++	bus_space_write_4(sc->sc_bst, bsh, 0, DCXO_SERDES_ON);
++	bus_space_unmap(sc->sc_bst, bsh, size);
++
++	fdtbus_clock_assign(phandle);
++	for (n = 0; (clk = fdtbus_clock_get_index(phandle, n)) != NULL; n++) {
++		if (clk_enable(clk) != 0) {
++			aprint_error(": couldn't enable clock #%u\n", n);
++			return;
++		}
++	}
++	for (n = 0; (rst = fdtbus_reset_get_index(phandle, n)) != NULL; n++) {
++		if (fdtbus_reset_deassert(rst) != 0) {
++			aprint_error(": couldn't de-assert reset #%u\n", n);
++			return;
++		}
++	}
++
++	sc->sc_flipped = of_hasprop(phandle, "allwinner,flipped");
++
++	aprint_naive("\n");
++	aprint_normal(": USB 3 serdes\n");
++
++	fdtbus_register_phy_controller(self, phandle, &a733_combophy_funcs);
++}
++
++CFATTACH_DECL_NEW(sun60i_a733_combophy, sizeof(struct a733_combophy_softc),
++	a733_combophy_match, a733_combophy_attach, NULL, NULL);

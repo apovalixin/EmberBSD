@@ -325,6 +325,16 @@ device	sun60ia733ths: sysmon_envsys
 attach	sun60ia733ths at fdt with sun60i_a733_ths
 file	arch/arm/sunxi/sun60i_a733_ths.c	sun60i_a733_ths
 
+# USB 2.0 PHY of the USB 3 controller (A733)
+device	sun60iusb2phy
+attach	sun60iusb2phy at fdt with sun60i_a733_usb2phy
+file	arch/arm/sunxi/sun60i_a733_usb2phy.c	sun60i_a733_usb2phy
+
+# USB 3 serdes of the Type-C port (A733)
+device	sun60icombophy
+attach	sun60icombophy at fdt with sun60i_a733_combophy
+file	arch/arm/sunxi/sun60i_a733_combophy.c	sun60i_a733_combophy
+
 # A733 crypto engine (random numbers)
 device	sun60icrypto
 attach	sun60icrypto at fdt with sun60i_a733_crypto

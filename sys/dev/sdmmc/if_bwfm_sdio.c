@@ -2356,6 +2356,7 @@ bwfm_sdio_sysctl_report(SYSCTLFN_ARGS)
 		timerclear(&sc->sc_report_time);
 		bwfm_sdio_report(sc, "report requested");
 		mutex_exit(&sc->sc_lock);
+		bwfm_report(&sc->sc_sc);
 	}
 	return 0;
 }

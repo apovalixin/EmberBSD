@@ -75,6 +75,7 @@ int	 bwfm_newstate(struct ieee80211com *, enum ieee80211_state, int);
 void	 bwfm_newstate_cb(struct bwfm_softc *, struct bwfm_cmd_newstate *);
 void	 bwfm_newassoc(struct ieee80211_node *, int);
 void	 bwfm_task(struct work *, void *);
+static void bwfm_report_cb(struct bwfm_softc *);
 
 int	 bwfm_chip_attach(struct bwfm_softc *);
 int	 bwfm_chip_detach(struct bwfm_softc *, int);
@@ -605,6 +606,18 @@ bwfm_init(struct ifnet *ifp)
 		printf("%s: could not disable firmware roaming\n",
 		    DEVNAME(sc));
 
+	/*
+	 * roam_off does not stop WNM BSS transitions on CYW43455
+	 * firmware 7.45.265.  A request from a mixed WPA2/WPA3 AP can
+	 * change wpa_auth to SAE without a host join or new keys,
+	 * leaving net80211 in RUN with no data traffic.  We do not
+	 * implement 802.11v transitions; do not advertise or offload
+	 * them.  The host handles a subsequent link loss and rejoins.
+	 */
+	if (ic->ic_opmode == IEEE80211_M_STA &&
+	    bwfm_fwvar_var_set_int(sc, "wnm", 0))
+		printf("%s: could not disable firmware WNM\n", DEVNAME(sc));
+
 	memset(evmask, 0, sizeof(evmask));
 
 #define	ENABLE_EVENT(e)		evmask[(e) / 8] |= 1 << ((e) % 8)
@@ -1049,11 +1062,89 @@ bwfm_task(struct work *wk, void *arg)
 	case BWFM_TASK_RX_EVENT:
 		bwfm_rx_event_cb(sc, t->t_mbuf);
 		break;
+	case BWFM_TASK_REPORT:
+		bwfm_report_cb(sc);
+		break;
 	default:
 		panic("bwfm: unknown task command %d", t->t_cmd);
 	}
 
 	pool_cache_put(sc->sc_freetask, t);
+}
+
+/* Run firmware queries with the other asynchronous driver commands. */
+void
+bwfm_report(struct bwfm_softc *sc)
+{
+	struct bwfm_task *t;
+
+	if (sc->sc_taskq == NULL)
+		return;
+	t = pool_cache_get(sc->sc_freetask, PR_NOWAIT);
+	if (t == NULL)
+		return;
+	t->t_sc = sc;
+	t->t_cmd = BWFM_TASK_REPORT;
+	workqueue_enqueue(sc->sc_taskq, (struct work *)t, NULL);
+}
+
+static void
+bwfm_report_cb(struct bwfm_softc *sc)
+{
+	static const char * const vars[] = {
+		"chanspec", "mpc", "roam_off", "wnm", "wsec", "wpa_auth",
+		"ampdu", "ampdu_hostreorder"
+	};
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct bwfm_sta_info sta;
+	uint8_t bssid[ETHER_ADDR_LEN] = { 0 };
+	uint32_t value = 0;
+	unsigned int i;
+	int error;
+
+	printf("%s: radio state %u ifflags 0x%x pm wanted %d pending %d\n",
+	    DEVNAME(sc), ic->ic_state, sc->sc_if.if_flags, sc->sc_pm,
+	    sc->sc_setpm);
+	if ((sc->sc_if.if_flags & IFF_RUNNING) == 0 || ic->ic_bss == NULL)
+		return;
+	error = bwfm_fwvar_cmd_get_data(sc, BWFM_C_GET_BSSID,
+	    bssid, sizeof(bssid));
+	printf("%s: radio bssid error %d matches %d\n", DEVNAME(sc), error,
+	    error == 0 && IEEE80211_ADDR_EQ(bssid, ic->ic_bss->ni_bssid));
+	error = bwfm_fwvar_cmd_get_int(sc, BWFM_C_GET_PM, &value);
+	printf("%s: radio pm error %d value %u\n", DEVNAME(sc), error, value);
+	for (i = 0; i < __arraycount(vars); i++) {
+		value = 0;
+		error = bwfm_fwvar_var_get_int(sc, vars[i], &value);
+		printf("%s: radio %s error %d value 0x%x\n",
+		    DEVNAME(sc), vars[i], error, value);
+	}
+	memset(&sta, 0, sizeof(sta));
+	memcpy(&sta, ic->ic_bss->ni_macaddr, ETHER_ADDR_LEN);
+	error = bwfm_fwvar_var_get_data(sc, "sta_info", &sta, sizeof(sta));
+	printf("%s: radio station error %d version %u length %u\n",
+	    DEVNAME(sc), error, le16toh(sta.ver), le16toh(sta.len));
+	if (error != 0 || le16toh(sta.ver) < 3 ||
+	    le16toh(sta.len) < offsetof(struct bwfm_sta_info, tx_tot_pkts) ||
+	    !IEEE80211_ADDR_EQ(sta.ea, ic->ic_bss->ni_macaddr))
+		return;
+	printf("%s: radio station flags 0x%x idle %u in %u tx %u fail %u"
+	    " rx %u mcast %u decrypt %u bad %u rates %u/%u\n", DEVNAME(sc),
+	    le32toh(sta.flags), le32toh(sta.idle), le32toh(sta.in),
+	    le32toh(sta.tx_pkts), le32toh(sta.tx_failures),
+	    le32toh(sta.rx_ucast_pkts), le32toh(sta.rx_mcast_pkts),
+	    le32toh(sta.rx_decrypt_succeeds), le32toh(sta.rx_decrypt_failures),
+	    le32toh(sta.tx_rate), le32toh(sta.rx_rate));
+	if (le16toh(sta.ver) >= 4 &&
+	    le16toh(sta.len) >= offsetof(struct bwfm_sta_info, v5))
+		printf("%s: radio rssi %d last %d noise %d tx retries %u"
+		    " exhausted %u fw retries %u exhausted %u rx retried %u\n",
+		    DEVNAME(sc), sta.rssi[0], sta.rx_lastpkt_rssi[0], sta.nf[0],
+		    le32toh(sta.tx_pkts_retries),
+		    le32toh(sta.tx_pkts_retry_exhausted),
+		    le32toh(sta.tx_pkts_fw_retries),
+		    le32toh(sta.tx_pkts_fw_retry_exhausted),
+		    le32toh(sta.rx_pkts_retried));
 }
 
 int
