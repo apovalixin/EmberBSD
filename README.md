@@ -72,8 +72,9 @@ application stacks, adaptations and runnable checks. Small installations
 can keep only the components they need. Upstream components retain their
 own licenses and authorship.
 
-The following results were checked on **2026-10-06**. Application tests on
-an AArch64 VM do not establish support on every board in the hardware table.
+Status updated **2026-10-07**; linked component documents record their own
+validation dates. Application tests on an AArch64 VM do not establish support
+on every board in the hardware catalog.
 
 ### Local AI and robotics
 
@@ -84,6 +85,14 @@ an AArch64 VM do not establish support on every board in the hardware table.
   local assistants; microphone capture, image understanding and GPU/NPU
   inference still need validation. See the [AI packages](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/ai-cpu)
   and [model execution example](https://github.com/neonix20b/EmberBSD-Examples/tree/main/ai/local-inference).
+- **Answers from local documents:** a C example uses SQLite 3.53.4 FTS5 to
+  retrieve evidence and the existing llama.cpp CPU server to select a quotation.
+  It checks the source and quoted text before displaying them, and handles
+  missing evidence and server failures. Native AArch64 tests include actual
+  model execution, SQLite transactions, concurrent readers and process-crash
+  recovery. This is extractive retrieval, not arbitrary answer-quality or
+  physical power-loss validation. See the [document example](https://github.com/neonix20b/EmberBSD-Examples/tree/main/ai/local-knowledge)
+  and [SQLite checks](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/sqlite).
 - **Robot telemetry and commands:** Zenoh-Pico 1.10.1 packages and a C device
   controller exchange typed data and commands with ROS 2 Jazzy through a
   C++ bridge. The two-VM test covers acknowledgements, stale-command rejection
