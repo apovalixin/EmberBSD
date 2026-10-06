@@ -105,6 +105,14 @@ on every board in the hardware catalog.
   transforms, and a real gpsd process receiving synthetic GNSS data.
   These are [experimental source builds](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/robotics-foundations);
   physical cameras/GNSS receivers and accelerated vision remain unverified.
+- **Video processing for applications:** FFmpeg 9.0.2, GStreamer 1.28.7 and
+  OpenCV 5.0.0 videoio share one tested media installation. AArch64 VM checks
+  cover exact decoded frames and timestamps, application-buffer pipelines,
+  file capture through both OpenCV backends, seeking, image processing and
+  lossless output. NetBSD filesystem support and FFmpeg compatibility fixes
+  are preserved in the [media port](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/media).
+  This is a CPU file-processing profile; camera capture, network streaming
+  and hardware codecs remain outside its verified scope.
 
 ### Graphical interfaces
 
