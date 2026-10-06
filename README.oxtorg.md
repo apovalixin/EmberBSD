@@ -1,6 +1,6 @@
-# NetBSD2: hardware adaptations and build instructions
+# EmberBSD: hardware adaptations and build instructions
 
-NetBSD2 is an independent NetBSD 11 fork for single-board computers and
+EmberBSD is an independent NetBSD 11 fork for single-board computers and
 embedded systems. Its primary target is Raspberry Pi 5. The repository
 preserves the NetBSD source tree and history, adding device drivers,
 kernel fixes, and build tools for specific boards. Changes in this fork

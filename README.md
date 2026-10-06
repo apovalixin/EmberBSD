@@ -1,6 +1,6 @@
-# NetBSD2
+# EmberBSD
 
-NetBSD2 is an independent fork of [NetBSD](https://github.com/NetBSD/src),
+EmberBSD is an independent fork of [NetBSD](https://github.com/NetBSD/src),
 based on version 11, for single-board computers and embedded systems.
 It adds hardware support for Raspberry Pi 5 and related boards, for
 the Allwinner A733 and for the ESP32-S31, a 32-bit RISC-V chip with

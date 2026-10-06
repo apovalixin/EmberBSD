@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build an exported netbsd2 tree with NetBSD 11's native toolchain.
+# Build an exported EmberBSD tree with NetBSD 11's native toolchain.
 set -eu
 src=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 [ "$(uname -s)" = NetBSD ] || { echo 'native NetBSD build required' >&2; exit 1; }
