@@ -72,7 +72,17 @@ checks include allocations, BO/fence references and lists, reservation locks,
 file reservations, close/abort/install counts and nonzero emitted fence IDs.
 Late-error cases combine the actual response validator and fence failure
 paths with controlled cookie retirement; they do not exercise the complete
-IRQ dequeue/reset path. Native compiler/object validation is a separate gate.
+IRQ dequeue/reset path.
+
+On 2026-10-07, source `caaec17158cb0eb342f0c0b8e7bb3ac3f714d577`
+passed all 53 groups on the NetBSD 11/AArch64 UTM guest with GCC 16.2.
+The unchanged baseline failed 34 groups on the host; repaired host tests
+also passed with ASan/UBSan. Native resource, context, capset and earlier
+VirtGPU contracts passed another 28 groups. Fresh `virtgpu_vq.o` and
+`virtgpu_ioctl.o` compiled with the base GCC 12.5 and `-Werror` in 0.93 seconds,
+with 66,148 KiB peak RSS and no swaps. Independent review approved the
+change and retained evidence. No complete kernel was linked, installed or
+booted for this check; the partial object directory is not a kernel artifact.
 
 ## Remaining boundaries
 

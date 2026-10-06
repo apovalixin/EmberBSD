@@ -159,6 +159,9 @@ on every board in the hardware catalog.
   fixes; their individual build/runtime boundaries are documented separately.
   [Resource-lifetime fixes](sys/external/bsd/drm2/virtio/resource-lifetime.md)
   retain shared buffers across duplicate handles and failed host responses.
+  [Asynchronous submission](sys/external/bsd/drm2/virtio/submit-ownership.md)
+  reports immediate queue errors and publishes fence descriptors only after
+  acceptance, with balanced cleanup on failure.
   Native contracts and object builds pass; full kernel/runtime acceptance
   remains pending.
   See the [VirtGPU implementation](sys/external/bsd/drm2/virtio/README.md),
