@@ -103,8 +103,8 @@ EMBERGPU alone enables `VIRTGPU_CONSOLE` and the native `virtiodrmfb`
 child. The selected FDT simple framebuffer postpones its final wsdisplay
 attachment until autoconfiguration finishes; the early ARM renderer stays
 available. A selected PCI VirtGPU can reserve it and prepare a private
-XRGB8888 framebuffer through the native DRM helper. Failure before final
-attachment leaves the firmware fallback to attach once. The regular
+XRGB8888 framebuffer through the native DRM helper. Failure before the first native
+SET_SCANOUT submission leaves the firmware fallback to attach once. The regular
 EMBER64 configuration does not enable this selection.
 
 The child uses drmfb/genfb/wsdisplay with the existing keyboard and tty
@@ -130,3 +130,22 @@ geometry, upload, ownership and stop functions against API models. Native
 builds and these models do not prove visible login, live VT switching or
 compositor-crash recovery; those need VM acceptance. Panic/DDB and reset
 reinitialization are unsupported. There is no live unload or VirGL claim.
+
+The initial commit suppresses empty SET_SCANOUT commands while firmware
+still owns the display. A failed transfer prerequisite stops the plane
+update before SET_SCANOUT/FLUSH. The first potentially submitted native
+SET_SCANOUT is a conservative takeover boundary: even a failed reply may
+mean that the host changed output. An error after this boundary retains the
+native helper, framebuffer and final wsdisplay; it never claims firmware
+rollback. The uploader retries ENOMEM/EAGAIN/ENOSPC at one-second intervals,
+with a full transfer, explicit nonzero SET_SCANOUT and FLUSH. It clears the
+console error only after that sequence succeeds. A new graphics master is
+rejected while recovery has an error or the transport is stopped. Permanent
+host/protocol failure stops uploads and retains resources; device-reset
+reinitialization and revival of firmware output remain unsupported.
+
+The production plane/command regression injects failed transfer allocation,
+failed transfer, SET_SCANOUT allocation failure, uncertain SET_SCANOUT
+completion and failed FLUSH after successful SET_SCANOUT. The worker test
+checks retry, master rejection during recovery, and successful resumption.
+The console currently requires exactly one host scanout.

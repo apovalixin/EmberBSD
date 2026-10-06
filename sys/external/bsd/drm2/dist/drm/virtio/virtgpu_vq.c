@@ -648,6 +648,10 @@ int virtio_gpu_cmd_set_scanout(struct virtio_gpu_device *vgdev,
 	struct virtio_gpu_set_scanout *cmd_p;
 	struct virtio_gpu_vbuffer *vbuf;
 
+	/* Do not disable firmware output before the first valid transfer. */
+	if (vgdev->console_preparing && !vgdev->console_takeover &&
+	    resource_id == 0)
+		return 0;
 	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
 	if (IS_ERR(cmd_p)) {
 		vgdev->submit_error = PTR_ERR(cmd_p);
@@ -663,6 +667,9 @@ int virtio_gpu_cmd_set_scanout(struct virtio_gpu_device *vgdev,
 	cmd_p->r.x = cpu_to_le32(x);
 	cmd_p->r.y = cpu_to_le32(y);
 
+	/* From here a failed reply cannot prove firmware still owns output. */
+	if (vgdev->console_preparing)
+		vgdev->console_takeover = true;
 	int error = virtio_gpu_queue_sync(vgdev, vbuf, NULL, NULL);
 	if (error)
 		vgdev->submit_error = error;

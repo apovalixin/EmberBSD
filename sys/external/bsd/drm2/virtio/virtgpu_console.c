@@ -29,6 +29,7 @@ struct virtgpu_console {
 	size_t size;
 	volatile unsigned dirty;
 	bool emul, master, restore, stopped;
+	int error; /* Nonzero rejects a new graphics master during recovery. */
 };
 
 static void virtgpu_console_work(struct work_struct *);
@@ -205,7 +206,7 @@ CFATTACH_DECL_NEW(virtiodrmfb, sizeof(struct drmfb_softc),
     virtiodrmfb_match, virtiodrmfb_attach, NULL, NULL);
 
 static int
-virtgpu_console_upload(struct virtgpu_console *vc)
+virtgpu_console_upload(struct virtgpu_console *vc, bool restore)
 {
 	struct virtio_gpu_object *bo =
 	    gem_to_virtio_gpu_obj(vc->helper.fb->obj[0]);
@@ -217,7 +218,7 @@ virtgpu_console_upload(struct virtgpu_console *vc)
 	 * snapshot, but their trailing notification guarantees another upload.
 	 * Only this worker writes the separate DMA mapping, never CPU rasops.
 	 */
-	if (!atomic_swap_uint(&vc->dirty, 0))
+	if (!atomic_swap_uint(&vc->dirty, 0) && !restore)
 		return 0;
 	membar_consumer();
 	memcpy(bo->dma_vaddr, vc->shadow, vc->size);
@@ -227,8 +228,19 @@ virtgpu_console_upload(struct virtgpu_console *vc)
 	virtio_gpu_array_add_obj(objs, &bo->base.base);
 	error = virtio_gpu_cmd_transfer_to_host_2d(vc->vgdev, 0,
 	    bo->width, bo->height, 0, 0, objs, NULL);
-	if (error)
+	if (error) {
+		/* Submission failed or reset ended host access; close PREWRITE. */
+		bus_dmamap_sync(vc->vgdev->vdev->dmat,
+		    bo->pages->sgl->sg_dmamap, 0, bo->base.base.size,
+		    BUS_DMASYNC_POSTWRITE);
 		return error;
+	}
+	if (restore) {
+		error = virtio_gpu_cmd_set_scanout(vc->vgdev, 0,
+		    bo->hw_res_handle, bo->width, bo->height, 0, 0);
+		if (error)
+			return error;
+	}
 	return virtio_gpu_cmd_resource_flush(vc->vgdev, bo->hw_res_handle,
 	    0, 0, bo->width, bo->height);
 }
@@ -240,28 +252,39 @@ virtgpu_console_work(struct work_struct *work)
 	    struct virtgpu_console, work.work);
 	struct virtio_gpu_device *vgdev = vc->vgdev;
 	int error = 0;
+	unsigned delay = 20;
 
 	mutex_lock(&vc->lock);
 	if (vc->emul && !vc->master && READ_ONCE(vgdev->vqs_ready)) {
 		if (vc->restore) {
+			vgdev->submit_error = 0;
 			error = drm_fb_helper_restore_fbdev_mode_unlocked(&vc->helper);
 			if (!error)
 				error = READ_ONCE(vgdev->submit_error);
-			vc->restore = false;
 			atomic_swap_uint(&vc->dirty, 1);
 		}
 		if (!error)
-			error = virtgpu_console_upload(vc);
+			error = virtgpu_console_upload(vc, vc->restore);
+		if (!error)
+			vc->restore = false;
+		vc->error = error;
+		if (error) {
+			vc->restore = true;
+			atomic_swap_uint(&vc->dirty, 1);
+		}
 	}
 	mutex_unlock(&vc->lock);
-	if (error) {
+	if (error == -ENOMEM || error == -EAGAIN || error == -ENOSPC) {
+		/* Retain native ownership; retry transient allocations at 1 Hz. */
+		delay = 1000;
+	} else if (error) {
 		/* Retain the framebuffer and wired BO after reset; no stale reuse. */
 		virtio_gpu_stop(vgdev, error);
 		return;
 	}
 	spin_lock(&vc->schedule_lock);
 	if (!vc->stopped)
-		queue_delayed_work(vc->wq, &vc->work, msecs_to_jiffies(20));
+		queue_delayed_work(vc->wq, &vc->work, msecs_to_jiffies(delay));
 	spin_unlock(&vc->schedule_lock);
 }
 
@@ -275,6 +298,11 @@ virtgpu_console_master_set(struct drm_device *dev, struct drm_file *file,
 	if (vc != NULL) {
 		/* Wait for any upload/restore before granting userspace ownership. */
 		mutex_lock(&vc->lock);
+		if (!READ_ONCE(vgdev->vqs_ready) || vc->error) {
+			int error = vc->error ? vc->error : -ENODEV;
+			mutex_unlock(&vc->lock);
+			return error;
+		}
 		vc->master = true;
 		mutex_unlock(&vc->lock);
 	}
@@ -330,6 +358,13 @@ virtgpu_console_drain(struct virtio_gpu_device *vgdev)
 		cancel_delayed_work_sync(&vc->work);
 }
 
+static bool
+virtgpu_console_fallback_safe(struct virtio_gpu_device *vgdev)
+{
+	/* A submitted scanout can take effect even when its reply is lost. */
+	return !vgdev->console_takeover;
+}
+
 int
 virtgpu_console_init(struct drm_device *dev)
 {
@@ -341,7 +376,8 @@ virtgpu_console_init(struct drm_device *dev)
 
 	prop_dictionary_get_bool(device_properties(device_parent(dev->dev)),
 	    "is_console", &selected);
-	if (!selected || !simplefb_console_reserve(dev->dev))
+	if (vgdev->num_scanouts != 1 || !selected ||
+	    !simplefb_console_reserve(dev->dev))
 		return -ENODEV;
 	prop_dictionary_set_bool(device_properties(dev->dev), "is_console", true);
 	vc = kzalloc(sizeof(*vc), GFP_KERNEL);
@@ -361,6 +397,7 @@ virtgpu_console_init(struct drm_device *dev)
 	error = drm_fb_helper_init(dev, &vc->helper, 1);
 	if (error)
 		goto destroy;
+	vgdev->console_preparing = true;
 	error = drm_fb_helper_initial_config(&vc->helper, 32);
 	if (error || vc->helper.fb == NULL) {
 		if (!error)
@@ -375,12 +412,21 @@ virtgpu_console_init(struct drm_device *dev)
 	error = drm_fb_helper_restore_fbdev_mode_unlocked(&vc->helper);
 	if (!error)
 		error = READ_ONCE(vgdev->submit_error);
-	if (error || !READ_ONCE(vgdev->vqs_ready)) {
-		if (!error)
-			error = -ENODEV;
+	if (!READ_ONCE(vgdev->vqs_ready) && !error)
+		error = -ENODEV;
+	if (error && virtgpu_console_fallback_safe(vgdev))
 		goto fini;
-	}
-	/* All fallible GPU setup precedes final wsdisplay console attachment. */
+	/*
+	 * Once SET_SCANOUT could have reached the host, firmware fallback is
+	 * unproven. Keep the native framebuffer/console and retry its upload.
+	 */
+	vc->error = error;
+	vgdev->console_preparing = false;
+	if (error)
+		aprint_error_dev(dev->dev,
+		    "console takeover incomplete (%d); retaining native recovery\n",
+		    error);
+	/* Final wsdisplay publication also commits native recovery ownership. */
 	virtgpu_console_attach_fb(vc, child);
 	simplefb_console_commit(dev->dev);
 	vgdev->console = vc;
@@ -393,6 +439,7 @@ virtgpu_console_init(struct drm_device *dev)
 	spin_unlock(&vc->schedule_lock);
 	return 0;
 fini:
+	vgdev->console_preparing = false;
 	/* No wsdisplay or worker owns these objects on pre-takeover failure. */
 	drm_fb_helper_fini(&vc->helper);
 	if (vc->helper.fb != NULL)

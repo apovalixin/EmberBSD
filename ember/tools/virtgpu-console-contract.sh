@@ -7,8 +7,8 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/virtgpu-console.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 extract() {
     awk -v name="$1" -v type="$3" '
-        $0 ~ "^" name "\\(" && $0 !~ /;[[:space:]]*$/ {
-            print type; copying = 1;
+        $0 ~ "^((static )?(void|int) )?" name "[(]" && $0 !~ /;[[:space:]]*$/ {
+            print type; sub(/^(static )?(void|int) /, ""); copying = 1;
         }
         copying { print }
         copying && /^}/ { exit }
@@ -48,6 +48,8 @@ struct drm_fb_helper { struct drm_framebuffer *fb; };
 struct drmfb_softc { struct { struct drm_fb_helper *da_fb_helper; } sc_da; };
 struct virtgpu_console;
 struct virtio_gpu_device {
+    struct { void *dmat; } *vdev;
+    bool console_takeover;
     struct virtgpu_console *console; bool vqs_ready; int submit_error;
 };
 struct virtgpu_console {
@@ -59,17 +61,23 @@ struct virtgpu_console {
     void *shadow;
     size_t size;
     volatile unsigned dirty;
-    bool emul, master, restore, stopped;
+    bool emul, master, restore, stopped; int error;
 };
 struct virtio_gpu_object {
     void *dma_vaddr; unsigned width, height, hw_res_handle;
-    struct { struct { int unused; } base; } base;
+    struct { struct { size_t size; } base; } base;
+    struct { struct { void *sg_dmamap; } *sgl; } *pages;
 };
 #define gem_to_virtio_gpu_obj(x) ((struct virtio_gpu_object *)(x))
 struct virtio_gpu_object_array { int unused; };
 static struct virtio_gpu_object_array array;
 static struct virtgpu_console *current;
 static unsigned restores, transfers, flushes, queued, stops, cancels;
+static unsigned scanouts, retry_delay, posts;
+#define BUS_DMASYNC_POSTWRITE 1
+static void bus_dmamap_sync(void *t, void *m, int off, size_t size, int op) {
+    (void)t; (void)m; (void)off; (void)size; assert(op==1); posts++;
+}
 static bool inject_damage, fail_alloc;
 static int transfer_error;
 static void virtgpu_console_stop(struct virtio_gpu_device *);
@@ -82,7 +90,7 @@ static int drm_fb_helper_restore_fbdev_mode_unlocked(struct drm_fb_helper *h) {
     restores++; return 0;
 }
 static void queue_delayed_work(void *q, struct delayed_work *w, int delay) {
-    (void)q; (void)w; (void)delay;
+    (void)q; (void)w; retry_delay=delay;
     assert(current->schedule_lock.held && !current->stopped); queued++;
 }
 static void cancel_delayed_work_sync(struct delayed_work *w) {
@@ -111,6 +119,11 @@ static int virtio_gpu_cmd_transfer_to_host_2d(struct virtio_gpu_device *v,
     }
     return transfer_error;
 }
+static int virtio_gpu_cmd_set_scanout(struct virtio_gpu_device *v, unsigned index,
+    unsigned id, unsigned w, unsigned h, unsigned x, unsigned y) {
+    assert(v == current->vgdev && index==0 && id==1 && w==32 && h==32);
+    assert(!x && !y); scanouts++; return 0;
+}
 static int virtio_gpu_cmd_resource_flush(struct virtio_gpu_device *v,
     unsigned id, unsigned x, unsigned y, unsigned w, unsigned h) {
     assert(v == current->vgdev && id == 1 && !x && !y && w==32 && h==32);
@@ -131,12 +144,16 @@ int main(void) {
     struct virtio_gpu_object bo={ .dma_vaddr=dma, .width=32, .height=32,
         .hw_res_handle=1 };
     struct drm_framebuffer fb={ .obj={ &bo } };
+    __typeof__(*bo.pages) pages; __typeof__(*pages.sgl) sg;
+    __typeof__(* ((struct virtio_gpu_device *)0)->vdev) vd;
+    memset(&vd,0,sizeof(vd)); memset(&sg,0,sizeof(sg));
+    pages.sgl=&sg; bo.pages=&pages;
     struct virtio_gpu_device v={ .vqs_ready=true };
     struct virtgpu_console vc={ .helper={ &fb }, .vgdev=&v,
         .shadow=shadow, .size=sizeof(shadow), .emul=true };
     struct drm_device dev={ &v };
     struct drmfb_softc sc={ .sc_da={ &vc.helper } };
-    current=&vc; v.console=&vc;
+    current=&vc; v.console=&vc; v.vdev=&vd;
     assert(!virtgpu_console_geometry(0,32));
     assert(!virtgpu_console_geometry(32,31));
     assert(!virtgpu_console_geometry(UINT32_MAX,8192));
@@ -167,7 +184,13 @@ int main(void) {
     v.vqs_ready=true; v.submit_error=0; vc.stopped=false;
     transfer_error=0; fail_alloc=true;
     virtgpu_console_damage(&sc); virtgpu_console_work(&vc.work.work);
-    assert(stops==2 && vc.stopped && transfers==4 && flushes==3);
+    assert(stops==1 && !vc.stopped && transfers==4 && flushes==3);
+    assert(vc.error==-ENOMEM && vc.restore && vc.dirty && retry_delay==1000);
+    assert(virtgpu_console_master_set(&dev,NULL,true)==-ENOMEM);
+    fail_alloc=false; virtgpu_console_work(&vc.work.work);
+    assert(!vc.error && !vc.restore && transfers==5 && flushes==4);
+    assert(scanouts==2 && posts==1 && retry_delay==20);
+    assert(!virtgpu_console_master_set(&dev,NULL,true));
     puts("VirtGPU production console geometry, damage/upload, ownership and stop contracts passed");
 }
 C
@@ -341,3 +364,155 @@ int main(void) {
 C
 ${CC:-cc} -std=c99 -Wall -Wextra -Werror "$work/redraw.c" -o "$work/redraw"
 "$work/redraw"
+cat > "$work/takeover.c" <<'C'
+#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <string.h>
+#include <errno.h>
+#define cpu_to_le32(x) (x)
+#define IS_ERR(p) ((intptr_t)(p)<0 && (intptr_t)(p)>-4096)
+#define PTR_ERR(p) ((int)(intptr_t)(p))
+#define ERR_PTR(e) ((void *)(intptr_t)(e))
+#define DRM_DEBUG(...) ((void)0)
+#define WARN_ON(x) (x)
+#define BUS_DMASYNC_POSTWRITE 1
+#define VIRTIO_GPU_CMD_SET_SCANOUT 1
+#define VIRTIO_GPU_CMD_RESOURCE_FLUSH 2
+struct virtio_gpu_ctrl_hdr { uint32_t type; };
+struct rectangle { uint32_t width,height,x,y; };
+struct virtio_gpu_set_scanout {
+    struct virtio_gpu_ctrl_hdr hdr;
+    uint32_t resource_id,scanout_id;
+    struct rectangle r;
+};
+struct virtio_gpu_resource_flush {
+    struct virtio_gpu_ctrl_hdr hdr;
+    uint32_t resource_id;
+    struct rectangle r;
+};
+union command {
+    struct virtio_gpu_set_scanout scanout;
+    struct virtio_gpu_resource_flush flush;
+};
+struct virtio_gpu_vbuffer { union command cmd; };
+struct virtio_gpu_device {
+    bool console_preparing, console_takeover, notify;
+    int submit_error;
+    struct { void *dmat; } *vdev;
+};
+struct virtio_gpu_object {
+    bool dumb; unsigned hw_res_handle;
+    struct { struct { size_t size; } base; } base;
+    struct { struct { void *sg_dmamap; } *sgl; } *pages;
+};
+#define gem_to_virtio_gpu_obj(p) ((struct virtio_gpu_object *)(p))
+struct format { unsigned cpp[1]; };
+struct drm_framebuffer { void *obj[1]; struct format *format; unsigned pitches[1]; };
+struct virtio_gpu_output { bool enabled; unsigned index; };
+struct drm_crtc { struct virtio_gpu_output *output; };
+#define drm_crtc_to_virtio_gpu_output(c) ((c)->output)
+struct drm_plane_state {
+    struct drm_framebuffer *fb; struct drm_crtc *crtc;
+    unsigned src_w,src_h,src_x,src_y;
+};
+struct drm_device { void *dev_private; };
+struct drm_plane { struct drm_device *dev; struct drm_plane_state *state; };
+struct drm_rect { unsigned x1,y1,x2,y2; };
+struct virtio_gpu_object_array { int unused; };
+static struct virtio_gpu_object_array array;
+static struct virtio_gpu_vbuffer buffer;
+static unsigned allocations, transfers, scanouts, flushes, posts;
+static unsigned fail_allocation;
+static bool fail_array;
+static int transfer_error, scanout_error;
+static bool drm_atomic_helper_damage_merged(struct drm_plane_state *o,
+    struct drm_plane_state *n, struct drm_rect *r) {
+    (void)o; (void)n; *r=(struct drm_rect){0,0,32,32}; return true;
+}
+static void virtio_gpu_disable_notify(struct virtio_gpu_device *v) { v->notify=false; }
+static void virtio_gpu_enable_notify(struct virtio_gpu_device *v) { v->notify=true; }
+static void *virtio_gpu_alloc_cmd(struct virtio_gpu_device *v,
+    struct virtio_gpu_vbuffer **out, size_t size) {
+    (void)v; assert(size<=sizeof(buffer.cmd)); allocations++;
+    if (allocations==fail_allocation) return ERR_PTR(-ENOMEM);
+    *out=&buffer; return &buffer.cmd;
+}
+static int virtio_gpu_queue_sync(struct virtio_gpu_device *v,
+    struct virtio_gpu_vbuffer *b, void *h, void *f) {
+    (void)v; assert(b==&buffer && !h && !f);
+    if (b->cmd.scanout.hdr.type==VIRTIO_GPU_CMD_SET_SCANOUT) {
+        scanouts++; return scanout_error;
+    }
+    assert(b->cmd.flush.hdr.type==VIRTIO_GPU_CMD_RESOURCE_FLUSH);
+    flushes++; return 0;
+}
+static struct virtio_gpu_object_array *virtio_gpu_array_alloc(unsigned n) {
+    assert(n==1); return fail_array ? NULL : &array;
+}
+static void virtio_gpu_array_add_obj(struct virtio_gpu_object_array *a, void *o) {
+    assert(a==&array && o);
+}
+static int virtio_gpu_cmd_transfer_to_host_2d(struct virtio_gpu_device *v,
+    uint64_t off, unsigned w, unsigned h, unsigned x, unsigned y,
+    struct virtio_gpu_object_array *a, void *f) {
+    (void)v; assert(!off && w==32 && h==32 && !x && !y && a==&array && !f);
+    transfers++; return transfer_error;
+}
+static void bus_dmamap_sync(void *t, void *m, unsigned off, size_t size, int op) {
+    (void)t; (void)m; (void)size; assert(!off && op==BUS_DMASYNC_POSTWRITE); posts++;
+}
+C
+vq="$src/sys/external/bsd/drm2/dist/drm/virtio/virtgpu_vq.c"
+plane="$src/sys/external/bsd/drm2/dist/drm/virtio/virtgpu_plane.c"
+extract virtio_gpu_cmd_set_scanout "$vq" 'static int' >> "$work/takeover.c"
+extract virtio_gpu_cmd_resource_flush "$vq" 'static int' >> "$work/takeover.c"
+extract virtio_gpu_update_dumb_bo "$plane" 'static int' >> "$work/takeover.c"
+extract virtio_gpu_primary_plane_update "$plane" 'static void' >> "$work/takeover.c"
+extract virtgpu_console_fallback_safe "$console" 'static bool' >> "$work/takeover.c"
+cat >> "$work/takeover.c" <<'C'
+static void reset(struct virtio_gpu_device *v) {
+    v->console_preparing=true; v->console_takeover=false;
+    v->submit_error=0; v->notify=true;
+    allocations=transfers=scanouts=flushes=posts=0;
+    fail_allocation=0; fail_array=false; transfer_error=scanout_error=0;
+}
+int main(void) {
+    struct virtio_gpu_device v={0};
+    __typeof__(*v.vdev) vd={0}; v.vdev=&vd;
+    struct virtio_gpu_object bo={ .dumb=true, .hw_res_handle=1 };
+    __typeof__(*bo.pages) pages; __typeof__(*pages.sgl) sg={0};
+    pages.sgl=&sg; bo.pages=&pages;
+    struct format fmt={{4}};
+    struct drm_framebuffer fb={ .obj={&bo}, .format=&fmt, .pitches={128} };
+    struct virtio_gpu_output out={ .enabled=true };
+    struct drm_crtc crtc={&out};
+    struct drm_plane_state state={ .fb=&fb, .crtc=&crtc, .src_w=32<<16, .src_h=32<<16 };
+    struct drm_plane_state old={ .crtc=&crtc };
+    struct drm_device dev={&v}; struct drm_plane p={&dev,&state};
+    reset(&v);
+    assert(!virtio_gpu_cmd_set_scanout(&v,0,0,32,32,0,0));
+    assert(!allocations && !scanouts && virtgpu_console_fallback_safe(&v));
+    fail_array=true; virtio_gpu_primary_plane_update(&p,&old);
+    assert(v.submit_error==-ENOMEM && !transfers && !scanouts && !flushes);
+    assert(v.notify && virtgpu_console_fallback_safe(&v));
+    reset(&v); transfer_error=-ENOMEM; virtio_gpu_primary_plane_update(&p,&old);
+    assert(transfers==1 && posts==1 && !scanouts && !flushes && !allocations);
+    assert(v.submit_error==-ENOMEM && v.notify && virtgpu_console_fallback_safe(&v));
+    reset(&v); fail_allocation=1; virtio_gpu_primary_plane_update(&p,&old);
+    assert(transfers==1 && !scanouts && !flushes && virtgpu_console_fallback_safe(&v));
+    reset(&v); fail_allocation=2; virtio_gpu_primary_plane_update(&p,&old);
+    assert(transfers==1 && scanouts==1 && !flushes && v.submit_error==-ENOMEM);
+    assert(v.notify && !virtgpu_console_fallback_safe(&v));
+    reset(&v); scanout_error=-ETIMEDOUT; virtio_gpu_primary_plane_update(&p,&old);
+    assert(scanouts==1 && !flushes && !virtgpu_console_fallback_safe(&v));
+    reset(&v); virtio_gpu_primary_plane_update(&p,&old);
+    assert(transfers==1 && scanouts==1 && flushes==1 && !v.submit_error && v.notify);
+    assert(!virtgpu_console_fallback_safe(&v));
+    puts("VirtGPU production plane prerequisite, scanout boundary and post-takeover failures passed");
+}
+C
+${CC:-cc} -std=c99 -Wall -Wextra -Werror "$work/takeover.c" -o "$work/takeover"
+"$work/takeover"

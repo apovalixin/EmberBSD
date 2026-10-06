@@ -179,6 +179,7 @@ struct virtio_gpu_drv_cap_cache {
 struct virtgpu_console;
 struct virtio_gpu_device {
 	struct virtgpu_console *console;
+	bool console_preparing, console_takeover;
 	struct device *dev;
 	struct drm_device *ddev;
 

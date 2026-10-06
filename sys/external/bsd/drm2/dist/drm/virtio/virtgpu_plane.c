@@ -109,7 +109,7 @@ static int virtio_gpu_plane_atomic_check(struct drm_plane *plane,
 	return ret;
 }
 
-static void virtio_gpu_update_dumb_bo(struct virtio_gpu_device *vgdev,
+static int virtio_gpu_update_dumb_bo(struct virtio_gpu_device *vgdev,
 				      struct drm_plane_state *state,
 				      struct drm_rect *rect)
 {
@@ -126,14 +126,18 @@ static void virtio_gpu_update_dumb_bo(struct virtio_gpu_device *vgdev,
 	objs = virtio_gpu_array_alloc(1);
 	if (!objs) {
 		vgdev->submit_error = -ENOMEM;
-		return;
+		return -ENOMEM;
 	}
 	virtio_gpu_array_add_obj(objs, &bo->base.base);
 
 	int error = virtio_gpu_cmd_transfer_to_host_2d(vgdev, off, w, h, x, y,
 					   objs, NULL);
-	if (error)
+	if (error) {
 		vgdev->submit_error = error;
+		bus_dmamap_sync(vgdev->vdev->dmat, bo->pages->sgl->sg_dmamap,
+		    0, bo->base.base.size, BUS_DMASYNC_POSTWRITE);
+	}
+	return error;
 }
 
 static void virtio_gpu_primary_plane_update(struct drm_plane *plane,
@@ -144,6 +148,7 @@ static void virtio_gpu_primary_plane_update(struct drm_plane *plane,
 	struct virtio_gpu_output *output = NULL;
 	struct virtio_gpu_object *bo;
 	struct drm_rect rect;
+	int error;
 
 	if (plane->state->crtc)
 		output = drm_crtc_to_virtio_gpu_output(plane->state->crtc);
@@ -167,8 +172,11 @@ static void virtio_gpu_primary_plane_update(struct drm_plane *plane,
 	virtio_gpu_disable_notify(vgdev);
 
 	bo = gem_to_virtio_gpu_obj(plane->state->fb->obj[0]);
-	if (bo->dumb)
-		virtio_gpu_update_dumb_bo(vgdev, plane->state, &rect);
+	if (bo->dumb) {
+		error = virtio_gpu_update_dumb_bo(vgdev, plane->state, &rect);
+		if (error)
+			goto out;
+	}
 
 	if (plane->state->fb != old_state->fb ||
 	    plane->state->src_w != old_state->src_w ||
@@ -183,12 +191,14 @@ static void virtio_gpu_primary_plane_update(struct drm_plane *plane,
 			  plane->state->src_h >> 16,
 			  plane->state->src_x >> 16,
 			  plane->state->src_y >> 16);
-		virtio_gpu_cmd_set_scanout(vgdev, output->index,
+		error = virtio_gpu_cmd_set_scanout(vgdev, output->index,
 					   bo->hw_res_handle,
 					   plane->state->src_w >> 16,
 					   plane->state->src_h >> 16,
 					   plane->state->src_x >> 16,
 					   plane->state->src_y >> 16);
+		if (error)
+			goto out;
 	}
 
 	virtio_gpu_cmd_resource_flush(vgdev, bo->hw_res_handle,
@@ -197,6 +207,7 @@ static void virtio_gpu_primary_plane_update(struct drm_plane *plane,
 				      rect.x2 - rect.x1,
 				      rect.y2 - rect.y1);
 
+out:
 	virtio_gpu_enable_notify(vgdev);
 }
 
