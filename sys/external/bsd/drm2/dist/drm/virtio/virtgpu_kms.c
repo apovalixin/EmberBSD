@@ -60,7 +60,7 @@ static void virtio_gpu_config_changed_work_func(struct work_struct *work)
 static int virtio_gpu_context_create(struct virtio_gpu_device *vgdev,
 				      uint32_t nlen, const char *name)
 {
-	int handle = ida_alloc(&vgdev->ctx_id_ida, GFP_KERNEL);
+	int handle = ida_simple_get(&vgdev->ctx_id_ida, 0, 0, GFP_KERNEL);
 
 	if (handle < 0)
 		return handle;
@@ -283,7 +283,7 @@ int virtio_gpu_driver_open(struct drm_device *dev, struct drm_file *file)
 	if (!vfpriv)
 		return -ENOMEM;
 
-	get_task_comm(dbgname, current);
+	strlcpy(dbgname, current->p_comm, sizeof(dbgname));
 	id = virtio_gpu_context_create(vgdev, strlen(dbgname), dbgname);
 	if (id < 0) {
 		kfree(vfpriv);

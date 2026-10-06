@@ -75,8 +75,6 @@ static const struct dma_fence_ops virtio_fence_ops = {
 	.get_driver_name     = virtio_get_driver_name,
 	.get_timeline_name   = virtio_get_timeline_name,
 	.signaled            = virtio_fence_signaled,
-	.fence_value_str     = virtio_fence_value_str,
-	.timeline_value_str  = virtio_timeline_value_str,
 };
 
 struct virtio_gpu_fence *virtio_gpu_fence_alloc(struct virtio_gpu_device *vgdev)

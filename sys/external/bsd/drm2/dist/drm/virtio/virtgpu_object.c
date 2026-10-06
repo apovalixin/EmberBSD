@@ -36,7 +36,7 @@ __KERNEL_RCSID(0, "$NetBSD: virtgpu_object.c,v 1.3 2021/12/18 23:45:45 riastradh
 static int virtio_gpu_resource_id_get(struct virtio_gpu_device *vgdev,
     uint32_t *resid)
 {
-	int handle = ida_alloc(&vgdev->resource_ida, GFP_KERNEL);
+	int handle = ida_simple_get(&vgdev->resource_ida, 0, 0, GFP_KERNEL);
 
 	if (handle < 0)
 		return handle;
