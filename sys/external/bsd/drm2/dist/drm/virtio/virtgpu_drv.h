@@ -1,3 +1,4 @@
+/* Origin: EmberBSD native VirtGPU integration of Linux v5.6, 2026-10-06. */
 /*	$NetBSD: virtgpu_drv.h,v 1.3 2021/12/18 23:45:45 riastradh Exp $	*/
 
 /*
@@ -87,6 +88,7 @@ struct virtio_gpu_object_array {
 };
 
 struct virtio_gpu_vbuffer;
+struct virtio_gpu_wait;
 struct virtio_gpu_device;
 
 typedef void (*virtio_gpu_resp_cb)(struct virtio_gpu_device *vgdev,
@@ -119,6 +121,10 @@ struct virtio_gpu_vbuffer {
 
 	struct virtio_gpu_object_array *objs;
 	struct list_head list;
+	struct virtio_gpu_device *vgdev;
+	struct virtio_gpu_object *release;
+	struct virtio_gpu_fence *fence;
+	struct virtio_gpu_wait *wait;
 };
 
 struct virtio_gpu_output {
@@ -144,7 +150,7 @@ struct virtio_gpu_framebuffer {
 	container_of(x, struct virtio_gpu_framebuffer, base)
 
 struct virtio_gpu_queue {
-	struct virtqueue *vq;
+	struct netbsd_virtqueue *vq;
 	spinlock_t qlock;
 	wait_queue_head_t ack_queue;
 	struct work_struct dequeue_work;
@@ -176,6 +182,9 @@ struct virtio_gpu_device {
 
 	struct virtio_gpu_queue ctrlq;
 	struct virtio_gpu_queue cursorq;
+	struct mutex submit_lock;
+	int submit_error;
+
 	struct kmem_cache *vbufs;
 	bool vqs_ready;
 
@@ -215,8 +224,14 @@ struct virtio_gpu_fpriv {
 #define DRM_VIRTIO_NUM_IOCTLS 10
 extern struct drm_ioctl_desc virtio_gpu_ioctls[DRM_VIRTIO_NUM_IOCTLS];
 
+extern struct drm_driver virtio_gpu_driver;
+void virtio_gpu_cancel_vbuf(void *);
+void virtio_gpu_release_object(struct virtio_gpu_object *);
+void virtio_gpu_queue_unref(struct virtio_gpu_device *, struct virtio_gpu_object *);
+void virtio_gpu_fail_fences(struct virtio_gpu_device *, int);
+
 /* virtio_kms.c */
-int virtio_gpu_init(struct drm_device *dev);
+int virtio_gpu_init(struct drm_device *dev, struct virtio_device *vdev);
 void virtio_gpu_deinit(struct drm_device *dev);
 int virtio_gpu_driver_open(struct drm_device *dev, struct drm_file *file);
 void virtio_gpu_driver_postclose(struct drm_device *dev, struct drm_file *file);
@@ -258,7 +273,7 @@ void virtio_gpu_array_put_free_work(struct work_struct *work);
 /* virtio vg */
 int virtio_gpu_alloc_vbufs(struct virtio_gpu_device *vgdev);
 void virtio_gpu_free_vbufs(struct virtio_gpu_device *vgdev);
-void virtio_gpu_cmd_create_resource(struct virtio_gpu_device *vgdev,
+int virtio_gpu_cmd_create_resource(struct virtio_gpu_device *vgdev,
 				    struct virtio_gpu_object *bo,
 				    struct virtio_gpu_object_params *params,
 				    struct virtio_gpu_object_array *objs,
@@ -327,9 +342,9 @@ virtio_gpu_cmd_resource_create_3d(struct virtio_gpu_device *vgdev,
 				  struct virtio_gpu_object_params *params,
 				  struct virtio_gpu_object_array *objs,
 				  struct virtio_gpu_fence *fence);
-void virtio_gpu_ctrl_ack(struct virtqueue *vq);
-void virtio_gpu_cursor_ack(struct virtqueue *vq);
-void virtio_gpu_fence_ack(struct virtqueue *vq);
+void virtio_gpu_ctrl_ack(struct netbsd_virtqueue *vq);
+void virtio_gpu_cursor_ack(struct netbsd_virtqueue *vq);
+void virtio_gpu_fence_ack(struct netbsd_virtqueue *vq);
 void virtio_gpu_dequeue_ctrl_func(struct work_struct *work);
 void virtio_gpu_dequeue_cursor_func(struct work_struct *work);
 void virtio_gpu_dequeue_fence_func(struct work_struct *work);

@@ -1,0 +1,20 @@
+# Origin: EmberBSD experimental native VirtGPU, 2026-10-06.
+device virtiodrm: drmkms
+attach virtiodrm at virtio
+makeoptions virtiodrm "CPPFLAGS.virtiodrm"+="${CPPFLAGS.drmkms}"
+makeoptions virtiodrm "CPPFLAGS.virtiodrm"+="-I$S/external/bsd/drm2/dist/drm/virtio"
+makeoptions virtiodrm "COPTS.virtiodrm"+="-fwrapv"
+makeoptions virtiodrm "CWARNFLAGS.virtiodrm"+="-Wno-unused-function -Wno-cast-qual -Wno-pointer-arith"
+file external/bsd/drm2/virtio/virtgpu_autoconf.c virtiodrm
+file external/bsd/drm2/linux/linux_virtio.c virtiodrm
+file external/bsd/drm2/drm/drm_gem_shmem_helper.c virtiodrm
+file external/bsd/drm2/dist/drm/virtio/virtgpu_drv.c virtiodrm
+file external/bsd/drm2/dist/drm/virtio/virtgpu_kms.c virtiodrm
+file external/bsd/drm2/dist/drm/virtio/virtgpu_gem.c virtiodrm
+file external/bsd/drm2/dist/drm/virtio/virtgpu_object.c virtiodrm
+file external/bsd/drm2/dist/drm/virtio/virtgpu_prime.c virtiodrm
+file external/bsd/drm2/dist/drm/virtio/virtgpu_vq.c virtiodrm
+file external/bsd/drm2/dist/drm/virtio/virtgpu_fence.c virtiodrm
+file external/bsd/drm2/dist/drm/virtio/virtgpu_ioctl.c virtiodrm
+file external/bsd/drm2/dist/drm/virtio/virtgpu_display.c virtiodrm
+file external/bsd/drm2/dist/drm/virtio/virtgpu_plane.c virtiodrm

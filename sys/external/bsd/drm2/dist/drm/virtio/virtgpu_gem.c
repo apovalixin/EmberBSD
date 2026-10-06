@@ -1,3 +1,4 @@
+/* Origin: EmberBSD native VirtGPU integration of Linux v5.6, 2026-10-06. */
 /*	$NetBSD: virtgpu_gem.c,v 1.3 2021/12/18 23:45:45 riastradh Exp $	*/
 
 /*
@@ -50,7 +51,7 @@ int virtio_gpu_gem_create(struct drm_file *file,
 
 	ret = drm_gem_handle_create(file, &obj->base.base, &handle);
 	if (ret) {
-		drm_gem_object_release(&obj->base.base);
+		drm_gem_object_put_unlocked(&obj->base.base);
 		return ret;
 	}
 
@@ -75,8 +76,12 @@ int virtio_gpu_mode_dumb_create(struct drm_file *file_priv,
 	if (args->bpp != 32)
 		return -EINVAL;
 
+	if (!args->width || !args->height || args->width > UINT32_MAX / 4)
+		return -EINVAL;
 	pitch = args->width * 4;
-	args->size = pitch * args->height;
+	args->size = (uint64_t)pitch * args->height;
+	if (args->size > SIZE_MAX - PAGE_MASK)
+		return -EINVAL;
 	args->size = ALIGN(args->size, PAGE_SIZE);
 
 	params.format = virtio_gpu_translate_format(DRM_FORMAT_HOST_XRGB8888);

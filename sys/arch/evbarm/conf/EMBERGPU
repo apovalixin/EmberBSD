@@ -1,0 +1,5 @@
+# Origin: EmberBSD experimental VirtGPU 2D configuration, 2026-10-06.
+# Keep EMBER64 as the normal framebuffer/recovery configuration.
+include "arch/evbarm/conf/EMBER64"
+no viogpu* at virtio?
+virtiodrm* at virtio?

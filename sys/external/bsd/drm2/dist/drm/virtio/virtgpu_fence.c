@@ -1,3 +1,4 @@
+/* Origin: EmberBSD native VirtGPU integration of Linux v5.6, 2026-10-06. */
 /*	$NetBSD: virtgpu_fence.c,v 1.3 2021/12/18 23:45:45 riastradh Exp $	*/
 
 /*
@@ -87,6 +88,7 @@ struct virtio_gpu_fence *virtio_gpu_fence_alloc(struct virtio_gpu_device *vgdev)
 		return fence;
 
 	fence->drv = drv;
+	INIT_LIST_HEAD(&fence->node);
 
 	/* This only partially initializes the fence because the seqno is
 	 * unknown yet.  The fence must not be used outside of the driver
@@ -129,8 +131,23 @@ void virtio_gpu_fence_event_process(struct virtio_gpu_device *vgdev,
 		if (last_seq < fence->f.seqno)
 			continue;
 		dma_fence_signal_locked(&fence->f);
-		list_del(&fence->node);
+		list_del_init(&fence->node);
 		dma_fence_put(&fence->f);
 	}
 	spin_unlock_irqrestore(&drv->lock, irq_flags);
+}
+
+void virtio_gpu_fail_fences(struct virtio_gpu_device *vgdev, int error)
+{
+	struct virtio_gpu_fence_driver *drv = &vgdev->fence_drv;
+	struct virtio_gpu_fence *fence, *tmp;
+
+	spin_lock(&drv->lock);
+	list_for_each_entry_safe(fence, tmp, &drv->fences, node) {
+		dma_fence_set_error(&fence->f, error);
+		dma_fence_signal_locked(&fence->f);
+		list_del_init(&fence->node);
+		dma_fence_put(&fence->f);
+	}
+	spin_unlock(&drv->lock);
 }

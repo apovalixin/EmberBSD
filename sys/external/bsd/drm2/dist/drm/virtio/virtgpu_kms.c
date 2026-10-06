@@ -1,3 +1,4 @@
+/* Origin: EmberBSD native VirtGPU integration of Linux v5.6, 2026-10-06. */
 /*	$NetBSD: virtgpu_kms.c,v 1.3 2021/12/18 23:45:45 riastradh Exp $	*/
 
 /*
@@ -113,7 +114,7 @@ static void virtio_gpu_get_capsets(struct virtio_gpu_device *vgdev,
 	vgdev->num_capsets = num_capsets;
 }
 
-int virtio_gpu_init(struct drm_device *dev)
+int virtio_gpu_init(struct drm_device *dev, struct virtio_device *vdev)
 {
 	static vq_callback_t *callbacks[] = {
 		virtio_gpu_ctrl_ack, virtio_gpu_cursor_ack
@@ -122,11 +123,11 @@ int virtio_gpu_init(struct drm_device *dev)
 
 	struct virtio_gpu_device *vgdev;
 	/* this will expand later */
-	struct virtqueue *vqs[2];
+	struct netbsd_virtqueue *vqs[2];
 	u32 num_scanouts, num_capsets;
 	int ret;
 
-	if (!virtio_has_feature(dev_to_virtio(dev->dev), VIRTIO_F_VERSION_1))
+	if (!virtio_has_feature(vdev, LINUX_VIRTIO_F_VERSION_1))
 		return -ENODEV;
 
 	vgdev = kzalloc(sizeof(struct virtio_gpu_device), GFP_KERNEL);
@@ -135,9 +136,10 @@ int virtio_gpu_init(struct drm_device *dev)
 
 	vgdev->ddev = dev;
 	dev->dev_private = vgdev;
-	vgdev->vdev = dev_to_virtio(dev->dev);
+	vgdev->vdev = vdev;
 	vgdev->dev = dev->dev;
 
+	mutex_init(&vgdev->submit_lock);
 	spin_lock_init(&vgdev->display_info_lock);
 	ida_init(&vgdev->ctx_id_ida);
 	ida_init(&vgdev->resource_ida);
@@ -203,13 +205,20 @@ int virtio_gpu_init(struct drm_device *dev)
 	virtio_device_ready(vgdev->vdev);
 	vgdev->vqs_ready = true;
 
-	if (num_capsets)
+	if (vgdev->has_virgl_3d && num_capsets)
 		virtio_gpu_get_capsets(vgdev, num_capsets);
 	if (vgdev->has_edid)
 		virtio_gpu_cmd_get_edids(vgdev);
-	virtio_gpu_cmd_get_display_info(vgdev);
-	wait_event_timeout(vgdev->resp_wq, !vgdev->display_info_pending,
-			   5 * HZ);
+	ret = virtio_gpu_cmd_get_display_info(vgdev);
+	if (!ret && !wait_event_timeout(vgdev->resp_wq,
+	    !vgdev->display_info_pending, 5 * HZ))
+		ret = -ETIMEDOUT;
+	if (!ret)
+		ret = vgdev->submit_error;
+	if (ret) {
+		virtio_gpu_deinit(dev);
+		return ret;
+	}
 	return 0;
 
 err_scanouts:
@@ -217,6 +226,8 @@ err_scanouts:
 err_vbufs:
 	vgdev->vdev->config->del_vqs(vgdev->vdev);
 err_vqs:
+	mutex_destroy(&vgdev->submit_lock);
+	dev->dev_private = NULL;
 	kfree(vgdev);
 	return ret;
 }
@@ -235,18 +246,24 @@ void virtio_gpu_deinit(struct drm_device *dev)
 {
 	struct virtio_gpu_device *vgdev = dev->dev_private;
 
-	flush_work(&vgdev->obj_free_work);
 	vgdev->vqs_ready = false;
+	vgdev->vdev->config->reset(vgdev->vdev);
+	virtio_gpu_fail_fences(vgdev, -ENODEV);
+	wake_up_all(&vgdev->ctrlq.ack_queue);
+	wake_up_all(&vgdev->cursorq.ack_queue);
+	wake_up_all(&vgdev->resp_wq);
 	flush_work(&vgdev->ctrlq.dequeue_work);
 	flush_work(&vgdev->cursorq.dequeue_work);
 	flush_work(&vgdev->config_changed_work);
-	vgdev->vdev->config->reset(vgdev->vdev);
 	vgdev->vdev->config->del_vqs(vgdev->vdev);
+	flush_work(&vgdev->obj_free_work);
 
 	virtio_gpu_modeset_fini(vgdev);
 	virtio_gpu_free_vbufs(vgdev);
 	virtio_gpu_cleanup_cap_cache(vgdev);
 	kfree(vgdev->capsets);
+	mutex_destroy(&vgdev->submit_lock);
+	dev->dev_private = NULL;
 	kfree(vgdev);
 }
 

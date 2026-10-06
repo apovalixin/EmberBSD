@@ -1,3 +1,4 @@
+/* Origin: EmberBSD native VirtGPU integration of Linux v5.6, 2026-10-06. */
 /*	$NetBSD: virtgpu_vq.c,v 1.3 2021/12/18 23:45:45 riastradh Exp $	*/
 
 /*
@@ -37,13 +38,39 @@ __KERNEL_RCSID(0, "$NetBSD: virtgpu_vq.c,v 1.3 2021/12/18 23:45:45 riastradh Exp
 #include <linux/virtio_ring.h>
 
 #include "virtgpu_drv.h"
-#include "virtgpu_trace.h"
+#include <linux/virtio_sg.h>
 
 #define MAX_INLINE_CMD_SIZE   96
 #define MAX_INLINE_RESP_SIZE  24
 #define VBUFFER_SIZE          (sizeof(struct virtio_gpu_vbuffer) \
 			       + MAX_INLINE_CMD_SIZE		 \
 			       + MAX_INLINE_RESP_SIZE)
+
+struct virtio_gpu_wait {
+	wait_queue_head_t queue;
+	atomic_t refs;
+	bool done;
+	int error;
+};
+static void
+virtio_gpu_wait_put(struct virtio_gpu_wait *wait)
+{
+	if (atomic_dec_and_test(&wait->refs))
+		kfree(wait);
+}
+static void
+virtio_gpu_wait_done(struct virtio_gpu_vbuffer *vbuf, int error)
+{
+	struct virtio_gpu_wait *wait = vbuf->wait;
+
+	if (wait) {
+		wait->error = error;
+		wait->done = true;
+		wake_up(&wait->queue);
+		virtio_gpu_wait_put(wait);
+		vbuf->wait = NULL;
+	}
+}
 
 static void convert_to_hw_box(struct virtio_gpu_box *dst,
 			      const struct drm_virtgpu_3d_box *src)
@@ -56,7 +83,7 @@ static void convert_to_hw_box(struct virtio_gpu_box *dst,
 	dst->d = cpu_to_le32(src->d);
 }
 
-void virtio_gpu_ctrl_ack(struct virtqueue *vq)
+void virtio_gpu_ctrl_ack(struct netbsd_virtqueue *vq)
 {
 	struct drm_device *dev = vq->vdev->priv;
 	struct virtio_gpu_device *vgdev = dev->dev_private;
@@ -64,7 +91,7 @@ void virtio_gpu_ctrl_ack(struct virtqueue *vq)
 	schedule_work(&vgdev->ctrlq.dequeue_work);
 }
 
-void virtio_gpu_cursor_ack(struct virtqueue *vq)
+void virtio_gpu_cursor_ack(struct netbsd_virtqueue *vq)
 {
 	struct drm_device *dev = vq->vdev->priv;
 	struct virtio_gpu_device *vgdev = dev->dev_private;
@@ -101,6 +128,7 @@ virtio_gpu_get_vbuf(struct virtio_gpu_device *vgdev,
 		return ERR_PTR(-ENOMEM);
 
 	BUG_ON(size > MAX_INLINE_CMD_SIZE);
+	vbuf->vgdev = vgdev;
 	vbuf->buf = (void *)vbuf + sizeof(*vbuf);
 	vbuf->size = size;
 
@@ -169,13 +197,27 @@ static void *virtio_gpu_alloc_cmd_resp(struct virtio_gpu_device *vgdev,
 static void free_vbuf(struct virtio_gpu_device *vgdev,
 		      struct virtio_gpu_vbuffer *vbuf)
 {
+	if (vbuf->release)
+		virtio_gpu_release_object(vbuf->release);
 	if (vbuf->resp_size > MAX_INLINE_RESP_SIZE)
 		kfree(vbuf->resp_buf);
 	kvfree(vbuf->data_buf);
 	kmem_cache_free(vgdev->vbufs, vbuf);
 }
 
-static void reclaim_vbufs(struct virtqueue *vq, struct list_head *reclaim_list)
+void
+virtio_gpu_cancel_vbuf(void *cookie)
+{
+	struct virtio_gpu_vbuffer *vbuf = cookie;
+	struct virtio_gpu_device *vgdev = vbuf->vgdev;
+
+	virtio_gpu_wait_done(vbuf, -ENODEV);
+	if (vbuf->objs)
+		virtio_gpu_array_put_free_delayed(vgdev, vbuf->objs);
+	free_vbuf(vgdev, vbuf);
+}
+
+static void reclaim_vbufs(struct netbsd_virtqueue *vq, struct list_head *reclaim_list)
 {
 	struct virtio_gpu_vbuffer *vbuf;
 	unsigned int len;
@@ -211,8 +253,6 @@ void virtio_gpu_dequeue_ctrl_func(struct work_struct *work)
 	list_for_each_entry(entry, &reclaim_list, list) {
 		resp = (struct virtio_gpu_ctrl_hdr *)entry->resp_buf;
 
-		trace_virtio_gpu_cmd_response(vgdev->ctrlq.vq, resp);
-
 		if (resp->type != cpu_to_le32(VIRTIO_GPU_RESP_OK_NODATA)) {
 			if (resp->type >= cpu_to_le32(VIRTIO_GPU_RESP_ERR_UNSPEC)) {
 				struct virtio_gpu_ctrl_hdr *cmd;
@@ -233,8 +273,19 @@ void virtio_gpu_dequeue_ctrl_func(struct work_struct *work)
 				fence_id = f;
 			}
 		}
-		if (entry->resp_cb)
-			entry->resp_cb(vgdev, entry);
+		if (le32_to_cpu(resp->type) >= VIRTIO_GPU_RESP_ERR_UNSPEC) {
+			vgdev->submit_error = -EIO;
+			if (entry->fence)
+				dma_fence_set_error(&entry->fence->f, -EIO);
+			if (entry->release)
+				vgdev->vdev->config->reset(vgdev->vdev);
+			virtio_gpu_wait_done(entry, -EIO);
+		} else {
+			if (entry->resp_cb)
+				entry->resp_cb(vgdev, entry);
+			virtio_gpu_wait_done(entry, 0);
+		}
+
 	}
 	wake_up(&vgdev->ctrlq.ack_queue);
 
@@ -245,6 +296,8 @@ void virtio_gpu_dequeue_ctrl_func(struct work_struct *work)
 		if (entry->objs)
 			virtio_gpu_array_put_free_delayed(vgdev, entry->objs);
 		list_del(&entry->list);
+		if (entry->fence)
+			dma_fence_put(&entry->fence->f);
 		free_vbuf(vgdev, entry);
 	}
 }
@@ -272,154 +325,101 @@ void virtio_gpu_dequeue_cursor_func(struct work_struct *work)
 	wake_up(&vgdev->cursorq.ack_queue);
 }
 
-/* Create sg_table from a vmalloc'd buffer. */
-static struct sg_table *vmalloc_to_sgt(char *data, uint32_t size, int *sg_ents)
+/* Serialize submitters across descriptor-pressure waits and fence emission. */
+static int
+virtio_gpu_queue_fenced_ctrl_buffer(struct virtio_gpu_device *vgdev,
+    struct virtio_gpu_vbuffer *vbuf, struct virtio_gpu_ctrl_hdr *hdr,
+    struct virtio_gpu_fence *fence)
 {
-	int ret, s, i;
-	struct sg_table *sgt;
-	struct scatterlist *sg;
-	struct page *pg;
-
-	if (WARN_ON(!PAGE_ALIGNED(data)))
-		return NULL;
-
-	sgt = kmalloc(sizeof(*sgt), GFP_KERNEL);
-	if (!sgt)
-		return NULL;
-
-	*sg_ents = DIV_ROUND_UP(size, PAGE_SIZE);
-	ret = sg_alloc_table(sgt, *sg_ents, GFP_KERNEL);
-	if (ret) {
-		kfree(sgt);
-		return NULL;
-	}
-
-	for_each_sg(sgt->sgl, sg, *sg_ents, i) {
-		pg = vmalloc_to_page(data);
-		if (!pg) {
-			sg_free_table(sgt);
-			kfree(sgt);
-			return NULL;
-		}
-
-		s = min_t(int, PAGE_SIZE, size);
-		sg_set_page(sg, pg, s, 0);
-
-		size -= s;
-		data += s;
-	}
-
-	return sgt;
-}
-
-static bool virtio_gpu_queue_ctrl_buffer_locked(struct virtio_gpu_device *vgdev,
-						struct virtio_gpu_vbuffer *vbuf,
-						struct scatterlist *vout)
-		__releases(&vgdev->ctrlq.qlock)
-		__acquires(&vgdev->ctrlq.qlock)
-{
-	struct virtqueue *vq = vgdev->ctrlq.vq;
-	struct scatterlist *sgs[3], vcmd, vresp;
-	int outcnt = 0, incnt = 0;
-	bool notify = false;
+	struct netbsd_virtqueue *vq = vgdev->ctrlq.vq;
+	struct linux_virtio_sg cmd = { vbuf->buf, vbuf->size, NULL };
+	struct linux_virtio_sg data = { vbuf->data_buf, vbuf->data_size, NULL };
+	struct linux_virtio_sg resp = { vbuf->resp_buf, vbuf->resp_size, NULL };
+	struct linux_virtio_sg *sgs[3];
+	unsigned int out = 1, before;
 	int ret;
 
-	if (!vgdev->vqs_ready)
-		return notify;
-
-	sg_init_one(&vcmd, vbuf->buf, vbuf->size);
-	sgs[outcnt + incnt] = &vcmd;
-	outcnt++;
-
-	if (vout) {
-		sgs[outcnt + incnt] = vout;
-		outcnt++;
-	}
-
-	if (vbuf->resp_size) {
-		sg_init_one(&vresp, vbuf->resp_buf, vbuf->resp_size);
-		sgs[outcnt + incnt] = &vresp;
-		incnt++;
-	}
-
-retry:
-	ret = virtqueue_add_sgs(vq, sgs, outcnt, incnt, vbuf, GFP_ATOMIC);
-	if (ret == -ENOSPC) {
-		spin_unlock(&vgdev->ctrlq.qlock);
-		wait_event(vgdev->ctrlq.ack_queue, vq->num_free >= outcnt + incnt);
-		spin_lock(&vgdev->ctrlq.qlock);
-		goto retry;
-	} else {
-		trace_virtio_gpu_cmd_queue(vq,
-			(struct virtio_gpu_ctrl_hdr *)vbuf->buf);
-
-		notify = virtqueue_kick_prepare(vq);
-	}
-	return notify;
-}
-
-static void virtio_gpu_queue_fenced_ctrl_buffer(struct virtio_gpu_device *vgdev,
-						struct virtio_gpu_vbuffer *vbuf,
-						struct virtio_gpu_ctrl_hdr *hdr,
-						struct virtio_gpu_fence *fence)
-{
-	struct virtqueue *vq = vgdev->ctrlq.vq;
-	struct scatterlist *vout = NULL, sg;
-	struct sg_table *sgt = NULL;
-	bool notify;
-	int outcnt = 0;
-
-	if (vbuf->data_size) {
-		if (is_vmalloc_addr(vbuf->data_buf)) {
-			sgt = vmalloc_to_sgt(vbuf->data_buf, vbuf->data_size,
-					     &outcnt);
-			if (!sgt)
-				return;
-			vout = sgt->sgl;
-		} else {
-			sg_init_one(&sg, vbuf->data_buf, vbuf->data_size);
-			vout = &sg;
-			outcnt = 1;
-		}
-	}
-
-again:
-	spin_lock(&vgdev->ctrlq.qlock);
-
-	/*
-	 * Make sure we have enouth space in the virtqueue.  If not
-	 * wait here until we have.
-	 *
-	 * Without that virtio_gpu_queue_ctrl_buffer_nolock might have
-	 * to wait for free space, which can result in fence ids being
-	 * submitted out-of-order.
-	 */
-	if (vq->num_free < 2 + outcnt) {
-		spin_unlock(&vgdev->ctrlq.qlock);
-		wait_event(vgdev->ctrlq.ack_queue, vq->num_free >= 3);
-		goto again;
-	}
-
+	sgs[0] = &cmd;
+	if (vbuf->data_size)
+		sgs[out++] = &data;
+	sgs[out] = &resp;
+	mutex_lock(&vgdev->submit_lock);
 	if (hdr && fence) {
 		virtio_gpu_fence_emit(vgdev, hdr, fence);
+		vbuf->fence = fence;
+		dma_fence_get(&fence->f);
 		if (vbuf->objs) {
 			virtio_gpu_array_add_fence(vbuf->objs, &fence->f);
 			virtio_gpu_array_unlock_resv(vbuf->objs);
 		}
 	}
-	notify = virtio_gpu_queue_ctrl_buffer_locked(vgdev, vbuf, vout);
-	spin_unlock(&vgdev->ctrlq.qlock);
-	if (notify) {
-		if (vgdev->disable_notify)
-			vgdev->pending_notify = true;
-		else
-			virtqueue_notify(vgdev->ctrlq.vq);
+	for (;;) {
+		spin_lock(&vgdev->ctrlq.qlock);
+		before = vq->num_free;
+		ret = vgdev->vqs_ready ? virtqueue_add_sgs(vq, sgs, out,
+		    vbuf->resp_size ? 1 : 0, vbuf, GFP_ATOMIC) : -ENODEV;
+		spin_unlock(&vgdev->ctrlq.qlock);
+		if (ret != -ENOSPC)
+			break;
+		/* The transport first bounds actual DMA descriptors. */
+		if (!wait_event_timeout(vgdev->ctrlq.ack_queue,
+		    !vgdev->vqs_ready || vq->num_free != before, 5 * HZ)) {
+			ret = -ETIMEDOUT;
+			break;
+		}
 	}
+	mutex_unlock(&vgdev->submit_lock);
+	if (ret) {
+		vgdev->submit_error = ret;
+		DRM_ERROR("control submission failed: %d\n", ret);
+		if (fence) {
+			/* Fail only this fence; do not signal earlier work. */
+			spin_lock(&vgdev->fence_drv.lock);
+			dma_fence_set_error(&fence->f, ret);
+			dma_fence_signal_locked(&fence->f);
+			list_del_init(&fence->node);
+			dma_fence_put(&fence->f);
+			spin_unlock(&vgdev->fence_drv.lock);
+			dma_fence_put(&fence->f);
+		}
+		if (vbuf->release)
+			vgdev->vdev->config->reset(vgdev->vdev);
+		virtio_gpu_cancel_vbuf(vbuf);
+	}
+	return ret;
+}
 
-	if (sgt) {
-		sg_free_table(sgt);
-		kfree(sgt);
+static int
+virtio_gpu_queue_sync(struct virtio_gpu_device *vgdev,
+    struct virtio_gpu_vbuffer *vbuf, struct virtio_gpu_ctrl_hdr *hdr,
+    struct virtio_gpu_fence *fence)
+{
+	struct virtio_gpu_wait *wait;
+	int ret;
+
+	wait = kzalloc(sizeof(*wait), GFP_KERNEL);
+	if (!wait) {
+		if (fence && vbuf->objs)
+			virtio_gpu_array_unlock_resv(vbuf->objs);
+		virtio_gpu_cancel_vbuf(vbuf);
+		return -ENOMEM;
 	}
+	init_waitqueue_head(&wait->queue);
+	atomic_set(&wait->refs, 2);
+	vbuf->wait = wait;
+	ret = virtio_gpu_queue_fenced_ctrl_buffer(vgdev, vbuf, hdr, fence);
+	if (!ret && !wait_event_timeout(wait->queue, wait->done, 5 * HZ)) {
+		vgdev->vqs_ready = false;
+		vgdev->vdev->config->reset(vgdev->vdev);
+		virtio_gpu_fail_fences(vgdev, -ETIMEDOUT);
+		wake_up_all(&vgdev->ctrlq.ack_queue);
+		wake_up_all(&vgdev->cursorq.ack_queue);
+		ret = -ETIMEDOUT;
+	}
+	if (!ret)
+		ret = wait->error;
+	virtio_gpu_wait_put(wait);
+	return ret;
 }
 
 void virtio_gpu_disable_notify(struct virtio_gpu_device *vgdev)
@@ -437,47 +437,42 @@ void virtio_gpu_enable_notify(struct virtio_gpu_device *vgdev)
 	virtqueue_notify(vgdev->ctrlq.vq);
 }
 
-static void virtio_gpu_queue_ctrl_buffer(struct virtio_gpu_device *vgdev,
+static int virtio_gpu_queue_ctrl_buffer(struct virtio_gpu_device *vgdev,
 					 struct virtio_gpu_vbuffer *vbuf)
 {
-	virtio_gpu_queue_fenced_ctrl_buffer(vgdev, vbuf, NULL, NULL);
+	return virtio_gpu_queue_fenced_ctrl_buffer(vgdev, vbuf, NULL, NULL);
 }
 
 static void virtio_gpu_queue_cursor(struct virtio_gpu_device *vgdev,
 				    struct virtio_gpu_vbuffer *vbuf)
 {
-	struct virtqueue *vq = vgdev->cursorq.vq;
-	struct scatterlist *sgs[1], ccmd;
-	bool notify;
+	struct netbsd_virtqueue *vq = vgdev->cursorq.vq;
+	struct linux_virtio_sg cmd = { vbuf->buf, vbuf->size, NULL };
+	struct linux_virtio_sg *sgs[] = { &cmd };
+	unsigned int before;
 	int ret;
-	int outcnt;
 
-	if (!vgdev->vqs_ready)
-		return;
-
-	sg_init_one(&ccmd, vbuf->buf, vbuf->size);
-	sgs[0] = &ccmd;
-	outcnt = 1;
-
-	spin_lock(&vgdev->cursorq.qlock);
-retry:
-	ret = virtqueue_add_sgs(vq, sgs, outcnt, 0, vbuf, GFP_ATOMIC);
-	if (ret == -ENOSPC) {
-		spin_unlock(&vgdev->cursorq.qlock);
-		wait_event(vgdev->cursorq.ack_queue, vq->num_free >= outcnt);
+	mutex_lock(&vgdev->submit_lock);
+	for (;;) {
 		spin_lock(&vgdev->cursorq.qlock);
-		goto retry;
-	} else {
-		trace_virtio_gpu_cmd_queue(vq,
-			(struct virtio_gpu_ctrl_hdr *)vbuf->buf);
-
-		notify = virtqueue_kick_prepare(vq);
+		before = vq->num_free;
+		ret = vgdev->vqs_ready ?
+		    virtqueue_add_sgs(vq, sgs, 1, 0, vbuf, GFP_ATOMIC) : -ENODEV;
+		spin_unlock(&vgdev->cursorq.qlock);
+		if (ret != -ENOSPC)
+			break;
+		if (!wait_event_timeout(vgdev->cursorq.ack_queue,
+		    !vgdev->vqs_ready || vq->num_free != before, 5 * HZ)) {
+			ret = -ETIMEDOUT;
+			break;
+		}
 	}
-
-	spin_unlock(&vgdev->cursorq.qlock);
-
-	if (notify)
-		virtqueue_notify(vq);
+	mutex_unlock(&vgdev->submit_lock);
+	if (ret) {
+		vgdev->submit_error = ret;
+		DRM_ERROR("cursor submission failed: %d\n", ret);
+		virtio_gpu_cancel_vbuf(vbuf);
+	}
 }
 
 /* just create gem objects for userspace and long lived objects,
@@ -485,7 +480,7 @@ retry:
  */
 
 /* create a basic resource */
-void virtio_gpu_cmd_create_resource(struct virtio_gpu_device *vgdev,
+int virtio_gpu_cmd_create_resource(struct virtio_gpu_device *vgdev,
 				    struct virtio_gpu_object *bo,
 				    struct virtio_gpu_object_params *params,
 				    struct virtio_gpu_object_array *objs,
@@ -495,6 +490,15 @@ void virtio_gpu_cmd_create_resource(struct virtio_gpu_device *vgdev,
 	struct virtio_gpu_vbuffer *vbuf;
 
 	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
+	if (IS_ERR(cmd_p)) {
+		if (objs) {
+			if (fence)
+				virtio_gpu_array_unlock_resv(objs);
+			virtio_gpu_array_put_free(objs);
+		}
+		vgdev->submit_error = PTR_ERR(cmd_p);
+		return PTR_ERR(cmd_p);
+	}
 	memset(cmd_p, 0, sizeof(*cmd_p));
 	vbuf->objs = objs;
 
@@ -504,8 +508,9 @@ void virtio_gpu_cmd_create_resource(struct virtio_gpu_device *vgdev,
 	cmd_p->width = cpu_to_le32(params->width);
 	cmd_p->height = cpu_to_le32(params->height);
 
-	virtio_gpu_queue_fenced_ctrl_buffer(vgdev, vbuf, &cmd_p->hdr, fence);
-	bo->created = true;
+	int ret = virtio_gpu_queue_sync(vgdev, vbuf, &cmd_p->hdr, fence);
+	bo->created = ret == 0;
+	return ret;
 }
 
 void virtio_gpu_cmd_unref_resource(struct virtio_gpu_device *vgdev,
@@ -515,11 +520,33 @@ void virtio_gpu_cmd_unref_resource(struct virtio_gpu_device *vgdev,
 	struct virtio_gpu_vbuffer *vbuf;
 
 	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
+	if (IS_ERR(cmd_p)) {
+		vgdev->submit_error = PTR_ERR(cmd_p);
+		return;
+	}
 	memset(cmd_p, 0, sizeof(*cmd_p));
 
 	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_RESOURCE_UNREF);
 	cmd_p->resource_id = cpu_to_le32(resource_id);
 
+	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
+}
+
+void virtio_gpu_queue_unref(struct virtio_gpu_device *vgdev,
+    struct virtio_gpu_object *bo)
+{
+	struct virtio_gpu_resource_unref *cmd;
+	struct virtio_gpu_vbuffer *vbuf;
+
+	cmd = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd));
+	if (IS_ERR(cmd)) {
+		vgdev->vdev->config->reset(vgdev->vdev);
+		virtio_gpu_release_object(bo);
+		return;
+	}
+	cmd->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_RESOURCE_UNREF);
+	cmd->resource_id = cpu_to_le32(bo->hw_res_handle);
+	vbuf->release = bo;
 	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
 }
 
@@ -531,6 +558,10 @@ static void virtio_gpu_cmd_resource_inval_backing(struct virtio_gpu_device *vgde
 	struct virtio_gpu_vbuffer *vbuf;
 
 	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
+	if (IS_ERR(cmd_p)) {
+		vgdev->submit_error = PTR_ERR(cmd_p);
+		return;
+	}
 	memset(cmd_p, 0, sizeof(*cmd_p));
 
 	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_RESOURCE_DETACH_BACKING);
@@ -548,6 +579,10 @@ void virtio_gpu_cmd_set_scanout(struct virtio_gpu_device *vgdev,
 	struct virtio_gpu_vbuffer *vbuf;
 
 	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
+	if (IS_ERR(cmd_p)) {
+		vgdev->submit_error = PTR_ERR(cmd_p);
+		return;
+	}
 	memset(cmd_p, 0, sizeof(*cmd_p));
 
 	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_SET_SCANOUT);
@@ -570,6 +605,10 @@ void virtio_gpu_cmd_resource_flush(struct virtio_gpu_device *vgdev,
 	struct virtio_gpu_vbuffer *vbuf;
 
 	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
+	if (IS_ERR(cmd_p)) {
+		vgdev->submit_error = PTR_ERR(cmd_p);
+		return;
+	}
 	memset(cmd_p, 0, sizeof(*cmd_p));
 
 	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_RESOURCE_FLUSH);
@@ -592,7 +631,6 @@ void virtio_gpu_cmd_transfer_to_host_2d(struct virtio_gpu_device *vgdev,
 	struct virtio_gpu_object *bo = gem_to_virtio_gpu_obj(objs->objs[0]);
 	struct virtio_gpu_transfer_to_host_2d *cmd_p;
 	struct virtio_gpu_vbuffer *vbuf;
-	bool use_dma_api = !virtio_has_iommu_quirk(vgdev->vdev);
 
 	if (use_dma_api)
 		dma_sync_sg_for_device(vgdev->vdev->dev.parent,
@@ -600,6 +638,15 @@ void virtio_gpu_cmd_transfer_to_host_2d(struct virtio_gpu_device *vgdev,
 				       DMA_TO_DEVICE);
 
 	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
+	if (IS_ERR(cmd_p)) {
+		if (objs) {
+			if (fence)
+				virtio_gpu_array_unlock_resv(objs);
+			virtio_gpu_array_put_free(objs);
+		}
+		vgdev->submit_error = PTR_ERR(cmd_p);
+		return;
+	}
 	memset(cmd_p, 0, sizeof(*cmd_p));
 	vbuf->objs = objs;
 
@@ -614,7 +661,7 @@ void virtio_gpu_cmd_transfer_to_host_2d(struct virtio_gpu_device *vgdev,
 	virtio_gpu_queue_fenced_ctrl_buffer(vgdev, vbuf, &cmd_p->hdr, fence);
 }
 
-static void
+static int
 virtio_gpu_cmd_resource_attach_backing(struct virtio_gpu_device *vgdev,
 				       uint32_t resource_id,
 				       struct virtio_gpu_mem_entry *ents,
@@ -625,6 +672,11 @@ virtio_gpu_cmd_resource_attach_backing(struct virtio_gpu_device *vgdev,
 	struct virtio_gpu_vbuffer *vbuf;
 
 	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
+	if (IS_ERR(cmd_p)) {
+		kfree(ents);
+		vgdev->submit_error = PTR_ERR(cmd_p);
+		return PTR_ERR(cmd_p);
+	}
 	memset(cmd_p, 0, sizeof(*cmd_p));
 
 	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING);
@@ -634,7 +686,7 @@ virtio_gpu_cmd_resource_attach_backing(struct virtio_gpu_device *vgdev,
 	vbuf->data_buf = ents;
 	vbuf->data_size = sizeof(*ents) * nents;
 
-	virtio_gpu_queue_fenced_ctrl_buffer(vgdev, vbuf, &cmd_p->hdr, fence);
+	return virtio_gpu_queue_sync(vgdev, vbuf, NULL, NULL);
 }
 
 static void virtio_gpu_cmd_get_display_info_cb(struct virtio_gpu_device *vgdev,
@@ -762,12 +814,19 @@ int virtio_gpu_cmd_get_display_info(struct virtio_gpu_device *vgdev)
 		(vgdev, &virtio_gpu_cmd_get_display_info_cb, &vbuf,
 		 sizeof(*cmd_p), sizeof(struct virtio_gpu_resp_display_info),
 		 resp_buf);
+	if (IS_ERR(cmd_p)) {
+		kfree(resp_buf);
+		vgdev->submit_error = PTR_ERR(cmd_p);
+		return PTR_ERR(cmd_p);
+	}
 	memset(cmd_p, 0, sizeof(*cmd_p));
 
 	vgdev->display_info_pending = true;
 	cmd_p->type = cpu_to_le32(VIRTIO_GPU_CMD_GET_DISPLAY_INFO);
-	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
-	return 0;
+	int ret = virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
+	if (ret)
+		vgdev->display_info_pending = false;
+	return ret;
 }
 
 int virtio_gpu_cmd_get_capset_info(struct virtio_gpu_device *vgdev, int idx)
@@ -785,6 +844,11 @@ int virtio_gpu_cmd_get_capset_info(struct virtio_gpu_device *vgdev, int idx)
 		(vgdev, &virtio_gpu_cmd_get_capset_info_cb, &vbuf,
 		 sizeof(*cmd_p), sizeof(struct virtio_gpu_resp_capset_info),
 		 resp_buf);
+	if (IS_ERR(cmd_p)) {
+		kfree(resp_buf);
+		vgdev->submit_error = PTR_ERR(cmd_p);
+		return PTR_ERR(cmd_p);
+	}
 	memset(cmd_p, 0, sizeof(*cmd_p));
 
 	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_GET_CAPSET_INFO);
@@ -860,6 +924,11 @@ int virtio_gpu_cmd_get_capset(struct virtio_gpu_device *vgdev,
 		(vgdev, &virtio_gpu_cmd_capset_cb, &vbuf, sizeof(*cmd_p),
 		 sizeof(struct virtio_gpu_resp_capset) + max_size,
 		 resp_buf);
+	if (IS_ERR(cmd_p)) {
+		kfree(resp_buf);
+		vgdev->submit_error = PTR_ERR(cmd_p);
+		return PTR_ERR(cmd_p);
+	}
 	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_GET_CAPSET);
 	cmd_p->capset_id = cpu_to_le32(vgdev->capsets[idx].id);
 	cmd_p->capset_version = cpu_to_le32(version);
@@ -889,6 +958,11 @@ int virtio_gpu_cmd_get_edids(struct virtio_gpu_device *vgdev)
 			(vgdev, &virtio_gpu_cmd_get_edid_cb, &vbuf,
 			 sizeof(*cmd_p), sizeof(struct virtio_gpu_resp_edid),
 			 resp_buf);
+	if (IS_ERR(cmd_p)) {
+		kfree(resp_buf);
+		vgdev->submit_error = PTR_ERR(cmd_p);
+		return PTR_ERR(cmd_p);
+	}
 		cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_GET_EDID);
 		cmd_p->scanout = cpu_to_le32(scanout);
 		virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
@@ -904,6 +978,10 @@ void virtio_gpu_cmd_context_create(struct virtio_gpu_device *vgdev, uint32_t id,
 	struct virtio_gpu_vbuffer *vbuf;
 
 	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
+	if (IS_ERR(cmd_p)) {
+		vgdev->submit_error = PTR_ERR(cmd_p);
+		return;
+	}
 	memset(cmd_p, 0, sizeof(*cmd_p));
 
 	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_CTX_CREATE);
@@ -921,6 +999,10 @@ void virtio_gpu_cmd_context_destroy(struct virtio_gpu_device *vgdev,
 	struct virtio_gpu_vbuffer *vbuf;
 
 	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
+	if (IS_ERR(cmd_p)) {
+		vgdev->submit_error = PTR_ERR(cmd_p);
+		return;
+	}
 	memset(cmd_p, 0, sizeof(*cmd_p));
 
 	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_CTX_DESTROY);
@@ -937,6 +1019,13 @@ void virtio_gpu_cmd_context_attach_resource(struct virtio_gpu_device *vgdev,
 	struct virtio_gpu_vbuffer *vbuf;
 
 	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
+	if (IS_ERR(cmd_p)) {
+		if (objs) {
+			virtio_gpu_array_put_free(objs);
+		}
+		vgdev->submit_error = PTR_ERR(cmd_p);
+		return;
+	}
 	memset(cmd_p, 0, sizeof(*cmd_p));
 	vbuf->objs = objs;
 
@@ -956,6 +1045,13 @@ void virtio_gpu_cmd_context_detach_resource(struct virtio_gpu_device *vgdev,
 	struct virtio_gpu_vbuffer *vbuf;
 
 	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
+	if (IS_ERR(cmd_p)) {
+		if (objs) {
+			virtio_gpu_array_put_free(objs);
+		}
+		vgdev->submit_error = PTR_ERR(cmd_p);
+		return;
+	}
 	memset(cmd_p, 0, sizeof(*cmd_p));
 	vbuf->objs = objs;
 
@@ -976,6 +1072,15 @@ virtio_gpu_cmd_resource_create_3d(struct virtio_gpu_device *vgdev,
 	struct virtio_gpu_vbuffer *vbuf;
 
 	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
+	if (IS_ERR(cmd_p)) {
+		if (objs) {
+			if (fence)
+				virtio_gpu_array_unlock_resv(objs);
+			virtio_gpu_array_put_free(objs);
+		}
+		vgdev->submit_error = PTR_ERR(cmd_p);
+		return;
+	}
 	memset(cmd_p, 0, sizeof(*cmd_p));
 	vbuf->objs = objs;
 
@@ -1007,7 +1112,6 @@ void virtio_gpu_cmd_transfer_to_host_3d(struct virtio_gpu_device *vgdev,
 	struct virtio_gpu_object *bo = gem_to_virtio_gpu_obj(objs->objs[0]);
 	struct virtio_gpu_transfer_host_3d *cmd_p;
 	struct virtio_gpu_vbuffer *vbuf;
-	bool use_dma_api = !virtio_has_iommu_quirk(vgdev->vdev);
 
 	if (use_dma_api)
 		dma_sync_sg_for_device(vgdev->vdev->dev.parent,
@@ -1015,6 +1119,15 @@ void virtio_gpu_cmd_transfer_to_host_3d(struct virtio_gpu_device *vgdev,
 				       DMA_TO_DEVICE);
 
 	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
+	if (IS_ERR(cmd_p)) {
+		if (objs) {
+			if (fence)
+				virtio_gpu_array_unlock_resv(objs);
+			virtio_gpu_array_put_free(objs);
+		}
+		vgdev->submit_error = PTR_ERR(cmd_p);
+		return;
+	}
 	memset(cmd_p, 0, sizeof(*cmd_p));
 
 	vbuf->objs = objs;
@@ -1041,6 +1154,15 @@ void virtio_gpu_cmd_transfer_from_host_3d(struct virtio_gpu_device *vgdev,
 	struct virtio_gpu_vbuffer *vbuf;
 
 	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
+	if (IS_ERR(cmd_p)) {
+		if (objs) {
+			if (fence)
+				virtio_gpu_array_unlock_resv(objs);
+			virtio_gpu_array_put_free(objs);
+		}
+		vgdev->submit_error = PTR_ERR(cmd_p);
+		return;
+	}
 	memset(cmd_p, 0, sizeof(*cmd_p));
 
 	vbuf->objs = objs;
@@ -1065,6 +1187,15 @@ void virtio_gpu_cmd_submit(struct virtio_gpu_device *vgdev,
 	struct virtio_gpu_vbuffer *vbuf;
 
 	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
+	if (IS_ERR(cmd_p)) {
+		if (objs) {
+			if (fence)
+				virtio_gpu_array_unlock_resv(objs);
+			virtio_gpu_array_put_free(objs);
+		}
+		vgdev->submit_error = PTR_ERR(cmd_p);
+		return;
+	}
 	memset(cmd_p, 0, sizeof(*cmd_p));
 
 	vbuf->data_buf = data;
@@ -1079,88 +1210,83 @@ void virtio_gpu_cmd_submit(struct virtio_gpu_device *vgdev,
 }
 
 int virtio_gpu_object_attach(struct virtio_gpu_device *vgdev,
-			     struct virtio_gpu_object *obj,
-			     struct virtio_gpu_fence *fence)
+    struct virtio_gpu_object *obj, struct virtio_gpu_fence *fence)
 {
-	bool use_dma_api = !virtio_has_iommu_quirk(vgdev->vdev);
 	struct virtio_gpu_mem_entry *ents;
-	struct scatterlist *sg;
-	int si, nents, ret;
-
-	if (WARN_ON_ONCE(!obj->created))
-		return -EINVAL;
-	if (WARN_ON_ONCE(obj->pages))
-		return -EINVAL;
+	struct sg_table *sgt;
+	bus_dmamap_t map;
+	unsigned int i, nents;
+	int ret;
 
 	ret = drm_gem_shmem_pin(&obj->base.base);
-	if (ret < 0)
-		return -EINVAL;
-
-	obj->pages = drm_gem_shmem_get_sg_table(&obj->base.base);
-	if (obj->pages == NULL) {
-		drm_gem_shmem_unpin(&obj->base.base);
-		return -EINVAL;
+	if (ret)
+		return ret;
+	sgt = drm_gem_shmem_get_sg_table(&obj->base.base);
+	if (IS_ERR(sgt)) {
+		ret = PTR_ERR(sgt);
+		goto unpin;
 	}
-
-	if (use_dma_api) {
-		obj->mapped = dma_map_sg(vgdev->vdev->dev.parent,
-					 obj->pages->sgl, obj->pages->nents,
-					 DMA_TO_DEVICE);
-		nents = obj->mapped;
-	} else {
-		nents = obj->pages->nents;
+	/* Native DMA map retains all pinned pages until RESOURCE_UNREF. */
+	ret = bus_dmamap_create(vgdev->vdev->dmat, obj->base.base.size,
+	    sgt->nents, UINT32_MAX, 0, BUS_DMA_WAITOK, &map);
+	if (ret) {
+		ret = -ret;
+		goto free_sg;
 	}
-
-	/* gets freed when the ring has consumed it */
-	ents = kmalloc_array(nents, sizeof(struct virtio_gpu_mem_entry),
-			     GFP_KERNEL);
-	if (!ents) {
-		DRM_ERROR("failed to allocate ent list\n");
+	ret = bus_dmamap_load_pages(vgdev->vdev->dmat, map,
+	    sgt->sgl->sg_pgs, obj->base.base.size,
+	    BUS_DMA_WAITOK | BUS_DMA_WRITE | BUS_DMA_READ);
+	if (ret) {
+		ret = -ret;
+		bus_dmamap_destroy(vgdev->vdev->dmat, map);
+		goto free_sg;
+	}
+	sgt->sgl->sg_dmat = vgdev->vdev->dmat;
+	sgt->sgl->sg_dmamap = map;
+	obj->pages = sgt;
+	obj->mapped = map->dm_nsegs;
+	nents = map->dm_nsegs;
+	if (nents > (vgdev->vdev->max_request - MAX_INLINE_CMD_SIZE -
+	    MAX_INLINE_RESP_SIZE) / sizeof(*ents))
+		return -EMSGSIZE;
+	ents = kcalloc(nents, sizeof(*ents), GFP_KERNEL);
+	if (!ents)
 		return -ENOMEM;
+	for (i = 0; i < nents; i++) {
+		if (map->dm_segs[i].ds_len > UINT32_MAX) {
+			kfree(ents);
+			return -EMSGSIZE;
+		}
+		ents[i].addr = cpu_to_le64(map->dm_segs[i].ds_addr);
+		ents[i].length = cpu_to_le32(map->dm_segs[i].ds_len);
 	}
-
-	for_each_sg(obj->pages->sgl, sg, nents, si) {
-		ents[si].addr = cpu_to_le64(use_dma_api
-					    ? sg_dma_address(sg)
-					    : sg_phys(sg));
-		ents[si].length = cpu_to_le32(sg->length);
-		ents[si].padding = 0;
-	}
-
-	virtio_gpu_cmd_resource_attach_backing(vgdev, obj->hw_res_handle,
-					       ents, nents,
-					       fence);
-	return 0;
+	bus_dmamap_sync(vgdev->vdev->dmat, map, 0, obj->base.base.size,
+	    BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
+	return virtio_gpu_cmd_resource_attach_backing(vgdev,
+	    obj->hw_res_handle, ents, nents, NULL);
+free_sg:
+	sg_free_table(sgt);
+	kfree(sgt);
+unpin:
+	drm_gem_shmem_unpin(&obj->base.base);
+	return ret;
 }
 
 void virtio_gpu_object_detach(struct virtio_gpu_device *vgdev,
-			      struct virtio_gpu_object *obj)
+    struct virtio_gpu_object *obj)
 {
-	bool use_dma_api = !virtio_has_iommu_quirk(vgdev->vdev);
-
-	if (WARN_ON_ONCE(!obj->pages))
-		return;
-
-	if (use_dma_api && obj->mapped) {
-		struct virtio_gpu_fence *fence = virtio_gpu_fence_alloc(vgdev);
-		/* detach backing and wait for the host process it ... */
-		virtio_gpu_cmd_resource_inval_backing(vgdev, obj->hw_res_handle, fence);
-		dma_fence_wait(&fence->f, true);
-		dma_fence_put(&fence->f);
-
-		/* ... then tear down iommu mappings */
-		dma_unmap_sg(vgdev->vdev->dev.parent,
-			     obj->pages->sgl, obj->mapped,
-			     DMA_TO_DEVICE);
+	/* Only after host unref acknowledgement, or a device reset. */
+	if (obj->pages) {
+		bus_dmamap_sync(vgdev->vdev->dmat, obj->pages->sgl->sg_dmamap,
+		    0, obj->base.base.size,
+		    BUS_DMASYNC_POSTWRITE | BUS_DMASYNC_POSTREAD);
+		bus_dmamap_unload(vgdev->vdev->dmat, obj->pages->sgl->sg_dmamap);
+		sg_free_table(obj->pages);
+		kfree(obj->pages);
+		obj->pages = NULL;
 		obj->mapped = 0;
-	} else {
-		virtio_gpu_cmd_resource_inval_backing(vgdev, obj->hw_res_handle, NULL);
+		drm_gem_shmem_unpin(&obj->base.base);
 	}
-
-	sg_free_table(obj->pages);
-	obj->pages = NULL;
-
-	drm_gem_shmem_unpin(&obj->base.base);
 }
 
 void virtio_gpu_cursor_ping(struct virtio_gpu_device *vgdev,
@@ -1171,6 +1297,10 @@ void virtio_gpu_cursor_ping(struct virtio_gpu_device *vgdev,
 
 	output->cursor.pos.scanout_id = cpu_to_le32(output->index);
 	cur_p = virtio_gpu_alloc_cursor(vgdev, &vbuf);
+	if (IS_ERR(cur_p)) {
+		vgdev->submit_error = PTR_ERR(cur_p);
+		return;
+	}
 	memcpy(cur_p, &output->cursor, sizeof(output->cursor));
 	virtio_gpu_queue_cursor(vgdev, vbuf);
 }

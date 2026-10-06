@@ -1225,3 +1225,5 @@ device	rge: ether, ifnet, arp, mii
 attach	rge at pci
 file	dev/pci/if_rge.c		rge
 
+
+include "external/bsd/drm2/virtio/files.virtio"

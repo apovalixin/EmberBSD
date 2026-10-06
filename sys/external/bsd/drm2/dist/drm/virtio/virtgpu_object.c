@@ -1,3 +1,4 @@
+/* Origin: EmberBSD native VirtGPU integration of Linux v5.6, 2026-10-06. */
 /*	$NetBSD: virtgpu_object.c,v 1.3 2021/12/18 23:45:45 riastradh Exp $	*/
 
 /*
@@ -66,18 +67,25 @@ static void virtio_gpu_resource_id_put(struct virtio_gpu_device *vgdev, uint32_t
 	}
 }
 
+void virtio_gpu_release_object(struct virtio_gpu_object *bo)
+{
+	struct drm_gem_object *obj = &bo->base.base;
+	struct virtio_gpu_device *vgdev = obj->dev->dev_private;
+
+	virtio_gpu_object_detach(vgdev, bo);
+	virtio_gpu_resource_id_put(vgdev, bo->hw_res_handle);
+	drm_gem_shmem_free_object(obj);
+}
+
 static void virtio_gpu_free_object(struct drm_gem_object *obj)
 {
 	struct virtio_gpu_object *bo = gem_to_virtio_gpu_obj(obj);
-	struct virtio_gpu_device *vgdev = bo->base.base.dev->dev_private;
+	struct virtio_gpu_device *vgdev = obj->dev->dev_private;
 
-	if (bo->pages)
-		virtio_gpu_object_detach(vgdev, bo);
-	if (bo->created)
-		virtio_gpu_cmd_unref_resource(vgdev, bo->hw_res_handle);
-	virtio_gpu_resource_id_put(vgdev, bo->hw_res_handle);
-
-	drm_gem_shmem_free_object(obj);
+	if (bo->created && vgdev->vqs_ready)
+		virtio_gpu_queue_unref(vgdev, bo);
+	else
+		virtio_gpu_release_object(bo);
 }
 
 static const struct drm_gem_object_funcs virtio_gpu_gem_funcs = {
@@ -119,6 +127,8 @@ int virtio_gpu_object_create(struct virtio_gpu_device *vgdev,
 
 	*bo_ptr = NULL;
 
+	if (!params->size || params->size > SIZE_MAX - PAGE_MASK)
+		return -EINVAL;
 	params->size = roundup(params->size, PAGE_SIZE);
 	shmem_obj = drm_gem_shmem_create(vgdev->ddev, params->size);
 	if (IS_ERR(shmem_obj))
@@ -147,13 +157,15 @@ int virtio_gpu_object_create(struct virtio_gpu_device *vgdev,
 		virtio_gpu_cmd_resource_create_3d(vgdev, bo, params,
 						  objs, fence);
 	} else {
-		virtio_gpu_cmd_create_resource(vgdev, bo, params,
+		ret = virtio_gpu_cmd_create_resource(vgdev, bo, params,
 					       objs, fence);
+		if (ret)
+			goto err_put_id;
 	}
 
 	ret = virtio_gpu_object_attach(vgdev, bo, NULL);
 	if (ret != 0) {
-		virtio_gpu_free_object(&shmem_obj->base);
+		drm_gem_object_put_unlocked(&shmem_obj->base);
 		return ret;
 	}
 
