@@ -176,7 +176,11 @@ on every board in the hardware catalog.
   original board adaptations already applied to this tree.
 - **Reproducible builds and development:** pinned kernel/UEFI inputs and
   checked firmware assets, pkgsrc overlays, versioned source probes and
-  standalone examples. [Developer skills](#connect-developer-skills) help
+  standalone examples. The [Ports development toolchain](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/development-toolchain)
+  provides a GCC 16.2 candidate built and installed on the AArch64 VM, with
+  native C11/C++20 thread, TLS and shared-library checks passing. Full upstream
+  tests and a coherent Qt/LLVM runtime rebuild remain required before adopting
+  it as the default compiler in new images. [Developer skills](#connect-developer-skills) help
   AI coding assistants find the owning project, test changes and prepare
   contributions. A general validated installation image is not yet released.
 
