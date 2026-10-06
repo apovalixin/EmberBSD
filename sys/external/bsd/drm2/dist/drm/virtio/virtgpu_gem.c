@@ -80,7 +80,7 @@ int virtio_gpu_mode_dumb_create(struct drm_file *file_priv,
 		return -EINVAL;
 	pitch = args->width * 4;
 	args->size = (uint64_t)pitch * args->height;
-	if (args->size > SIZE_MAX - PAGE_MASK)
+	if (args->size > SIZE_MAX - (PAGE_SIZE - 1))
 		return -EINVAL;
 	args->size = roundup(args->size, PAGE_SIZE);
 

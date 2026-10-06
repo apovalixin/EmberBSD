@@ -13,6 +13,7 @@
 struct virtiodrm_softc {
 	device_t sc_dev;
 	struct virtio_device sc_vdev;
+	struct netbsd_virtqueue *sc_vqs[2];
 	struct drm_device *sc_drm;
 };
 static int virtiodrm_match(device_t, cfdata_t, void *);
@@ -51,6 +52,10 @@ virtiodrm_config_changed(struct virtio_device *vdev)
 static void
 virtiodrm_attach(device_t parent, device_t self, void *aux)
 {
+	static vq_callback_t *callbacks[] = {
+		virtio_gpu_ctrl_ack, virtio_gpu_cursor_ack
+	};
+	static const char * const names[] = { "control", "cursor" };
 	struct virtiodrm_softc *sc = device_private(self);
 	struct virtio_softc *vsc = device_private(parent);
 	int error;
@@ -70,6 +75,15 @@ virtiodrm_attach(device_t parent, device_t self, void *aux)
 	    virtio_gpu_cancel_vbuf);
 	if (error) {
 		aprint_error_dev(self, "transport initialization: %d\n", error);
+		virtio_child_attach_failed(vsc);
+		return;
+	}
+	/* Native parent requires queues/interrupts before attach returns. */
+	error = virtio_find_vqs(&sc->sc_vdev, __arraycount(sc->sc_vqs),
+	    sc->sc_vqs, callbacks, names, NULL);
+	if (error) {
+		aprint_error_dev(self, "queue initialization: %d\n", error);
+		linux_virtio_fini(&sc->sc_vdev);
 		virtio_child_attach_failed(vsc);
 		return;
 	}
@@ -97,7 +111,7 @@ virtiodrm_attach_deferred(device_t self)
 	ret = drm_dev_set_unique(dev, device_xname(self));
 	if (ret)
 		goto put;
-	ret = virtio_gpu_init(dev, &sc->sc_vdev);
+	ret = virtio_gpu_init(dev, &sc->sc_vdev, sc->sc_vqs);
 	if (ret)
 		goto put;
 	ret = drm_dev_register(dev, 0);

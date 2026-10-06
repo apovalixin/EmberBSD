@@ -7,7 +7,7 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/virtgpu-contract.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 extract() {
     awk -v name="$1" -v prefix="$3" '
-        $0 ~ "^((static )?(void|int) )?" name "\\(" {
+        $0 ~ "^((static )?(void|int) )?" name "\\(" && $0 !~ /;[[:space:]]*$/ {
             if (prefix != "") print prefix;
             copying = 1;
         }
@@ -703,3 +703,126 @@ int main(void) {
 C
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror "$work/dma.c" -o "$work/dma"
 "$work/dma"
+cat > "$work/dumb.c" <<'C'
+#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <stdio.h>
+#define PAGE_SIZE 4096ULL
+/* The Linux compatibility header deliberately uses the inverse mask. */
+#define PAGE_MASK (~(PAGE_SIZE - 1))
+#define roundup(x, n) (((x) + (n) - 1) / (n) * (n))
+#define DRM_FORMAT_HOST_XRGB8888 1
+struct drm_gem_object { int unused; };
+struct drm_device { int unused; };
+struct drm_file { int unused; };
+struct drm_mode_create_dumb {
+    uint32_t width, height, bpp, pitch, handle; uint64_t size;
+};
+struct virtio_gpu_object_params {
+    uint32_t width, height, format; uint64_t size; bool dumb;
+};
+static int created;
+static unsigned int virtio_gpu_translate_format(int format) { assert(format == 1); return 2; }
+static int virtio_gpu_gem_create(struct drm_file *file, struct drm_device *dev,
+    struct virtio_gpu_object_params *p, struct drm_gem_object **obj, uint32_t *handle) {
+    (void)file; (void)dev; (void)obj;
+    assert(p->dumb && p->format == 2 && p->size >= (uint64_t)p->width * p->height * 4);
+    assert(p->size % PAGE_SIZE == 0); created++; *handle = 7; return 0;
+}
+C
+gem="$src/sys/external/bsd/drm2/dist/drm/virtio/virtgpu_gem.c"
+extract virtio_gpu_mode_dumb_create "$gem" '' >> "$work/dumb.c"
+cat >> "$work/dumb.c" <<'C'
+int main(void) {
+    struct drm_mode_create_dumb a = { .width = 64, .height = 16, .bpp = 32 };
+    assert(virtio_gpu_mode_dumb_create(NULL, NULL, &a) == 0);
+    assert(a.handle == 7 && a.pitch == 256 && a.size == 4096);
+    a = (struct drm_mode_create_dumb){ .width = 800, .height = 600, .bpp = 32 };
+    assert(virtio_gpu_mode_dumb_create(NULL, NULL, &a) == 0);
+    assert(a.handle == 7 && a.pitch == 3200 && a.size == 1921024);
+    a.bpp = 24; assert(virtio_gpu_mode_dumb_create(NULL, NULL, &a) == -EINVAL);
+    a.bpp = 32; a.width = UINT32_MAX;
+    assert(virtio_gpu_mode_dumb_create(NULL, NULL, &a) == -EINVAL);
+    assert(created == 2);
+    puts("VirtGPU production 1-page and scanout dumb allocation under Linux PAGE_MASK passed");
+    return 0;
+}
+C
+${CC:-cc} -std=c11 -Wall -Wextra -Werror "$work/dumb.c" -o "$work/dumb"
+"$work/dumb"
+cat > "$work/attach.c" <<'C'
+#include <assert.h>
+#include <stddef.h>
+#include <stdio.h>
+#include <errno.h>
+#define IPL_VM 1
+#define VIRTIO_COMMON_FLAG_BITS ""
+#define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
+struct netbsd_virtqueue { int unused; };
+typedef void vq_callback_t(struct netbsd_virtqueue *);
+struct virtio_softc { int finished; };
+struct virtio_device { int initialized; };
+struct virtiodrm_softc {
+    void *sc_dev; struct virtio_device sc_vdev; struct netbsd_virtqueue *sc_vqs[2];
+};
+typedef void *device_t;
+static int stage, fail_queues, failures, finalized, deferred;
+static struct netbsd_virtqueue queues[2];
+static void *device_private(void *p) { return p; }
+static void aprint_naive(const char *s) { (void)s; }
+static void aprint_normal(const char *s) { (void)s; }
+static void aprint_error_dev(void *d, const char *s, ...) { (void)d; (void)s; }
+static void virtio_gpu_ctrl_ack(struct netbsd_virtqueue *q) { (void)q; }
+static void virtio_gpu_cursor_ack(struct netbsd_virtqueue *q) { (void)q; }
+static int virtiodrm_config_bridge(struct virtio_softc *v) { (void)v; return 0; }
+static void virtiodrm_config_changed(struct virtio_device *v) { (void)v; }
+static void virtio_gpu_cancel_vbuf(void *p) { (void)p; }
+static void virtiodrm_attach_deferred(device_t d) { (void)d; }
+static void virtio_child_attach_start(struct virtio_softc *v, device_t self,
+    int ipl, unsigned long features, const char *bits) {
+    (void)v; (void)self; (void)bits; assert(ipl == IPL_VM && features == 0); stage++;
+}
+static int virtio_version_1(struct virtio_softc *v) { (void)v; return 1; }
+static void virtio_child_attach_failed(struct virtio_softc *v) { (void)v; failures++; }
+static int linux_virtio_init(struct virtio_device *v, struct virtio_softc *n,
+    device_t d, int ipl, size_t bytes, int (*bridge)(struct virtio_softc *),
+    void (*changed)(struct virtio_device *), void (*cancel)(void *)) {
+    (void)n; (void)d; (void)bridge; (void)changed; (void)cancel;
+    assert(stage == 1 && ipl == IPL_VM && bytes == 1024 * 1024);
+    v->initialized = 1; stage++; return 0;
+}
+static int virtio_find_vqs(struct virtio_device *v, unsigned int n,
+    struct netbsd_virtqueue **q, vq_callback_t **callbacks,
+    const char *const *names, void *affinity) {
+    assert(v->initialized && n == 2 && callbacks[0] && callbacks[1] &&
+        names[0] && names[1] && !affinity && stage == 2);
+    if (fail_queues) return -ENOMEM;
+    q[0] = &queues[0]; q[1] = &queues[1]; stage++; return 0;
+}
+static void linux_virtio_fini(struct virtio_device *v) { assert(v->initialized); finalized++; }
+static void config_interrupts(device_t d, void (*fn)(device_t)) {
+    struct virtiodrm_softc *sc = d;
+    assert(stage == 3 && sc->sc_vqs[0] && sc->sc_vqs[1] && fn);
+    deferred++; /* native parent can now see queues/interrupt attach finished */
+}
+C
+autoconf="$src/sys/external/bsd/drm2/virtio/virtgpu_autoconf.c"
+extract virtiodrm_attach "$autoconf" void >> "$work/attach.c"
+cat >> "$work/attach.c" <<'C'
+int main(void) {
+    struct virtio_softc parent = { 0 }; struct virtiodrm_softc child = { 0 };
+    virtiodrm_attach(&parent, &child, NULL);
+    assert(deferred == 1 && failures == 0 && finalized == 0);
+    stage = 0; deferred = 0; fail_queues = 1;
+    virtiodrm_attach(&parent, &child, NULL);
+    assert(deferred == 0 && failures == 1 && finalized == 1);
+    puts("VirtGPU production attach finishes transport before deferring DRM queries");
+    return 0;
+}
+C
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
+    "$work/attach.c" -o "$work/attach"
+"$work/attach"

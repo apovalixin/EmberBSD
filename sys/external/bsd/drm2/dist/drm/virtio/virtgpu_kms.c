@@ -154,20 +154,15 @@ static void virtio_gpu_get_capsets(struct virtio_gpu_device *vgdev,
 	vgdev->num_capsets = num_capsets;
 }
 
-int virtio_gpu_init(struct drm_device *dev, struct virtio_device *vdev)
+int virtio_gpu_init(struct drm_device *dev, struct virtio_device *vdev,
+    struct netbsd_virtqueue **vqs)
 {
-	static vq_callback_t *callbacks[] = {
-		virtio_gpu_ctrl_ack, virtio_gpu_cursor_ack
-	};
-	static const char * const names[] = { "control", "cursor" };
-
 	struct virtio_gpu_device *vgdev;
-	/* this will expand later */
-	struct netbsd_virtqueue *vqs[2];
 	u32 num_scanouts, num_capsets;
 	int ret;
 
-	if (!virtio_has_feature(vdev, LINUX_VIRTIO_F_VERSION_1))
+	if (!virtio_has_feature(vdev, LINUX_VIRTIO_F_VERSION_1) ||
+	    vdev->state != LINUX_VIRTIO_QUEUES || !vqs || !vqs[0] || !vqs[1])
 		return -ENODEV;
 
 	vgdev = kzalloc(sizeof(struct virtio_gpu_device), GFP_KERNEL);
@@ -218,11 +213,6 @@ int virtio_gpu_init(struct drm_device *dev, struct virtio_device *vdev)
 		 vgdev->has_virgl_3d ? '+' : '-',
 		 vgdev->has_edid     ? '+' : '-');
 
-	ret = virtio_find_vqs(vgdev->vdev, 2, vqs, callbacks, names, NULL);
-	if (ret) {
-		DRM_ERROR("failed to find virt queues\n");
-		goto err_vqs;
-	}
 	vgdev->ctrlq.vq = vqs[0];
 	vgdev->cursorq.vq = vqs[1];
 	ret = virtio_gpu_alloc_vbufs(vgdev);

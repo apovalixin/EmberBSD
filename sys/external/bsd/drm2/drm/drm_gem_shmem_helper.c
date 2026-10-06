@@ -19,7 +19,7 @@ drm_gem_shmem_create(struct drm_device *dev, size_t size)
 	struct drm_gem_shmem_object *shmem;
 	int ret;
 
-	if (size == 0 || size > SIZE_MAX - PAGE_MASK ||
+	if (size == 0 || size > SIZE_MAX - (PAGE_SIZE - 1) ||
 	    (size >> PAGE_SHIFT) > UINT_MAX)
 		return ERR_PTR(-EINVAL);
 	size = roundup(size, PAGE_SIZE);

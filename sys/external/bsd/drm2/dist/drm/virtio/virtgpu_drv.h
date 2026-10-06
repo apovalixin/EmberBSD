@@ -241,7 +241,8 @@ void virtio_gpu_stop(struct virtio_gpu_device *, int);
 void virtio_gpu_fence_fail(struct virtio_gpu_fence *, int);
 
 /* virtio_kms.c */
-int virtio_gpu_init(struct drm_device *dev, struct virtio_device *vdev);
+int virtio_gpu_init(struct drm_device *, struct virtio_device *,
+    struct netbsd_virtqueue **);
 void virtio_gpu_deinit(struct drm_device *dev);
 int virtio_gpu_driver_open(struct drm_device *dev, struct drm_file *file);
 void virtio_gpu_driver_postclose(struct drm_device *dev, struct drm_file *file);

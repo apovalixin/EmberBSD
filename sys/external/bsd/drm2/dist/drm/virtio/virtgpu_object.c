@@ -111,7 +111,7 @@ int virtio_gpu_object_create(struct virtio_gpu_device *vgdev,
 	*bo_ptr = NULL;
 
 	if (!params->size || params->size > VIRTGPU_MAX_OBJECT_SIZE ||
-	    params->size > SIZE_MAX - PAGE_MASK)
+	    params->size > SIZE_MAX - (PAGE_SIZE - 1))
 		return -EINVAL;
 	if (!params->virgl &&
 	    !virtgpu_2d_size_valid(params->width, params->height, params->size))
