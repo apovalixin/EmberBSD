@@ -20,6 +20,7 @@ cat > "$work/console.c" <<'C'
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#undef putchar
 #include <stddef.h>
 #include <string.h>
 #include <errno.h>
@@ -178,6 +179,7 @@ cat > "$work/selection.c" <<'C'
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
+#undef putchar
 #define KASSERT assert
 typedef void *device_t;
 struct simplefb_softc { int unused; };
@@ -219,6 +221,7 @@ ${CC:-cc} -std=c99 -Wall -Wextra -Werror "$work/selection.c" -o "$work/selection
 cat > "$work/raster.c" <<'C'
 #include <assert.h>
 #include <stdio.h>
+#undef putchar
 #include <string.h>
 typedef unsigned int u_int;
 struct wsdisplay_emulops {
