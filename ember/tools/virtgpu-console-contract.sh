@@ -291,3 +291,53 @@ int main(void) {
 C
 ${CC:-cc} -std=c99 -Wall -Wextra -Werror "$work/raster.c" -o "$work/raster"
 "$work/raster"
+cat > "$work/redraw.c" <<'C'
+#include <assert.h>
+#include <stdbool.h>
+#include <stdio.h>
+#define WSDISPLAYIO_MODE_EMUL 0
+struct genfb_softc;
+struct genfb_mode_callback { bool (*gmc_setmode)(struct genfb_softc *,int); };
+struct genfb_private {
+    int sc_mode; struct genfb_mode_callback *sc_modecb;
+    struct { void (*genfb_damage)(void *); } sc_ops;
+};
+struct genfb_softc {
+    struct genfb_private *sc_private;
+    struct { void *active; } vd;
+};
+static unsigned stage, redraws, damages;
+static bool mode(struct genfb_softc *sc, int n) {
+    assert(sc && n==0 && stage==0); stage=1; return true;
+}
+static void genfb_restore_palette(struct genfb_softc *sc) {
+    assert(sc && stage==1); stage=2;
+}
+static void vcons_redraw_screen(void *active) {
+    assert(active && stage==2); stage=3; redraws++;
+}
+static void damage(void *cookie) {
+    struct genfb_softc *sc=cookie;
+    assert(stage==(sc->vd.active ? 3 : 1)); stage=4; damages++;
+}
+C
+extract genfb_restore_console "$src/sys/dev/wsfb/genfb.c" 'static void' >> "$work/redraw.c"
+cat >> "$work/redraw.c" <<'C'
+int main(void) {
+    struct genfb_mode_callback cb={ mode };
+    struct genfb_private priv={ .sc_mode=1, .sc_modecb=&cb,
+        .sc_ops={ damage } };
+    struct genfb_softc sc={ .sc_private=&priv, .vd={ &priv } };
+    genfb_restore_console(&sc);
+    assert(priv.sc_mode==0 && redraws==1 && damages==1 && stage==4);
+    stage=0; genfb_restore_console(&sc);
+    assert(priv.sc_mode==0 && redraws==2 && damages==2);
+    stage=0; sc.vd.active=NULL; genfb_restore_console(&sc);
+    assert(redraws==2 && damages==3 && stage==4);
+    priv.sc_modecb=NULL; priv.sc_ops.genfb_damage=NULL;
+    genfb_restore_console(&sc);
+    puts("genfb production lastclose forces EMUL and marks damage after redraw passed");
+}
+C
+${CC:-cc} -std=c99 -Wall -Wextra -Werror "$work/redraw.c" -o "$work/redraw"
+"$work/redraw"

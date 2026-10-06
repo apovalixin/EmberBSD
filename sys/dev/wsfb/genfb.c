@@ -1290,3 +1290,20 @@ nope:
 }
 
 #endif
+
+/* Restore/redraw even when lastclose follows an already-emulated VT. */
+void
+genfb_restore_console(struct genfb_softc *sc)
+{
+	struct genfb_private *scp = sc->sc_private;
+
+	scp->sc_mode = WSDISPLAYIO_MODE_EMUL;
+	if (scp->sc_modecb != NULL)
+		scp->sc_modecb->gmc_setmode(sc, scp->sc_mode);
+	if (sc->vd.active != NULL) {
+		genfb_restore_palette(sc);
+		vcons_redraw_screen(sc->vd.active);
+	}
+	if (scp->sc_ops.genfb_damage != NULL)
+		scp->sc_ops.genfb_damage(sc);
+}
