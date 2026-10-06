@@ -241,8 +241,16 @@ struct virtio_gpu_device {
 	int capset_error;
 };
 
+struct virtio_gpu_attachment {
+	struct list_head node;
+	struct drm_gem_object *obj;
+	u32 handles;
+};
+
 struct virtio_gpu_fpriv {
 	uint32_t ctx_id;
+	struct mutex attachment_lock;
+	struct list_head attachments;
 };
 
 /* virtio_ioctl.c */
@@ -353,10 +361,10 @@ int virtio_gpu_cmd_context_create(struct virtio_gpu_device *vgdev, uint32_t id,
 				   uint32_t nlen, const char *name);
 int virtio_gpu_cmd_context_destroy(struct virtio_gpu_device *vgdev,
 				    uint32_t id);
-void virtio_gpu_cmd_context_attach_resource(struct virtio_gpu_device *vgdev,
+int virtio_gpu_cmd_context_attach_resource(struct virtio_gpu_device *vgdev,
 					    uint32_t ctx_id,
 					    struct virtio_gpu_object_array *objs);
-void virtio_gpu_cmd_context_detach_resource(struct virtio_gpu_device *vgdev,
+int virtio_gpu_cmd_context_detach_resource(struct virtio_gpu_device *vgdev,
 					    uint32_t ctx_id,
 					    struct virtio_gpu_object_array *objs);
 void virtio_gpu_cmd_submit(struct virtio_gpu_device *vgdev,
@@ -376,7 +384,7 @@ void virtio_gpu_cmd_transfer_to_host_3d(struct virtio_gpu_device *vgdev,
 					struct drm_virtgpu_3d_box *box,
 					struct virtio_gpu_object_array *objs,
 					struct virtio_gpu_fence *fence);
-void
+int
 virtio_gpu_cmd_resource_create_3d(struct virtio_gpu_device *vgdev,
 				  struct virtio_gpu_object *bo,
 				  struct virtio_gpu_object_params *params,

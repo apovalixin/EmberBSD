@@ -122,18 +122,60 @@ int virtio_gpu_gem_object_open(struct drm_gem_object *obj,
 	struct virtio_gpu_device *vgdev = obj->dev->dev_private;
 	struct virtio_gpu_fpriv *vfpriv = file->driver_priv;
 	struct virtio_gpu_object_array *objs;
+	struct virtio_gpu_attachment *entry;
+	int ret = 0;
 
 	if (!vgdev->has_virgl_3d)
 		return 0;
+	if (!vfpriv)
+		return -ENODEV;
+
+	/* PRIME may hold prime.lock; release this lock before returning to core. */
+	mutex_lock(&vfpriv->attachment_lock);
+	if (!vgdev->vqs_ready) {
+		ret = -ENODEV;
+		goto out;
+	}
+	list_for_each_entry(entry, &vfpriv->attachments, node) {
+		if (entry->obj != obj)
+			continue;
+		if (entry->handles == UINT_MAX)
+			ret = -EOVERFLOW;
+		else
+			entry->handles++;
+		goto out;
+	}
+	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
+	if (!entry) {
+		ret = -ENOMEM;
+		goto out;
+	}
 
 	objs = virtio_gpu_array_alloc(1);
-	if (!objs)
-		return -ENOMEM;
+	if (!objs) {
+		kfree(entry);
+		ret = -ENOMEM;
+		goto out;
+	}
+	/* The attachment and the request cookie each own a reference. */
+	drm_gem_object_get(obj);
 	virtio_gpu_array_add_obj(objs, obj);
 
-	virtio_gpu_cmd_context_attach_resource(vgdev, vfpriv->ctx_id,
-					       objs);
-	return 0;
+	ret = virtio_gpu_cmd_context_attach_resource(vgdev, vfpriv->ctx_id,
+	    objs);
+	if (ret) {
+		/* Core does not call close after a failed open callback. */
+		virtio_gpu_stop(vgdev, ret);
+		drm_gem_object_put_unlocked(obj);
+		kfree(entry);
+		goto out;
+	}
+	entry->obj = obj;
+	entry->handles = 1;
+	list_add_tail(&entry->node, &vfpriv->attachments);
+out:
+	mutex_unlock(&vfpriv->attachment_lock);
+	return ret;
 }
 
 void virtio_gpu_gem_object_close(struct drm_gem_object *obj,
@@ -142,17 +184,42 @@ void virtio_gpu_gem_object_close(struct drm_gem_object *obj,
 	struct virtio_gpu_device *vgdev = obj->dev->dev_private;
 	struct virtio_gpu_fpriv *vfpriv = file->driver_priv;
 	struct virtio_gpu_object_array *objs;
+	struct virtio_gpu_attachment *entry;
+	int ret;
 
 	if (!vgdev->has_virgl_3d)
 		return;
-
-	objs = virtio_gpu_array_alloc(1);
-	if (!objs)
+	if (WARN_ON(!vfpriv)) {
+		virtio_gpu_stop(vgdev, -EIO);
 		return;
-	virtio_gpu_array_add_obj(objs, obj);
+	}
 
-	virtio_gpu_cmd_context_detach_resource(vgdev, vfpriv->ctx_id,
-					       objs);
+	mutex_lock(&vfpriv->attachment_lock);
+	list_for_each_entry(entry, &vfpriv->attachments, node) {
+		if (entry->obj != obj)
+			continue;
+		if (--entry->handles != 0)
+			goto out;
+		objs = virtio_gpu_array_alloc(1);
+		ret = -ENOMEM;
+		if (objs) {
+			virtio_gpu_array_add_obj(objs, obj);
+			ret = virtio_gpu_cmd_context_detach_resource(vgdev,
+			    vfpriv->ctx_id, objs);
+		}
+		/* A failed close cannot leave an untracked host attachment. */
+		if (ret)
+			virtio_gpu_stop(vgdev, ret);
+		list_del(&entry->node);
+		drm_gem_object_put_unlocked(entry->obj);
+		kfree(entry);
+		goto out;
+	}
+	/* A mismatched callback must not permit uncertain host retirement. */
+	WARN_ON(1);
+	virtio_gpu_stop(vgdev, -EIO);
+out:
+	mutex_unlock(&vfpriv->attachment_lock);
 }
 
 struct virtio_gpu_object_array *virtio_gpu_array_alloc(u32 nents)

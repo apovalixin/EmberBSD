@@ -27,7 +27,7 @@ typedef uint32_t __u32, __le32;
 typedef uint64_t __u64, __le64;
 C
 sed -n '/^struct virtio_gpu_wait {/,/^};/p' "$vq" > "$work/context-layout.h"
-for name in virtio_gpu_vbuffer virtio_gpu_fpriv; do
+for name in virtio_gpu_vbuffer virtio_gpu_attachment virtio_gpu_fpriv; do
     sed -n "/^struct $name {/,/^};/p" "$hdr" >> "$work/context-layout.h"
 done
 extract linux_virtio_reset "$src/sys/external/bsd/drm2/linux/linux_virtio.c" \

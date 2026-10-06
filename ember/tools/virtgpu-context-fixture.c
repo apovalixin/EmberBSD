@@ -20,6 +20,7 @@
 #define MAX_INLINE_CMD_SIZE 96
 #define MAX_INLINE_RESP_SIZE 24
 #define BUG_ON(c) assert(!(c))
+#define WARN_ON(c) ((c) ? (assert(!(c)), 1) : 0)
 #define cpu_to_le32(x) (x)
 #define le32_to_cpu(x) (x)
 #define IS_ERR(p) ((uintptr_t)(p) >= (uintptr_t)-4095)
@@ -35,6 +36,8 @@ struct mutex {
 };
 #define mutex_lock(m) assert(pthread_mutex_lock(&(m)->value)==0)
 #define mutex_unlock(m) assert(pthread_mutex_unlock(&(m)->value)==0)
+#define linux_mutex_init(m) assert(pthread_mutex_init(&(m)->value,NULL)==0)
+#define linux_mutex_destroy(m) assert(pthread_mutex_destroy(&(m)->value)==0)
 typedef struct {
 	struct mutex lock;
 	pthread_cond_t cv;
@@ -60,6 +63,15 @@ wake_up_all(wait_queue_head_t *q)
 	mutex_unlock(&q->lock);
 }
 struct list_head { struct list_head *next, *prev; };
+#define INIT_LIST_HEAD(h) ((h)->next=(h)->prev=(h))
+#define list_empty(h) ((h)->next==(h))
+#define container_of(p,t,m) ((t *)((char *)(p)-offsetof(t,m)))
+#define list_for_each_entry_safe(p,n,h,m) \
+    for(p=container_of((h)->next,__typeof__(*p),m), n=container_of(p->m.next,__typeof__(*p),m); \
+    &p->m!=(h); p=n,n=container_of(n->m.next,__typeof__(*n),m))
+static void list_del(struct list_head *p) { p->next->prev=p->prev; p->prev->next=p->next; }
+struct drm_gem_object;
+static void drm_gem_object_put_unlocked(struct drm_gem_object *obj) { assert(!obj); }
 struct virtio_gpu_device;
 struct virtio_gpu_vbuffer;
 typedef void (*virtio_gpu_resp_cb)(struct virtio_gpu_device *, struct virtio_gpu_vbuffer *);

@@ -40,7 +40,8 @@ static int virtio_gpu_resource_id_get(struct virtio_gpu_device *vgdev,
 
 	if (handle < 0)
 		return handle;
-	*resid = handle + 1;
+	/* IDA may return INT_MAX; add in the unsigned wire-ID domain. */
+	*resid = (uint32_t)handle + 1;
 	return 0;
 }
 
@@ -144,13 +145,16 @@ int virtio_gpu_object_create(struct virtio_gpu_device *vgdev,
 	}
 
 	if (params->virgl) {
-		virtio_gpu_cmd_resource_create_3d(vgdev, bo, params,
+		ret = virtio_gpu_cmd_resource_create_3d(vgdev, bo, params,
 						  objs, fence);
 	} else {
 		ret = virtio_gpu_cmd_create_resource(vgdev, bo, params,
 					       objs, fence);
-		if (ret)
-			goto err_put_id;
+	}
+	if (ret) {
+		/* A readiness wakeup can precede completion of hardware reset. */
+		virtio_gpu_stop(vgdev, ret);
+		goto err_put_id;
 	}
 
 	ret = virtio_gpu_object_attach(vgdev, bo, NULL);

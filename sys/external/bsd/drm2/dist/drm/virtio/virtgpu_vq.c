@@ -1185,7 +1185,7 @@ int virtio_gpu_cmd_context_destroy(struct virtio_gpu_device *vgdev,
 	return virtio_gpu_queue_sync(vgdev, vbuf, &cmd_p->hdr, NULL);
 }
 
-void virtio_gpu_cmd_context_attach_resource(struct virtio_gpu_device *vgdev,
+int virtio_gpu_cmd_context_attach_resource(struct virtio_gpu_device *vgdev,
 					    uint32_t ctx_id,
 					    struct virtio_gpu_object_array *objs)
 {
@@ -1198,8 +1198,7 @@ void virtio_gpu_cmd_context_attach_resource(struct virtio_gpu_device *vgdev,
 		if (objs) {
 			virtio_gpu_array_put_free(objs);
 		}
-		vgdev->submit_error = PTR_ERR(cmd_p);
-		return;
+		return PTR_ERR(cmd_p);
 	}
 	memset(cmd_p, 0, sizeof(*cmd_p));
 	vbuf->objs = objs;
@@ -1207,11 +1206,10 @@ void virtio_gpu_cmd_context_attach_resource(struct virtio_gpu_device *vgdev,
 	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_CTX_ATTACH_RESOURCE);
 	cmd_p->hdr.ctx_id = cpu_to_le32(ctx_id);
 	cmd_p->resource_id = cpu_to_le32(bo->hw_res_handle);
-	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
-
+	return virtio_gpu_queue_sync(vgdev, vbuf, &cmd_p->hdr, NULL);
 }
 
-void virtio_gpu_cmd_context_detach_resource(struct virtio_gpu_device *vgdev,
+int virtio_gpu_cmd_context_detach_resource(struct virtio_gpu_device *vgdev,
 					    uint32_t ctx_id,
 					    struct virtio_gpu_object_array *objs)
 {
@@ -1224,8 +1222,7 @@ void virtio_gpu_cmd_context_detach_resource(struct virtio_gpu_device *vgdev,
 		if (objs) {
 			virtio_gpu_array_put_free(objs);
 		}
-		vgdev->submit_error = PTR_ERR(cmd_p);
-		return;
+		return PTR_ERR(cmd_p);
 	}
 	memset(cmd_p, 0, sizeof(*cmd_p));
 	vbuf->objs = objs;
@@ -1233,10 +1230,10 @@ void virtio_gpu_cmd_context_detach_resource(struct virtio_gpu_device *vgdev,
 	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_CTX_DETACH_RESOURCE);
 	cmd_p->hdr.ctx_id = cpu_to_le32(ctx_id);
 	cmd_p->resource_id = cpu_to_le32(bo->hw_res_handle);
-	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
+	return virtio_gpu_queue_sync(vgdev, vbuf, &cmd_p->hdr, NULL);
 }
 
-void
+int
 virtio_gpu_cmd_resource_create_3d(struct virtio_gpu_device *vgdev,
 				  struct virtio_gpu_object *bo,
 				  struct virtio_gpu_object_params *params,
@@ -1245,6 +1242,7 @@ virtio_gpu_cmd_resource_create_3d(struct virtio_gpu_device *vgdev,
 {
 	struct virtio_gpu_resource_create_3d *cmd_p;
 	struct virtio_gpu_vbuffer *vbuf;
+	int ret;
 
 	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
 	if (IS_ERR(cmd_p)) {
@@ -1253,8 +1251,7 @@ virtio_gpu_cmd_resource_create_3d(struct virtio_gpu_device *vgdev,
 				virtio_gpu_array_unlock_resv(objs);
 			virtio_gpu_array_put_free(objs);
 		}
-		vgdev->submit_error = PTR_ERR(cmd_p);
-		return;
+		return PTR_ERR(cmd_p);
 	}
 	memset(cmd_p, 0, sizeof(*cmd_p));
 	vbuf->objs = objs;
@@ -1273,8 +1270,9 @@ virtio_gpu_cmd_resource_create_3d(struct virtio_gpu_device *vgdev,
 	cmd_p->nr_samples = cpu_to_le32(params->nr_samples);
 	cmd_p->flags = cpu_to_le32(params->flags);
 
-	virtio_gpu_queue_fenced_ctrl_buffer(vgdev, vbuf, &cmd_p->hdr, fence);
-	bo->created = true;
+	ret = virtio_gpu_queue_sync(vgdev, vbuf, &cmd_p->hdr, fence);
+	bo->created = ret == 0;
+	return ret;
 }
 
 void virtio_gpu_cmd_transfer_to_host_3d(struct virtio_gpu_device *vgdev,
@@ -1428,7 +1426,10 @@ int virtio_gpu_object_attach(struct virtio_gpu_device *vgdev,
 	obj->pages = sgt;
 	obj->mapped = map->dm_nsegs;
 	nents = map->dm_nsegs;
-	if (nents > (vgdev->vdev->max_request - MAX_INLINE_CMD_SIZE -
+	if (!nents || vgdev->vdev->max_request <
+	    MAX_INLINE_CMD_SIZE + MAX_INLINE_RESP_SIZE ||
+	    nents > UINT32_MAX / sizeof(*ents) ||
+	    nents > (vgdev->vdev->max_request - MAX_INLINE_CMD_SIZE -
 	    MAX_INLINE_RESP_SIZE) / sizeof(*ents))
 		return -EMSGSIZE;
 	ents = kcalloc(nents, sizeof(*ents), GFP_KERNEL);

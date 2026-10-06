@@ -382,6 +382,8 @@ int virtio_gpu_driver_open(struct drm_device *dev, struct drm_file *file)
 	}
 
 	vfpriv->ctx_id = id;
+	linux_mutex_init(&vfpriv->attachment_lock);
+	INIT_LIST_HEAD(&vfpriv->attachments);
 	file->driver_priv = vfpriv;
 	return 0;
 }
@@ -390,6 +392,7 @@ void virtio_gpu_driver_postclose(struct drm_device *dev, struct drm_file *file)
 {
 	struct virtio_gpu_device *vgdev = dev->dev_private;
 	struct virtio_gpu_fpriv *vfpriv;
+	struct virtio_gpu_attachment *entry, *next;
 
 	if (!vgdev->has_virgl_3d)
 		return;
@@ -398,7 +401,17 @@ void virtio_gpu_driver_postclose(struct drm_device *dev, struct drm_file *file)
 	if (!vfpriv)
 		return;
 
+	mutex_lock(&vfpriv->attachment_lock);
 	virtio_gpu_context_destroy(vgdev, vfpriv->ctx_id);
+	/* Core normally closed every handle before reaching postclose. */
+	WARN_ON(!list_empty(&vfpriv->attachments));
+	list_for_each_entry_safe(entry, next, &vfpriv->attachments, node) {
+		list_del(&entry->node);
+		drm_gem_object_put_unlocked(entry->obj);
+		kfree(entry);
+	}
+	mutex_unlock(&vfpriv->attachment_lock);
+	linux_mutex_destroy(&vfpriv->attachment_lock);
 	kfree(vfpriv);
 	file->driver_priv = NULL;
 }

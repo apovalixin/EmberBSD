@@ -150,8 +150,10 @@ model GPU execution and hardware reset. All six context groups, the five
 capset groups and nine existing VirtGPU groups also pass on NetBSD 11/aarch64.
 The changed KMS/VQ objects compile with native GCC 12.5 and normal `-Werror`
 flags. A complete matched kernel build and live context checks remain pending.
-GEM attach/detach ownership and resource creation need separate work. VIRGL
-remains disabled, and these source contracts do not establish 3D acceleration.
+GEM attachment and resource creation now have separate
+[source ownership contracts](resource-lifetime.md), including duplicate handles
+within one DRM file. VIRGL remains disabled; these checks do not establish 3D
+acceleration.
 
 ## Build and checks
 
