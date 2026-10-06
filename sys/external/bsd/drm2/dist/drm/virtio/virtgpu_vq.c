@@ -237,6 +237,37 @@ static void reclaim_vbufs(struct netbsd_virtqueue *vq, struct list_head *reclaim
 		DRM_DEBUG("Huh? zero vbufs reclaimed");
 }
 
+static int
+virtio_gpu_response_error(struct virtio_gpu_vbuffer *entry)
+{
+	struct virtio_gpu_ctrl_hdr *cmd = (void *)entry->buf;
+	struct virtio_gpu_ctrl_hdr *resp = (void *)entry->resp_buf;
+	u32 expected = VIRTIO_GPU_RESP_OK_NODATA;
+
+	switch (le32_to_cpu(cmd->type)) {
+	case VIRTIO_GPU_CMD_GET_DISPLAY_INFO:
+		expected = VIRTIO_GPU_RESP_OK_DISPLAY_INFO;
+		break;
+	case VIRTIO_GPU_CMD_GET_CAPSET_INFO:
+		expected = VIRTIO_GPU_RESP_OK_CAPSET_INFO;
+		break;
+	case VIRTIO_GPU_CMD_GET_CAPSET:
+		expected = VIRTIO_GPU_RESP_OK_CAPSET;
+		break;
+	case VIRTIO_GPU_CMD_GET_EDID:
+		expected = VIRTIO_GPU_RESP_OK_EDID;
+		break;
+	}
+	if (entry->resp_received != (unsigned int)entry->resp_size ||
+	    le32_to_cpu(resp->type) != expected)
+		return -EIO;
+	if (entry->fence &&
+	    (!(le32_to_cpu(resp->flags) & VIRTIO_GPU_FLAG_FENCE) ||
+	    resp->fence_id != cmd->fence_id))
+		return -EIO;
+	return 0;
+}
+
 void virtio_gpu_dequeue_ctrl_func(struct work_struct *work)
 {
 	struct virtio_gpu_device *vgdev =
@@ -260,31 +291,7 @@ void virtio_gpu_dequeue_ctrl_func(struct work_struct *work)
 		resp = (struct virtio_gpu_ctrl_hdr *)entry->resp_buf;
 
 		struct virtio_gpu_ctrl_hdr *cmd = (void *)entry->buf;
-		u32 expected = VIRTIO_GPU_RESP_OK_NODATA;
-		int error = 0;
-
-		switch (le32_to_cpu(cmd->type)) {
-		case VIRTIO_GPU_CMD_GET_DISPLAY_INFO:
-			expected = VIRTIO_GPU_RESP_OK_DISPLAY_INFO;
-			break;
-		case VIRTIO_GPU_CMD_GET_CAPSET_INFO:
-			expected = VIRTIO_GPU_RESP_OK_CAPSET_INFO;
-			break;
-		case VIRTIO_GPU_CMD_GET_CAPSET:
-			expected = VIRTIO_GPU_RESP_OK_CAPSET;
-			break;
-		case VIRTIO_GPU_CMD_GET_EDID:
-			expected = VIRTIO_GPU_RESP_OK_EDID;
-			break;
-		}
-		if (entry->resp_received < entry->resp_size ||
-		    entry->resp_received > entry->resp_size ||
-		    le32_to_cpu(resp->type) != expected)
-			error = -EIO;
-		if (entry->fence &&
-		    (!(le32_to_cpu(resp->flags) & VIRTIO_GPU_FLAG_FENCE) ||
-		    resp->fence_id != cmd->fence_id))
-			error = -EIO;
+		int error = virtio_gpu_response_error(entry);
 		if (error) {
 			vgdev->submit_error = error;
 			DRM_ERROR("invalid GPU response (%u bytes, type 0x%x)\n",
