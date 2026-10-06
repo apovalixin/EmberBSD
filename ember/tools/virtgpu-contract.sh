@@ -760,7 +760,9 @@ cat > "$work/attach.c" <<'C'
 #include <errno.h>
 #define IPL_VM 1
 #define VIRTIO_COMMON_FLAG_BITS ""
+#ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
+#endif
 struct netbsd_virtqueue { int unused; };
 typedef void vq_callback_t(struct netbsd_virtqueue *);
 struct virtio_softc { int finished; };
