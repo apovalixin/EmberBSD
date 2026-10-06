@@ -123,6 +123,36 @@ object was rebuilt after the discovery/reset fix. A full clean kernel build,
 boot and live host capset checks remain pending. These checks do not prove 3D
 support or permit linking the partially updated object directory.
 
+## Classic context lifetime
+
+File open publishes its private context only after a successful CTX_CREATE
+response with the requested GPU fence. Each command returns its own status;
+an unrelated sticky submission error cannot report success or failure for it.
+The ID allocator's exclusive upper bound keeps the wire ID and signed return
+value representable. Command allocation failure releases the unsubmitted ID.
+An error after entering the synchronous create path completes transport reset
+before releasing the ID, conservatively including wait/fence allocation errors.
+
+Postclose waits for fenced CTX_DESTROY. Failure completes reset before releasing
+the ID and private state. The native reset mutex also joins an already running
+reset; observing `vqs_ready=false` alone does not establish host retirement.
+Open and postclose run in DRM file threads without a VirtGPU submission or
+response lock held. The submission lock is released before response waiting. Completion
+and reset cleanup retain their separate workers; these calls do not wait from
+the ordered response worker or synchronously drain that worker.
+
+`sh ember/tools/virtgpu-context-contract.sh` extracts the actual context commands,
+open/postclose, synchronous waits, response validation, stop and native reset.
+Host checks pass with address/undefined-behavior sanitizers. Allocation and
+transport seams cover errors, malformed replies, concurrent ID reuse, delayed
+publication, timeout/late cookies and reset overlapping ID retirement. They
+model GPU execution and hardware reset. All six context groups, the five
+capset groups and nine existing VirtGPU groups also pass on NetBSD 11/aarch64.
+The changed KMS/VQ objects compile with native GCC 12.5 and normal `-Werror`
+flags. A complete matched kernel build and live context checks remain pending.
+GEM attach/detach ownership and resource creation need separate work. VIRGL
+remains disabled, and these source contracts do not establish 3D acceleration.
+
 ## Build and checks
 
 On a native NetBSD/aarch64 build host with its normal tool PATH:

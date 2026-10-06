@@ -154,7 +154,8 @@ on every board in the hardware catalog.
   GEM buffers and PRIME sharing make direct Wayland sessions possible.
   UTM tests cover visible KMS output, 32 cross-process buffer-lifetime cycles
   and labwc/Pixman displaying Kate without Xorg. The tree also includes DRM
-  device-identity, fence-validation, bounded capset-query, console-recovery and partial-page memfd
+  device-identity, fence-validation, bounded capset-query, context creation/retirement,
+  console-recovery and partial-page memfd
   fixes; their individual build/runtime boundaries are documented separately.
   See the [VirtGPU implementation](sys/external/bsd/drm2/virtio/README.md),
   [DRM identity checks](ember/boot/drm-native-identity.md) and
@@ -168,6 +169,9 @@ on every board in the hardware catalog.
 - **Physical GPU and NPU porting targets:** CIX P1 is the first selected
   direction: Mali-G720 through Panthor/[Mesa PanVK](https://docs.mesa3d.org/drivers/panfrost.html),
   and Zhouyi v3/X2 through the [Compass driver/runtime sources](https://github.com/Arm-China/Compass_NPU_Driver).
+  The [Compass Ports probe](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/compass-umd)
+  fixes descriptor ownership during initialization and cleanup; 13 isolated
+  production-method contracts pass on NetBSD/AArch64 with GCC 16.2.
   A733 PowerVR/Vivante integration is a separate investigation. These are
   porting targets, not available EmberBSD acceleration. Board bring-up,
   driver/DMA integration, compatible runtime and real model execution must
@@ -192,12 +196,17 @@ on every board in the hardware catalog.
   aarch64 missing a reschedule, and the SD host controller driver.
   Source changes preserve their provenance; `ember/patches` records the
   original board adaptations already applied to this tree.
+- **AArch64 numerical correctness:** an [initial FP state correction](ember/boot/aarch64-fp-state.md)
+  addresses lost subnormal values and NaN payloads on CPUs without AArch32.
+  Production contracts and native object compilation pass; verification
+  after booting the corrected kernel remains pending.
 - **Reproducible builds and development:** pinned kernel/UEFI inputs and
   checked firmware assets, pkgsrc overlays, versioned source probes and
   standalone examples. The [Ports development toolchain](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/development-toolchain)
   provides a GCC 16.2 candidate built and installed on the AArch64 VM, with
-  native C11/C++20 thread, TLS and shared-library checks passing. Full upstream
-  tests and a coherent Qt/LLVM runtime rebuild remain required before adopting
+  native C11/C++20 thread, TLS and shared-library checks passing. The full
+  upstream suite has exposed platform compatibility failures; their repair
+  and a coherent Qt/LLVM runtime rebuild remain required before adopting
   it as the default compiler in new images. [Developer skills](#connect-developer-skills) help
   AI coding assistants find the owning project, test changes and prepare
   contributions. A general validated installation image is not yet released.

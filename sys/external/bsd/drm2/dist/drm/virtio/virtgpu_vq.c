@@ -1140,17 +1140,16 @@ int virtio_gpu_cmd_get_edids(struct virtio_gpu_device *vgdev)
 	return 0;
 }
 
-void virtio_gpu_cmd_context_create(struct virtio_gpu_device *vgdev, uint32_t id,
+int virtio_gpu_cmd_context_create(struct virtio_gpu_device *vgdev, uint32_t id,
 				   uint32_t nlen, const char *name)
 {
 	struct virtio_gpu_ctx_create *cmd_p;
 	struct virtio_gpu_vbuffer *vbuf;
+	int ret;
 
 	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
-	if (IS_ERR(cmd_p)) {
-		vgdev->submit_error = PTR_ERR(cmd_p);
-		return;
-	}
+	if (IS_ERR(cmd_p))
+		return PTR_ERR(cmd_p);
 	memset(cmd_p, 0, sizeof(*cmd_p));
 
 	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_CTX_CREATE);
@@ -1158,25 +1157,32 @@ void virtio_gpu_cmd_context_create(struct virtio_gpu_device *vgdev, uint32_t id,
 	cmd_p->nlen = cpu_to_le32(nlen);
 	strncpy(cmd_p->debug_name, name, sizeof(cmd_p->debug_name) - 1);
 	cmd_p->debug_name[sizeof(cmd_p->debug_name) - 1] = 0;
-	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
+	ret = virtio_gpu_queue_sync(vgdev, vbuf, &cmd_p->hdr, NULL);
+	if (ret) {
+		/*
+		 * A failed wait can outlive submission.  Even vqs_ready == false
+		 * may precede hardware reset; synchronously join that boundary
+		 * before the caller releases the context ID.
+		 */
+		virtio_gpu_stop(vgdev, ret);
+	}
+	return ret;
 }
 
-void virtio_gpu_cmd_context_destroy(struct virtio_gpu_device *vgdev,
+int virtio_gpu_cmd_context_destroy(struct virtio_gpu_device *vgdev,
 				    uint32_t id)
 {
 	struct virtio_gpu_ctx_destroy *cmd_p;
 	struct virtio_gpu_vbuffer *vbuf;
 
 	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
-	if (IS_ERR(cmd_p)) {
-		vgdev->submit_error = PTR_ERR(cmd_p);
-		return;
-	}
+	if (IS_ERR(cmd_p))
+		return PTR_ERR(cmd_p);
 	memset(cmd_p, 0, sizeof(*cmd_p));
 
 	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_CTX_DESTROY);
 	cmd_p->hdr.ctx_id = cpu_to_le32(id);
-	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
+	return virtio_gpu_queue_sync(vgdev, vbuf, &cmd_p->hdr, NULL);
 }
 
 void virtio_gpu_cmd_context_attach_resource(struct virtio_gpu_device *vgdev,
