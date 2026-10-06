@@ -54,6 +54,10 @@ builds on the build environment before deployment. Building and booting
 all components of a complete release requires separate validation; the
 current installation recipe uses the official NetBSD 11.0 userland.
 
+For an AArch64 desktop VM, see the [UTM framebuffer configuration](ember/boot/utm-framebuffer.md).
+It documents the PCI ownership fix, the `viogpu` boot override and the
+visible-display regression check.
+
 Build Raspberry Pi 5 UEFI firmware using Docker on macOS or Linux:
 
 ```sh
