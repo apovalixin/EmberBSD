@@ -1,22 +1,25 @@
 # EmberBSD
 
-Это полный форк NetBSD/src с адаптациями для одноплатных компьютеров.
-Общение по-русски. Всё, что остаётся в репозитории, пишется по-английски:
-исходники, комментарии, документация, описания диффов и сообщения коммитов.
-Исключение одно — этот файл. Коммиты — Conventional Commits.
+This is a full fork of NetBSD/src with adaptations for single-board
+computers. Talk to people in Russian. Everything that stays in the
+repository is written in English: sources, comments, documentation,
+diff descriptions, commit messages and this file. Commits follow
+Conventional Commits.
 
-Сначала прочитать README.ember.md. Поддержка плат и её происхождение находятся
-в ember/, изменения ядра — непосредственно в sys/. C следует NetBSD KNF.
-Сохранять лицензии и идентификаторы upstream. Свои исходные диффы начинаются
-ровно строкой Origin:, перенесённые изменения называют upstream-ревизию.
+Read README.ember.md first. Board support and its provenance live in
+ember/, kernel changes go directly into sys/. C follows NetBSD KNF.
+Keep upstream licences and identifiers. Our own source diffs start with
+exactly one Origin: line; imported changes name the upstream revision.
 
-Сборка экспортирует чистый коммит; не исправлять исходники только в гостевой
-сборочной машине. После правок проверять нативную сборку и соответствующие
-контракты ember/tools. Проверки аппаратуры на QEMU не объявлять проверками
-физической платы. Перед отправкой в upstream читать действующие правила NetBSD.
+A build exports a clean commit; do not fix sources only inside the build
+guest. After a change, check the native build and the relevant contracts
+in ember/tools. Do not present a hardware check under QEMU as a check of
+the physical board. Read the current NetBSD rules before sending anything
+upstream.
 
-Прикладные программы развёртываются отдельно от исходников ОС.
-Их роли, токены, модели и конфигурации сюда не переносятся.
-Публичная документация должна быть понятна без доступа к внутренним
-репозиториям и не должна содержать их названия или адреса.
-Сети, SSH-ключи, Bluetooth bonds и персональные образы никогда не входят в Git.
+Applications are deployed separately from the OS sources. Their roles,
+tokens, models and configurations are not brought here. Standalone
+examples of using the OS live in the public EmberBSD-Examples repository.
+Public documentation must be understandable without access to internal
+repositories and must not contain their names or addresses.
+Networks, SSH keys, Bluetooth bonds and personal images never enter Git.
