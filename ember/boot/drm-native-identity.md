@@ -81,7 +81,11 @@ Mocks represent sysctl/autoconf/file boundaries, not replacements for the
 production algorithms. Host checks do not establish native kernel compilation
 or hardware concurrency behavior.
 
-Native compilation and runtime acceptance are still pending. Live acceptance
+Native `-Werror` compilation of the four changed translation units and the
+new contracts passes on NetBSD 11/aarch64. This does not link a kernel: the
+changed `drm_device` layout requires rebuilding every dependent object for
+both complete kernel configurations. Runtime acceptance is still pending.
+Live acceptance
 must use the matched libdrm for `drmGetDevices2`, `drmGetDevice2(render_fd)`,
 render-name and node-type lookup, with no primary master and no global PCI
 access. Retest negative KMS permission checks. These changes do not negotiate
