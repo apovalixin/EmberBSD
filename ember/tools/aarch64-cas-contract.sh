@@ -14,7 +14,7 @@ cc=${CC:-cc}
 objcopy=${OBJCOPY:-objcopy}
 objdump=${OBJDUMP:-objdump}
 at="$src/common/lib/libc/arch/aarch64/atomic"
-test "$(uname -m)" = aarch64
+test "$(uname -p)" = aarch64
 : > "$out/cas-variants.h"
 for sz in 1 2 4 8; do
     for ar in _relax _acq _rel _acq_rel _sync; do
