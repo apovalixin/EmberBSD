@@ -103,19 +103,31 @@ static void virtio_gpu_destroy_sync(struct virtio_gpu_device *vgdev)
 static int virtio_gpu_context_create(struct virtio_gpu_device *vgdev,
 				      uint32_t nlen, const char *name)
 {
-	int handle = ida_simple_get(&vgdev->ctx_id_ida, 0, 0, GFP_KERNEL);
+	/* The exclusive upper bound keeps handle + 1 a positive int. */
+	int handle = ida_simple_get(&vgdev->ctx_id_ida, 0, INT_MAX, GFP_KERNEL);
+	int ret;
 
 	if (handle < 0)
 		return handle;
-	handle += 1;
-	virtio_gpu_cmd_context_create(vgdev, handle, nlen, name);
-	return handle;
+	ret = virtio_gpu_cmd_context_create(vgdev, handle + 1, nlen, name);
+	if (ret) {
+		/* The command helper resets any uncertain host ownership. */
+		ida_free(&vgdev->ctx_id_ida, handle);
+		return ret;
+	}
+	return handle + 1;
 }
 
 static void virtio_gpu_context_destroy(struct virtio_gpu_device *vgdev,
 				      uint32_t ctx_id)
 {
-	virtio_gpu_cmd_context_destroy(vgdev, ctx_id);
+	int ret;
+
+	ret = virtio_gpu_cmd_context_destroy(vgdev, ctx_id);
+	if (ret) {
+		/* Close cannot report failure; retire the host context by reset. */
+		virtio_gpu_stop(vgdev, ret);
+	}
 	ida_free(&vgdev->ctx_id_ida, ctx_id - 1);
 }
 
@@ -383,6 +395,8 @@ void virtio_gpu_driver_postclose(struct drm_device *dev, struct drm_file *file)
 		return;
 
 	vfpriv = file->driver_priv;
+	if (!vfpriv)
+		return;
 
 	virtio_gpu_context_destroy(vgdev, vfpriv->ctx_id);
 	kfree(vfpriv);
