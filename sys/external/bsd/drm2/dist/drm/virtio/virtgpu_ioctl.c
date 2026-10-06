@@ -1,3 +1,4 @@
+/* Origin: EmberBSD native VirtGPU ioctl adaptation of Linux v5.6, 2026-10-06. */
 /*	$NetBSD: virtgpu_ioctl.c,v 1.3 2021/12/18 23:45:45 riastradh Exp $	*/
 
 /*
@@ -31,6 +32,7 @@
 __KERNEL_RCSID(0, "$NetBSD: virtgpu_ioctl.c,v 1.3 2021/12/18 23:45:45 riastradh Exp $");
 
 #include <linux/file.h>
+#include <linux/uaccess.h>
 #include <linux/sync_file.h>
 
 #include <drm/drm_file.h>
@@ -67,6 +69,7 @@ static int virtio_gpu_execbuffer_ioctl(struct drm_device *dev, void *data,
 	void __user *user_bo_handles = NULL;
 	struct virtio_gpu_object_array *buflist = NULL;
 	struct sync_file *sync_file;
+	struct file *fp = NULL;
 	int in_fence_fd = exbuf->fence_fd;
 	int out_fence_fd = -1;
 	void *buf;
@@ -74,6 +77,9 @@ static int virtio_gpu_execbuffer_ioctl(struct drm_device *dev, void *data,
 	if (vgdev->has_virgl_3d == false)
 		return -ENOSYS;
 
+	if (exbuf->size == 0 || exbuf->size > vgdev->vdev->max_request - 256 ||
+	    exbuf->num_bo_handles > 65536)
+		return -EINVAL;
 	if ((exbuf->flags & ~VIRTGPU_EXECBUF_FLAGS))
 		return -EINVAL;
 
@@ -92,8 +98,7 @@ static int virtio_gpu_execbuffer_ioctl(struct drm_device *dev, void *data,
 		 * array contains any fence from a foreign context.
 		 */
 		ret = 0;
-		if (!dma_fence_match_context(in_fence, vgdev->fence_drv.context))
-			ret = dma_fence_wait(in_fence, true);
+		ret = dma_fence_wait(in_fence, true);
 
 		dma_fence_put(in_fence);
 		if (ret)
@@ -101,9 +106,9 @@ static int virtio_gpu_execbuffer_ioctl(struct drm_device *dev, void *data,
 	}
 
 	if (exbuf->flags & VIRTGPU_EXECBUF_FENCE_FD_OUT) {
-		out_fence_fd = get_unused_fd_flags(O_CLOEXEC);
-		if (out_fence_fd < 0)
-			return out_fence_fd;
+		ret = -fd_allocfile(&fp, &out_fence_fd);
+		if (ret)
+			return ret;
 	}
 
 	if (exbuf->num_bo_handles) {
@@ -137,10 +142,14 @@ static int virtio_gpu_execbuffer_ioctl(struct drm_device *dev, void *data,
 			goto out_unused_fd;
 	}
 
-	buf = vmemdup_user(u64_to_user_ptr(exbuf->command), exbuf->size);
-	if (IS_ERR(buf)) {
-		ret = PTR_ERR(buf);
+	buf = kvmalloc(exbuf->size, GFP_KERNEL);
+	if (!buf) {
+		ret = -ENOMEM;
 		goto out_unresv;
+	}
+	if (copy_from_user(buf, u64_to_user_ptr(exbuf->command), exbuf->size)) {
+		ret = -EFAULT;
+		goto out_memdup;
 	}
 
 	out_fence = virtio_gpu_fence_alloc(vgdev);
@@ -150,7 +159,7 @@ static int virtio_gpu_execbuffer_ioctl(struct drm_device *dev, void *data,
 	}
 
 	if (out_fence_fd >= 0) {
-		sync_file = sync_file_create(&out_fence->f);
+		sync_file = sync_file_create(&out_fence->f, fp);
 		if (!sync_file) {
 			dma_fence_put(&out_fence->f);
 			ret = -ENOMEM;
@@ -159,10 +168,12 @@ static int virtio_gpu_execbuffer_ioctl(struct drm_device *dev, void *data,
 
 		exbuf->fence_fd = out_fence_fd;
 		fd_install(out_fence_fd, sync_file->file);
+		fd_set_exclose(curlwp, out_fence_fd, true);
 	}
 
 	virtio_gpu_cmd_submit(vgdev, buf, exbuf->size,
 			      vfpriv->ctx_id, buflist, out_fence);
+	dma_fence_put(&out_fence->f);
 	return 0;
 
 out_memdup:
@@ -176,7 +187,7 @@ out_unused_fd:
 		virtio_gpu_array_put_free(buflist);
 
 	if (out_fence_fd >= 0)
-		put_unused_fd(out_fence_fd);
+		fd_abort(curproc, fp, out_fence_fd);
 
 	return ret;
 }
@@ -258,7 +269,7 @@ static int virtio_gpu_resource_create_ioctl(struct drm_device *dev, void *data,
 
 	ret = drm_gem_handle_create(file_priv, obj, &handle);
 	if (ret) {
-		drm_gem_object_release(obj);
+		drm_gem_object_put_unlocked(obj);
 		return ret;
 	}
 	drm_gem_object_put_unlocked(obj);

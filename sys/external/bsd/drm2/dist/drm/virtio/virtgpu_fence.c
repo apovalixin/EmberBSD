@@ -149,3 +149,15 @@ void virtio_gpu_fail_fences(struct virtio_gpu_device *vgdev, int error)
 	}
 	spin_unlock(&drv->lock);
 }
+
+void virtio_gpu_fence_fail(struct virtio_gpu_fence *fence, int error)
+{
+	spin_lock(&fence->drv->lock);
+	if (!list_empty(&fence->node)) {
+		dma_fence_set_error(&fence->f, error);
+		dma_fence_signal_locked(&fence->f);
+		list_del_init(&fence->node);
+		dma_fence_put(&fence->f);
+	}
+	spin_unlock(&fence->drv->lock);
+}

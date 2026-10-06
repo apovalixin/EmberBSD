@@ -66,9 +66,11 @@ virtio_gpu_wait_done(struct virtio_gpu_vbuffer *vbuf, int error)
 	struct virtio_gpu_wait *wait = vbuf->wait;
 
 	if (wait) {
+		mutex_lock(&wait->queue.lock);
 		wait->error = error;
 		wait->done = true;
-		wake_up(&wait->queue);
+		DRM_WAKEUP_ALL(&wait->queue.cv, &wait->queue.lock);
+		mutex_unlock(&wait->queue.lock);
 		virtio_gpu_wait_put(wait);
 		vbuf->wait = NULL;
 	}
@@ -214,6 +216,8 @@ virtio_gpu_cancel_vbuf(void *cookie)
 	struct virtio_gpu_device *vgdev = vbuf->vgdev;
 
 	virtio_gpu_wait_done(vbuf, -ENODEV);
+	if (vbuf->fence)
+		dma_fence_put(&vbuf->fence->f);
 	if (vbuf->objs)
 		virtio_gpu_array_put_free_delayed(vgdev, vbuf->objs);
 	free_vbuf(vgdev, vbuf);
@@ -226,6 +230,7 @@ static void reclaim_vbufs(struct netbsd_virtqueue *vq, struct list_head *reclaim
 	int freed = 0;
 
 	while ((vbuf = virtqueue_get_buf(vq, &len))) {
+		vbuf->resp_received = len;
 		list_add_tail(&vbuf->list, reclaim_list);
 		freed++;
 	}
@@ -255,38 +260,66 @@ void virtio_gpu_dequeue_ctrl_func(struct work_struct *work)
 	list_for_each_entry(entry, &reclaim_list, list) {
 		resp = (struct virtio_gpu_ctrl_hdr *)entry->resp_buf;
 
-		if (resp->type != cpu_to_le32(VIRTIO_GPU_RESP_OK_NODATA)) {
-			if (resp->type >= cpu_to_le32(VIRTIO_GPU_RESP_ERR_UNSPEC)) {
-				struct virtio_gpu_ctrl_hdr *cmd;
-				cmd = (struct virtio_gpu_ctrl_hdr *)entry->buf;
-				DRM_ERROR("response 0x%x (command 0x%x)\n",
-					  le32_to_cpu(resp->type),
-					  le32_to_cpu(cmd->type));
-			} else
-				DRM_DEBUG("response 0x%x\n", le32_to_cpu(resp->type));
-		}
-		if (resp->flags & cpu_to_le32(VIRTIO_GPU_FLAG_FENCE)) {
-			u64 f = le64_to_cpu(resp->fence_id);
+		struct virtio_gpu_ctrl_hdr *cmd = (void *)entry->buf;
+		u32 expected = VIRTIO_GPU_RESP_OK_NODATA;
+		int error = 0;
 
-			if (fence_id > f) {
-				DRM_ERROR("%s: Oops: fence %llx -> %llx\n",
-					  __func__, (unsigned long long)fence_id, (unsigned long long)f);
-			} else {
-				fence_id = f;
-			}
+		switch (le32_to_cpu(cmd->type)) {
+		case VIRTIO_GPU_CMD_GET_DISPLAY_INFO:
+			expected = VIRTIO_GPU_RESP_OK_DISPLAY_INFO;
+			break;
+		case VIRTIO_GPU_CMD_GET_CAPSET_INFO:
+			expected = VIRTIO_GPU_RESP_OK_CAPSET_INFO;
+			break;
+		case VIRTIO_GPU_CMD_GET_CAPSET:
+			expected = VIRTIO_GPU_RESP_OK_CAPSET;
+			break;
+		case VIRTIO_GPU_CMD_GET_EDID:
+			expected = VIRTIO_GPU_RESP_OK_EDID;
+			break;
 		}
-		if (le32_to_cpu(resp->type) >= VIRTIO_GPU_RESP_ERR_UNSPEC) {
-			vgdev->submit_error = -EIO;
+		if (entry->resp_received < entry->resp_size ||
+		    entry->resp_received > entry->resp_size ||
+		    le32_to_cpu(resp->type) != expected)
+			error = -EIO;
+		if (entry->fence &&
+		    (!(le32_to_cpu(resp->flags) & VIRTIO_GPU_FLAG_FENCE) ||
+		    resp->fence_id != cmd->fence_id))
+			error = -EIO;
+		if (error) {
+			vgdev->submit_error = error;
+			DRM_ERROR("invalid GPU response (%u bytes, type 0x%x)\n",
+			    entry->resp_received, le32_to_cpu(resp->type));
 			if (entry->fence)
-				dma_fence_set_error(&entry->fence->f, -EIO);
-			if (entry->release)
+				virtio_gpu_fence_fail(entry->fence, error);
+			if (entry->release) {
+				vgdev->vqs_ready = false;
 				vgdev->vdev->config->reset(vgdev->vdev);
-			virtio_gpu_wait_done(entry, -EIO);
+				virtio_gpu_fail_fences(vgdev, error);
+				wake_up_all(&vgdev->cursorq.ack_queue);
+			}
 		} else {
+			/* Complete DMA visibility before exposing the GPU fence. */
+			if (entry->objs &&
+			    (le32_to_cpu(cmd->type) == VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D ||
+			    le32_to_cpu(cmd->type) == VIRTIO_GPU_CMD_TRANSFER_TO_HOST_3D ||
+			    le32_to_cpu(cmd->type) == VIRTIO_GPU_CMD_TRANSFER_FROM_HOST_3D)) {
+				unsigned int i;
+				for (i = 0; i < entry->objs->nents; i++) {
+					struct virtio_gpu_object *bo =
+					    gem_to_virtio_gpu_obj(entry->objs->objs[i]);
+					bus_dmamap_sync(vgdev->vdev->dmat,
+					    bo->pages->sgl->sg_dmamap, 0,
+					    bo->base.base.size,
+					    BUS_DMASYNC_POSTWRITE | BUS_DMASYNC_POSTREAD);
+				}
+			}
+			if (le32_to_cpu(resp->flags) & VIRTIO_GPU_FLAG_FENCE)
+				fence_id = max(fence_id, le64_to_cpu(resp->fence_id));
 			if (entry->resp_cb)
 				entry->resp_cb(vgdev, entry);
-			virtio_gpu_wait_done(entry, 0);
 		}
+		virtio_gpu_wait_done(entry, error);
 
 	}
 	wake_up(&vgdev->ctrlq.ack_queue);
@@ -374,16 +407,8 @@ virtio_gpu_queue_fenced_ctrl_buffer(struct virtio_gpu_device *vgdev,
 	if (ret) {
 		vgdev->submit_error = ret;
 		DRM_ERROR("control submission failed: %d\n", ret);
-		if (fence) {
-			/* Fail only this fence; do not signal earlier work. */
-			spin_lock(&vgdev->fence_drv.lock);
-			dma_fence_set_error(&fence->f, ret);
-			dma_fence_signal_locked(&fence->f);
-			list_del_init(&fence->node);
-			dma_fence_put(&fence->f);
-			spin_unlock(&vgdev->fence_drv.lock);
-			dma_fence_put(&fence->f);
-		}
+		if (fence)
+			virtio_gpu_fence_fail(fence, ret);
 		if (vbuf->release)
 			vgdev->vdev->config->reset(vgdev->vdev);
 		virtio_gpu_cancel_vbuf(vbuf);

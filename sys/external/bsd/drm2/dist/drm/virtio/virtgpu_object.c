@@ -110,7 +110,8 @@ int virtio_gpu_object_create(struct virtio_gpu_device *vgdev,
 
 	*bo_ptr = NULL;
 
-	if (!params->size || params->size > SIZE_MAX - PAGE_MASK)
+	if (!params->size || params->size > 256 * 1024 * 1024 ||
+	    params->size > SIZE_MAX - PAGE_MASK)
 		return -EINVAL;
 	params->size = roundup(params->size, PAGE_SIZE);
 	shmem_obj = drm_gem_shmem_create(vgdev->ddev, params->size);
@@ -158,7 +159,8 @@ int virtio_gpu_object_create(struct virtio_gpu_device *vgdev,
 err_put_objs:
 	virtio_gpu_array_put_free(objs);
 err_put_id:
-	virtio_gpu_resource_id_put(vgdev, bo->hw_res_handle);
+	drm_gem_object_put_unlocked(&shmem_obj->base);
+	return ret;
 err_free_gem:
 	drm_gem_shmem_free_object(&shmem_obj->base);
 	return ret;

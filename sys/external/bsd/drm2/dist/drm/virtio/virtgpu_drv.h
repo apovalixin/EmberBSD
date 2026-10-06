@@ -119,6 +119,7 @@ struct virtio_gpu_vbuffer {
 
 	char *resp_buf;
 	int resp_size;
+	unsigned int resp_received;
 	virtio_gpu_resp_cb resp_cb;
 
 	struct virtio_gpu_object_array *objs;
@@ -231,6 +232,7 @@ void virtio_gpu_cancel_vbuf(void *);
 void virtio_gpu_release_object(struct virtio_gpu_object *);
 void virtio_gpu_queue_unref(struct virtio_gpu_device *, struct virtio_gpu_object *);
 void virtio_gpu_fail_fences(struct virtio_gpu_device *, int);
+void virtio_gpu_fence_fail(struct virtio_gpu_fence *, int);
 
 /* virtio_kms.c */
 int virtio_gpu_init(struct drm_device *dev, struct virtio_device *vdev);
