@@ -268,6 +268,30 @@ virtio_gpu_response_error(struct virtio_gpu_vbuffer *entry)
 	return 0;
 }
 
+static void
+virtio_gpu_complete_transfer(struct virtio_gpu_device *vgdev,
+    struct virtio_gpu_vbuffer *entry)
+{
+	struct virtio_gpu_ctrl_hdr *cmd = (void *)entry->buf;
+	u32 type = le32_to_cpu(cmd->type);
+	unsigned int i;
+	int ops;
+
+	if (!entry->objs ||
+	    (type != VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D &&
+	    type != VIRTIO_GPU_CMD_TRANSFER_TO_HOST_3D &&
+	    type != VIRTIO_GPU_CMD_TRANSFER_FROM_HOST_3D))
+		return;
+	ops = type == VIRTIO_GPU_CMD_TRANSFER_FROM_HOST_3D ?
+	    BUS_DMASYNC_POSTREAD : BUS_DMASYNC_POSTWRITE;
+	for (i = 0; i < entry->objs->nents; i++) {
+		struct virtio_gpu_object *bo =
+		    gem_to_virtio_gpu_obj(entry->objs->objs[i]);
+		bus_dmamap_sync(vgdev->vdev->dmat, bo->pages->sgl->sg_dmamap,
+		    0, bo->base.base.size, ops);
+	}
+}
+
 void virtio_gpu_dequeue_ctrl_func(struct work_struct *work)
 {
 	struct virtio_gpu_device *vgdev =
@@ -290,7 +314,6 @@ void virtio_gpu_dequeue_ctrl_func(struct work_struct *work)
 	list_for_each_entry(entry, &reclaim_list, list) {
 		resp = (struct virtio_gpu_ctrl_hdr *)entry->resp_buf;
 
-		struct virtio_gpu_ctrl_hdr *cmd = (void *)entry->buf;
 		int error = virtio_gpu_response_error(entry);
 		if (error) {
 			vgdev->submit_error = error;
@@ -301,22 +324,7 @@ void virtio_gpu_dequeue_ctrl_func(struct work_struct *work)
 			virtio_gpu_stop(vgdev, error);
 		} else {
 			/* Complete DMA visibility before exposing the GPU fence. */
-			if (entry->objs &&
-			    (le32_to_cpu(cmd->type) == VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D ||
-			    le32_to_cpu(cmd->type) == VIRTIO_GPU_CMD_TRANSFER_TO_HOST_3D ||
-			    le32_to_cpu(cmd->type) == VIRTIO_GPU_CMD_TRANSFER_FROM_HOST_3D)) {
-				unsigned int i;
-				for (i = 0; i < entry->objs->nents; i++) {
-					struct virtio_gpu_object *bo =
-					    gem_to_virtio_gpu_obj(entry->objs->objs[i]);
-					bus_dmamap_sync(vgdev->vdev->dmat,
-					    bo->pages->sgl->sg_dmamap, 0,
-					    bo->base.base.size,
-					    le32_to_cpu(cmd->type) ==
-					    VIRTIO_GPU_CMD_TRANSFER_FROM_HOST_3D ?
-					    BUS_DMASYNC_POSTREAD : BUS_DMASYNC_POSTWRITE);
-				}
-			}
+			virtio_gpu_complete_transfer(vgdev, entry);
 			if (le32_to_cpu(resp->flags) & VIRTIO_GPU_FLAG_FENCE)
 				fence_id = max(fence_id, le64_to_cpu(resp->fence_id));
 			if (entry->resp_cb)

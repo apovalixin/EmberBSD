@@ -647,3 +647,59 @@ C
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror \
     -I"$src/sys/external/bsd/drm2/virtio" "$work/cursor.c" -o "$work/cursor"
 "$work/cursor"
+cat > "$work/dma.c" <<'C'
+#include <assert.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdio.h>
+#define le32_to_cpu(x) (x)
+#define u32 uint32_t
+#define VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D 0x105
+#define VIRTIO_GPU_CMD_TRANSFER_TO_HOST_3D 0x206
+#define VIRTIO_GPU_CMD_TRANSFER_FROM_HOST_3D 0x207
+#define BUS_DMASYNC_POSTWRITE 1
+#define BUS_DMASYNC_POSTREAD 2
+#define gem_to_virtio_gpu_obj(p) ((struct virtio_gpu_object *)(p))
+struct virtio_gpu_ctrl_hdr { uint32_t type; };
+struct drm_gem_object { size_t size; };
+struct virtio_gpu_object {
+    struct { struct drm_gem_object base; } base;
+    struct { struct { void *sg_dmamap; } *sgl; } *pages;
+};
+struct virtio_gpu_object_array { unsigned int nents; struct drm_gem_object *objs[1]; };
+struct virtio_gpu_vbuffer { struct virtio_gpu_ctrl_hdr *buf; struct virtio_gpu_object_array *objs; };
+struct virtio_gpu_device { struct { void *dmat; } *vdev; };
+static unsigned char cpu[4], bounce[4];
+static int syncs, direction;
+static void bus_dmamap_sync(void *d, void *m, int offset, size_t size, int ops) {
+    (void)d; (void)m; assert(offset == 0 && size == sizeof(cpu));
+    syncs++; direction = ops;
+    /* Model the native bounce POSTREAD copyback, including stale bytes. */
+    if (ops & BUS_DMASYNC_POSTREAD)
+        for (unsigned int i = 0; i < sizeof(cpu); i++) cpu[i] = bounce[i];
+}
+C
+extract virtio_gpu_complete_transfer "$vq" void >> "$work/dma.c"
+cat >> "$work/dma.c" <<'C'
+int main(void) {
+    struct virtio_gpu_device v = { 0 };
+    struct virtio_gpu_object bo = { .base.base.size = sizeof(cpu) };
+    struct virtio_gpu_object_array a = { .nents = 1, .objs = { &bo.base.base } };
+    struct virtio_gpu_ctrl_hdr cmd = { .type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D };
+    struct virtio_gpu_vbuffer b = { .buf = &cmd, .objs = &a };
+    struct { void *dmat; } native = { 0 };
+    struct { void *sg_dmamap; } sg = { 0 };
+    struct { void *sgl; } pages = { &sg };
+    v.vdev = (void *)&native; bo.pages = (void *)&pages;
+    for (unsigned int i = 0; i < sizeof(cpu); i++) { cpu[i] = 7; bounce[i] = 1; }
+    virtio_gpu_complete_transfer(&v, &b);
+    assert(syncs == 1 && direction == BUS_DMASYNC_POSTWRITE);
+    for (unsigned int i = 0; i < sizeof(cpu); i++) assert(cpu[i] == 7);
+    cmd.type = 0x104; virtio_gpu_complete_transfer(&v, &b); assert(syncs == 1);
+    puts("VirtGPU production TO_HOST bounce DMA completion preserves CPU writes");
+    return 0;
+}
+C
+${CC:-cc} -std=c11 -Wall -Wextra -Werror "$work/dma.c" -o "$work/dma"
+"$work/dma"
