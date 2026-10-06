@@ -71,11 +71,14 @@ initialization and passes with the source correction, including host
 ASan/UBSan. Userland runtime regression also passes on an AArch64 host;
 that checks the probe, not an EmberBSD kernel.
 
-The still-loaded recovery kernel has the known bad defaults. Its fresh-exec
-and exec-reset checks are expected to fail and must remain visible. A native
-object build confirms compilation only. Corrected-kernel runtime acceptance
-requires a later matched kernel build and boot; it is pending. The existing
-GCC suite's results are not changed or replaced by these probes.
+The six production groups also pass natively on NetBSD 11/aarch64 with GCC
+16.2. A fresh `fpu.o` builds with base GCC 12.5 and normal `-Werror` flags.
+The still-loaded recovery kernel returns real failures for fresh-exec defaults
+and exec reset, while fork, signal return and two-thread state preservation
+pass. The runtime runner retains exit 1; a separate build/check receipt is
+not runtime acceptance of the correction. That requires a matched kernel
+build and boot and remains pending. The existing GCC suite's results are
+not changed or replaced by these probes.
 
 The shared COMPAT_NETBSD32 save area maps FPSCR controls/status to FPCR/FPSR;
 zero initial state is compatible with this mapping. AArch32 execution on a

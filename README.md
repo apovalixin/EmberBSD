@@ -187,6 +187,10 @@ on every board in the hardware catalog.
   aarch64 missing a reschedule, and the SD host controller driver.
   Source changes preserve their provenance; `ember/patches` records the
   original board adaptations already applied to this tree.
+- **AArch64 numerical correctness:** an [initial FP state correction](ember/boot/aarch64-fp-state.md)
+  addresses lost subnormal values and NaN payloads on CPUs without AArch32.
+  Production contracts and native object compilation pass; verification
+  after booting the corrected kernel remains pending.
 - **Reproducible builds and development:** pinned kernel/UEFI inputs and
   checked firmware assets, pkgsrc overlays, versioned source probes and
   standalone examples. The [Ports development toolchain](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/development-toolchain)
