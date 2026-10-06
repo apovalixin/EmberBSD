@@ -23,7 +23,13 @@
 #define MAX_INLINE_RESP_SIZE 24
 #define BUG_ON(c) assert(!(c))
 #define KASSERT(c) assert(c)
-#define WARN_ON(c) ((c) ? (assert(!(c)), 1) : 0)
+static int
+fixture_warn_on(bool condition)
+{
+	assert(!condition);
+	return condition;
+}
+#define WARN_ON(c) fixture_warn_on(c)
 #define WARN_ON_ONCE(c) WARN_ON(c)
 #define cpu_to_le32(x) (x)
 #define cpu_to_le64(x) (x)

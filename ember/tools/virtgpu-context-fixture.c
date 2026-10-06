@@ -20,7 +20,13 @@
 #define MAX_INLINE_CMD_SIZE 96
 #define MAX_INLINE_RESP_SIZE 24
 #define BUG_ON(c) assert(!(c))
-#define WARN_ON(c) ((c) ? (assert(!(c)), 1) : 0)
+static int
+fixture_warn_on(bool condition)
+{
+	assert(!condition);
+	return condition;
+}
+#define WARN_ON(c) fixture_warn_on(c)
 #define cpu_to_le32(x) (x)
 #define le32_to_cpu(x) (x)
 #define IS_ERR(p) ((uintptr_t)(p) >= (uintptr_t)-4095)
