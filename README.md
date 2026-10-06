@@ -7,6 +7,36 @@ the Allwinner A733 and for the ESP32-S31, a 32-bit RISC-V chip with
 16 MB of memory: device drivers, kernel fixes, device trees, and tools
 for building the kernel and UEFI firmware.
 
+## What this fork adds to NetBSD 11
+
+EmberBSD stays NetBSD 11 in everything except hardware support: the
+same userland, the same pkgsrc packages, the same licence. The
+additions are:
+
+- **Allwinner A733** (Orange Pi Zero 4 and Zero 3W), a chip the base
+  system has no support for: eight cores, the card at SDR104 speed,
+  gigabit Ethernet, the AIC8800 Wi-Fi and Bluetooth module, processor
+  frequency control, temperature sensors, watchdog and clock.
+- **ESP32-S31**, a 32-bit RISC-V chip with 16 MB of memory and a new
+  platform for NetBSD: the system boots from flash and works over Wi-Fi.
+- **Raspberry Pi 5 and Compute Module 5**: UEFI firmware built from
+  this tree, and drivers for the on-board Wi-Fi, Ethernet behind the
+  RP1 chip, Bluetooth, the power button, the fan, the watchdog, I2C
+  and a WM8960 audio codec.
+- **Raspberry Pi Zero 2 W**: Wi-Fi on its BCM43436 chip.
+- **Kernel fixes found on these boards** that are not specific to
+  them: the `bwfm` Wi-Fi driver stalling on large transfers and after
+  an access point asks the client to change band, idle cores on
+  aarch64 missing a reschedule, the SD host controller driver. Each
+  is a separate diff in `oxtorg/patches` with its origin stated.
+- **A reproducible build**: the kernel, the firmware and a card image
+  come from a pinned revision; one image boots several of the boards.
+
+The costs are equally plain. Fixes from upstream are merged by hand.
+Only what the table below marks "Tested" has been seen working, and
+only on the boards we have. Wi-Fi on the A733 boards and the ESP32-S31
+needs vendor files that are not open.
+
 ## Supported boards
 
 Every "Tested" below is a result on physical hardware, on the board
@@ -38,6 +68,31 @@ driver.
 | Hardware random numbers | Not validated | Not validated | Not validated | Tested: the crypto engine's generator seeds the kernel at boot | No | Tested |
 
 Long-run stability has not been established on any of these boards.
+
+## Wi-Fi work in progress
+
+None of this is in the tree yet; the table above describes what is.
+
+- **Roaming in `bwfm`** between access points and between bands. The
+  host, not the radio firmware, decides on a transition: the tree
+  already disables the firmware's own handling of 802.11v requests,
+  and `wpa_supplicant` takes it over. With WPA2-PSK this has been
+  validated on a Raspberry Pi 5 from a local build: the client moved
+  from 2.4 to 5 GHz at the access point's request, reconnecting in
+  0.20 s (4.22 s with the scan), and refused a transition it was
+  configured not to make. A seamless handover is not claimed.
+- **802.11r fast transition and WPA3** (SAE with protected management
+  frames) are being implemented on top of it. A network that offers
+  only WPA3 cannot be joined today. WPA3 is expected to remove several
+  workarounds in the driver; no throughput gain has been measured.
+- **Defects found on the way**, with fixes in preparation:
+  `wpa_cli disconnect` changes the state NetBSD keeps but sends no
+  disconnect command to the firmware; concurrent firmware commands
+  could receive each other's replies; the command transport fails
+  after 65,536 requests; a short reply is handled incorrectly.
+
+Changes to association and command handling in `bwfm` should be
+coordinated with this work until it lands.
 
 See [hardware support, build instructions, and limitations](README.oxtorg.md)
 for validation details and source provenance. Changes in this fork should
