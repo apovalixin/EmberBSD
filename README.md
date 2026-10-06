@@ -151,7 +151,8 @@ on every board in the hardware catalog.
   [DRM identity checks](ember/boot/drm-native-identity.md) and
   [graphics probes](https://github.com/neonix20b/EmberBSD-Examples/tree/main/desktop/wayland-utm).
   Ports owns the [current Mesa 26.2.4 source adaptation](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/wayland-utm),
-  with DSO-lifetime/numeric regressions and common-toolchain staging rules;
+  with native DSO-lifetime/numeric regressions under GCC 16.2 and
+  common-toolchain staging rules;
   its complete build and consumer migration remain pending. VirGL remains
   disabled; GPU rendering, reliable console recovery and Vulkan Compute
   are not yet established.

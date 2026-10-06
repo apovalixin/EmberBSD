@@ -116,8 +116,12 @@ cache, callback, ioctl, response-validation and synchronous-wait functions.
 Allocation/transport fault injection and real pthread waiters cover malformed
 host data, duplicate queries, reset, timeout/late completion, byte copying,
 copyout failure and both aggregate limits. Host checks pass, including address
-and undefined-behavior sanitizers. Native kernel object compilation and live
-host capset checks remain separate gates; these checks do not prove 3D support.
+and undefined-behavior sanitizers. The five capset groups and nine existing
+VirtGPU groups also pass on NetBSD 11/aarch64. The three affected kernel
+objects compile with native GCC 12.5 and the normal `-Werror` flags; the KMS
+object was rebuilt after the discovery/reset fix. A full clean kernel build,
+boot and live host capset checks remain pending. These checks do not prove 3D
+support or permit linking the partially updated object directory.
 
 ## Build and checks
 
