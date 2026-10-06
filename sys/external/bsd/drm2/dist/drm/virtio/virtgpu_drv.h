@@ -130,6 +130,8 @@ struct virtio_gpu_vbuffer {
 	struct virtio_gpu_object *release;
 	struct virtio_gpu_fence *fence;
 	struct virtio_gpu_wait *wait;
+	struct virtio_gpu_drv_capset *capset_info;
+	struct virtio_gpu_drv_cap_cache *capset_cache;
 };
 
 struct virtio_gpu_output {
@@ -161,10 +163,18 @@ struct virtio_gpu_queue {
 	struct work_struct dequeue_work;
 };
 
+/* Protected by resp_wq.lock: pending, zero on success, negative errno. */
+#define VIRTGPU_CAP_PENDING 1
+struct virtio_gpu_capset_result {
+	int status;
+	bool received;
+};
+
 struct virtio_gpu_drv_capset {
 	uint32_t id;
 	uint32_t max_version;
 	uint32_t max_size;
+	struct virtio_gpu_capset_result result;
 };
 
 struct virtio_gpu_drv_cap_cache {
@@ -173,7 +183,7 @@ struct virtio_gpu_drv_cap_cache {
 	uint32_t id;
 	uint32_t version;
 	uint32_t size;
-	atomic_t is_valid;
+	struct virtio_gpu_capset_result result;
 };
 
 struct virtgpu_console;
@@ -223,8 +233,12 @@ struct virtio_gpu_device {
 	struct list_head obj_free_list;
 
 	struct virtio_gpu_drv_capset *capsets;
+	uint32_t capsets_allocated;
 	uint32_t num_capsets;
 	struct list_head cap_cache;
+	size_t cap_cache_bytes;
+	uint32_t cap_cache_entries;
+	int capset_error;
 };
 
 struct virtio_gpu_fpriv {
@@ -252,6 +266,7 @@ void virtio_gpu_queue_unref(struct virtio_gpu_device *, struct virtio_gpu_object
 void virtio_gpu_fail_fences(struct virtio_gpu_device *, int);
 void virtio_gpu_stop(struct virtio_gpu_device *, int);
 void virtio_gpu_fence_fail(struct virtio_gpu_fence *, int);
+void virtio_gpu_fail_capsets(struct virtio_gpu_device *, int);
 
 /* virtio_kms.c */
 int virtio_gpu_init(struct drm_device *, struct virtio_device *,
@@ -329,9 +344,9 @@ void virtio_gpu_cursor_ping(struct virtio_gpu_device *vgdev,
 			    struct virtio_gpu_output *output,
 			    struct virtio_gpu_object *bo);
 int virtio_gpu_cmd_get_display_info(struct virtio_gpu_device *vgdev);
-int virtio_gpu_cmd_get_capset_info(struct virtio_gpu_device *vgdev, int idx);
+int virtio_gpu_cmd_get_capset_info(struct virtio_gpu_device *vgdev, uint32_t idx);
 int virtio_gpu_cmd_get_capset(struct virtio_gpu_device *vgdev,
-			      int idx, int version,
+			      uint32_t idx, uint32_t version,
 			      struct virtio_gpu_drv_cap_cache **cache_p);
 int virtio_gpu_cmd_get_edids(struct virtio_gpu_device *vgdev);
 void virtio_gpu_cmd_context_create(struct virtio_gpu_device *vgdev, uint32_t id,

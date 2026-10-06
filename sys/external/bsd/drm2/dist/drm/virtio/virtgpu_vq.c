@@ -806,46 +806,104 @@ static void virtio_gpu_cmd_get_display_info_cb(struct virtio_gpu_device *vgdev,
 		drm_kms_helper_hotplug_event(vgdev->ddev);
 }
 
-static void virtio_gpu_cmd_get_capset_info_cb(struct virtio_gpu_device *vgdev,
-					      struct virtio_gpu_vbuffer *vbuf)
+/* No cache/table storage is released before completion workers are drained. */
+void
+virtio_gpu_fail_capsets(struct virtio_gpu_device *vgdev, int error)
 {
-	struct virtio_gpu_get_capset_info *cmd =
-		(struct virtio_gpu_get_capset_info *)vbuf->buf;
-	struct virtio_gpu_resp_capset_info *resp =
-		(struct virtio_gpu_resp_capset_info *)vbuf->resp_buf;
-	int i = le32_to_cpu(cmd->capset_index);
+	struct virtio_gpu_drv_cap_cache *entry;
+	uint32_t i;
 
-	spin_lock(&vgdev->display_info_lock);
-	vgdev->capsets[i].id = le32_to_cpu(resp->capset_id);
-	vgdev->capsets[i].max_version = le32_to_cpu(resp->capset_max_version);
-	vgdev->capsets[i].max_size = le32_to_cpu(resp->capset_max_size);
-	spin_unlock(&vgdev->display_info_lock);
-	wake_up(&vgdev->resp_wq);
+	mutex_lock(&vgdev->resp_wq.lock);
+	if (!vgdev->capset_error)
+		vgdev->capset_error = error;
+	for (i = 0; i < vgdev->capsets_allocated; i++)
+		if (vgdev->capsets[i].result.status == VIRTGPU_CAP_PENDING)
+			vgdev->capsets[i].result.status = vgdev->capset_error;
+	list_for_each_entry(entry, &vgdev->cap_cache, head)
+		if (entry->result.status == VIRTGPU_CAP_PENDING)
+			entry->result.status = vgdev->capset_error;
+	DRM_WAKEUP_ALL(&vgdev->resp_wq.cv, &vgdev->resp_wq.lock);
+	mutex_unlock(&vgdev->resp_wq.lock);
 }
 
-static void virtio_gpu_cmd_capset_cb(struct virtio_gpu_device *vgdev,
-				     struct virtio_gpu_vbuffer *vbuf)
+static int
+virtio_gpu_capset_finish(struct virtio_gpu_device *vgdev,
+    struct virtio_gpu_capset_result *result, int error)
 {
-	struct virtio_gpu_get_capset *cmd =
-		(struct virtio_gpu_get_capset *)vbuf->buf;
-	struct virtio_gpu_resp_capset *resp =
-		(struct virtio_gpu_resp_capset *)vbuf->resp_buf;
-	struct virtio_gpu_drv_cap_cache *cache_ent;
+	int ret;
 
-	spin_lock(&vgdev->display_info_lock);
-	list_for_each_entry(cache_ent, &vgdev->cap_cache, head) {
-		if (cache_ent->version == le32_to_cpu(cmd->capset_version) &&
-		    cache_ent->id == le32_to_cpu(cmd->capset_id)) {
-			memcpy(cache_ent->caps_cache, resp->capset_data,
-			       cache_ent->size);
-			/* Copy must occur before is_valid is signalled. */
-			smp_wmb();
-			atomic_set(&cache_ent->is_valid, 1);
-			break;
+	mutex_lock(&vgdev->resp_wq.lock);
+	if (result->status == VIRTGPU_CAP_PENDING)
+		result->status = error ? error : (result->received ? 0 : -EIO);
+	ret = result->status;
+	DRM_WAKEUP_ALL(&vgdev->resp_wq.cv, &vgdev->resp_wq.lock);
+	mutex_unlock(&vgdev->resp_wq.lock);
+	return ret;
+}
+
+static int
+virtio_gpu_capset_wait(struct virtio_gpu_device *vgdev,
+    struct virtio_gpu_capset_result *result)
+{
+	int ret;
+
+	if (!wait_event_timeout(vgdev->resp_wq,
+	    result->status != VIRTGPU_CAP_PENDING, 5 * HZ)) {
+		ret = virtio_gpu_capset_finish(vgdev, result, -ETIMEDOUT);
+		if (ret == -ETIMEDOUT)
+			virtio_gpu_stop(vgdev, ret);
+		return ret;
+	}
+	return virtio_gpu_capset_finish(vgdev, result, 0);
+}
+
+static void
+virtio_gpu_cmd_get_capset_info_cb(struct virtio_gpu_device *vgdev,
+    struct virtio_gpu_vbuffer *vbuf)
+{
+	struct virtio_gpu_get_capset_info *cmd =
+	    (void *)vbuf->buf;
+	struct virtio_gpu_resp_capset_info *resp =
+	    (void *)vbuf->resp_buf;
+	struct virtio_gpu_drv_capset *info = vbuf->capset_info;
+	uint32_t i = le32_to_cpu(cmd->capset_index);
+	uint32_t id = le32_to_cpu(resp->capset_id);
+	uint32_t size = le32_to_cpu(resp->capset_max_size);
+
+	mutex_lock(&vgdev->resp_wq.lock);
+	if (info->result.status == VIRTGPU_CAP_PENDING && !vgdev->capset_error) {
+		if (i >= vgdev->capsets_allocated || info != &vgdev->capsets[i] ||
+		    id == 0 || size == 0 || size > VIRTGPU_MAX_CAPSET_SIZE ||
+		    size > INT_MAX - sizeof(struct virtio_gpu_resp_capset) ||
+		    sizeof(struct virtio_gpu_get_capset) +
+		    sizeof(struct virtio_gpu_resp_capset) + (size_t)size >
+		    vgdev->vdev->max_request) {
+			info->result.status = -EINVAL;
+		} else {
+			info->id = id;
+			info->max_version = le32_to_cpu(resp->capset_max_version);
+			info->max_size = size;
+			info->result.received = true;
 		}
 	}
-	spin_unlock(&vgdev->display_info_lock);
-	wake_up_all(&vgdev->resp_wq);
+	mutex_unlock(&vgdev->resp_wq.lock);
+}
+
+static void
+virtio_gpu_cmd_capset_cb(struct virtio_gpu_device *vgdev,
+    struct virtio_gpu_vbuffer *vbuf)
+{
+	struct virtio_gpu_resp_capset *resp =
+	    (void *)vbuf->resp_buf;
+	struct virtio_gpu_drv_cap_cache *entry = vbuf->capset_cache;
+
+	/* response_error already checked the exact size/type and GPU fence. */
+	mutex_lock(&vgdev->resp_wq.lock);
+	if (entry->result.status == VIRTGPU_CAP_PENDING && !vgdev->capset_error) {
+		memcpy(entry->caps_cache, resp->capset_data, entry->size);
+		entry->result.received = true;
+	}
+	mutex_unlock(&vgdev->resp_wq.lock);
 }
 
 static int virtio_get_edid_block(void *data, u8 *buf,
@@ -917,16 +975,30 @@ int virtio_gpu_cmd_get_display_info(struct virtio_gpu_device *vgdev)
 	return ret;
 }
 
-int virtio_gpu_cmd_get_capset_info(struct virtio_gpu_device *vgdev, int idx)
+int
+virtio_gpu_cmd_get_capset_info(struct virtio_gpu_device *vgdev, uint32_t idx)
 {
 	struct virtio_gpu_get_capset_info *cmd_p;
 	struct virtio_gpu_vbuffer *vbuf;
+	struct virtio_gpu_drv_capset *info;
 	void *resp_buf;
+	int ret;
+
+	if (idx >= vgdev->capsets_allocated)
+		return -EINVAL;
+	info = &vgdev->capsets[idx];
+	mutex_lock(&vgdev->resp_wq.lock);
+	ret = vgdev->capset_error;
+	if (!ret)
+		info->result.status = VIRTGPU_CAP_PENDING;
+	mutex_unlock(&vgdev->resp_wq.lock);
+	if (ret)
+		return ret;
 
 	resp_buf = kzalloc(sizeof(struct virtio_gpu_resp_capset_info),
 			   GFP_KERNEL);
 	if (!resp_buf)
-		return -ENOMEM;
+		return virtio_gpu_capset_finish(vgdev, &info->result, -ENOMEM);
 
 	cmd_p = virtio_gpu_alloc_cmd_resp
 		(vgdev, &virtio_gpu_cmd_get_capset_info_cb, &vbuf,
@@ -934,96 +1006,105 @@ int virtio_gpu_cmd_get_capset_info(struct virtio_gpu_device *vgdev, int idx)
 		 resp_buf);
 	if (IS_ERR(cmd_p)) {
 		kfree(resp_buf);
-		vgdev->submit_error = PTR_ERR(cmd_p);
-		return PTR_ERR(cmd_p);
+		return virtio_gpu_capset_finish(vgdev, &info->result, PTR_ERR(cmd_p));
 	}
 	memset(cmd_p, 0, sizeof(*cmd_p));
 
 	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_GET_CAPSET_INFO);
 	cmd_p->capset_index = cpu_to_le32(idx);
-	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
-	return 0;
+	vbuf->capset_info = info;
+	ret = virtio_gpu_queue_sync(vgdev, vbuf, &cmd_p->hdr, NULL);
+	return virtio_gpu_capset_finish(vgdev, &info->result, ret);
 }
 
-int virtio_gpu_cmd_get_capset(struct virtio_gpu_device *vgdev,
-			      int idx, int cap_version,
-			      struct virtio_gpu_drv_cap_cache **cache_p)
+int
+virtio_gpu_cmd_get_capset(struct virtio_gpu_device *vgdev,
+    uint32_t idx, uint32_t cap_version, struct virtio_gpu_drv_cap_cache **cache_p)
 {
 	struct virtio_gpu_get_capset *cmd_p;
 	struct virtio_gpu_vbuffer *vbuf;
-	int max_size;
-	struct virtio_gpu_drv_cap_cache *cache_ent;
-	struct virtio_gpu_drv_cap_cache *search_ent;
+	struct virtio_gpu_drv_capset *info;
+	struct virtio_gpu_drv_cap_cache *entry;
+	size_t charge;
 	void *resp_buf;
+	int ret;
 
 	*cache_p = NULL;
-
 	if (idx >= vgdev->num_capsets)
 		return -EINVAL;
-
-	if (cap_version > vgdev->capsets[idx].max_version)
+	info = &vgdev->capsets[idx];
+	if ((info->id != VIRTIO_GPU_CAPSET_VIRGL &&
+	    info->id != VIRTIO_GPU_CAPSET_VIRGL2) || cap_version > info->max_version)
 		return -EINVAL;
 
-	cache_ent = kzalloc(sizeof(*cache_ent), GFP_KERNEL);
-	if (!cache_ent)
-		return -ENOMEM;
-
-	max_size = vgdev->capsets[idx].max_size;
-	cache_ent->caps_cache = kmalloc(max_size, GFP_KERNEL);
-	if (!cache_ent->caps_cache) {
-		kfree(cache_ent);
-		return -ENOMEM;
+	/* This mutex permits sleeping allocation and serializes the budget. */
+	mutex_lock(&vgdev->resp_wq.lock);
+	if (vgdev->capset_error) {
+		ret = vgdev->capset_error;
+		goto unlock;
 	}
-
-	resp_buf = kzalloc(sizeof(struct virtio_gpu_resp_capset) + max_size,
-			   GFP_KERNEL);
-	if (!resp_buf) {
-		kfree(cache_ent->caps_cache);
-		kfree(cache_ent);
-		return -ENOMEM;
-	}
-
-	cache_ent->version = cap_version;
-	cache_ent->id = vgdev->capsets[idx].id;
-	atomic_set(&cache_ent->is_valid, 0);
-	cache_ent->size = max_size;
-	spin_lock(&vgdev->display_info_lock);
-	/* Search while under lock in case it was added by another task. */
-	list_for_each_entry(search_ent, &vgdev->cap_cache, head) {
-		if (search_ent->id == vgdev->capsets[idx].id &&
-		    search_ent->version == cap_version) {
-			*cache_p = search_ent;
-			break;
+	list_for_each_entry(entry, &vgdev->cap_cache, head) {
+		if (entry->id == info->id && entry->version == cap_version) {
+			mutex_unlock(&vgdev->resp_wq.lock);
+			ret = virtio_gpu_capset_wait(vgdev, &entry->result);
+			goto result;
 		}
 	}
-	if (!*cache_p)
-		list_add_tail(&cache_ent->head, &vgdev->cap_cache);
-	spin_unlock(&vgdev->display_info_lock);
-
-	if (*cache_p) {
-		/* Entry was found, so free everything that was just created. */
-		kfree(resp_buf);
-		kfree(cache_ent->caps_cache);
-		kfree(cache_ent);
-		return 0;
+	charge = sizeof(*entry) + (size_t)info->max_size;
+	if (vgdev->cap_cache_entries >= VIRTGPU_CAP_CACHE_ENTRIES ||
+	    charge > VIRTGPU_CAP_CACHE_BUDGET - vgdev->cap_cache_bytes) {
+		ret = -ENOSPC;
+		goto unlock;
 	}
+	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
+	if (!entry) {
+		ret = -ENOMEM;
+		goto unlock;
+	}
+	entry->caps_cache = kmalloc(info->max_size, GFP_KERNEL);
+	if (!entry->caps_cache) {
+		kfree(entry);
+		ret = -ENOMEM;
+		goto unlock;
+	}
+	entry->version = cap_version;
+	entry->id = info->id;
+	entry->size = info->max_size;
+	entry->result.status = VIRTGPU_CAP_PENDING;
+	list_add_tail(&entry->head, &vgdev->cap_cache);
+	vgdev->cap_cache_bytes += charge;
+	vgdev->cap_cache_entries++;
+	mutex_unlock(&vgdev->resp_wq.lock);
 
+	resp_buf = kzalloc(sizeof(struct virtio_gpu_resp_capset) + entry->size,
+	    GFP_KERNEL);
+	if (!resp_buf) {
+		ret = -ENOMEM;
+		goto finish;
+	}
 	cmd_p = virtio_gpu_alloc_cmd_resp
 		(vgdev, &virtio_gpu_cmd_capset_cb, &vbuf, sizeof(*cmd_p),
-		 sizeof(struct virtio_gpu_resp_capset) + max_size,
+		 sizeof(struct virtio_gpu_resp_capset) + entry->size,
 		 resp_buf);
 	if (IS_ERR(cmd_p)) {
 		kfree(resp_buf);
-		vgdev->submit_error = PTR_ERR(cmd_p);
-		return PTR_ERR(cmd_p);
+		ret = PTR_ERR(cmd_p);
+		goto finish;
 	}
 	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_GET_CAPSET);
-	cmd_p->capset_id = cpu_to_le32(vgdev->capsets[idx].id);
+	cmd_p->capset_id = cpu_to_le32(entry->id);
 	cmd_p->capset_version = cpu_to_le32(cap_version);
-	*cache_p = cache_ent;
-	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
-
-	return 0;
+	vbuf->capset_cache = entry;
+	ret = virtio_gpu_queue_sync(vgdev, vbuf, &cmd_p->hdr, NULL);
+finish:
+	ret = virtio_gpu_capset_finish(vgdev, &entry->result, ret);
+result:
+	if (!ret)
+		*cache_p = entry;
+	return ret;
+unlock:
+	mutex_unlock(&vgdev->resp_wq.lock);
+	return ret;
 }
 
 int virtio_gpu_cmd_get_edids(struct virtio_gpu_device *vgdev)

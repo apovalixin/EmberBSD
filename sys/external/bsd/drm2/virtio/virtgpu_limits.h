@@ -4,6 +4,11 @@
 #ifndef _VIRTGPU_LIMITS_H_
 #define _VIRTGPU_LIMITS_H_
 #define VIRTGPU_MAX_OBJECT_SIZE (256U * 1024U * 1024U)
+/* Local defensive limits, not VirtIO protocol constants. */
+#define VIRTGPU_MAX_CAPSETS 64U
+#define VIRTGPU_MAX_CAPSET_SIZE (64U * 1024U)
+#define VIRTGPU_CAP_CACHE_BUDGET (1024U * 1024U)
+#define VIRTGPU_CAP_CACHE_ENTRIES 128U
 static inline bool
 virtgpu_2d_size_valid(uint32_t width, uint32_t height, uint64_t size)
 {

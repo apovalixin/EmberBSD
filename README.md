@@ -137,7 +137,7 @@ on every board in the hardware catalog.
   GEM buffers and PRIME sharing make direct Wayland sessions possible.
   UTM tests cover visible KMS output, 32 cross-process buffer-lifetime cycles
   and labwc/Pixman displaying Kate without Xorg. The tree also includes DRM
-  device-identity, fence-validation, console-recovery and partial-page memfd
+  device-identity, fence-validation, bounded capset-query, console-recovery and partial-page memfd
   fixes; their individual build/runtime boundaries are documented separately.
   See the [VirtGPU implementation](sys/external/bsd/drm2/virtio/README.md),
   [DRM identity checks](ember/boot/drm-native-identity.md) and

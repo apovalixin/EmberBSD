@@ -419,12 +419,9 @@ static int virtio_gpu_get_caps_ioctl(struct drm_device *dev,
 {
 	struct virtio_gpu_device *vgdev = dev->dev_private;
 	struct drm_virtgpu_get_caps *args = data;
-	unsigned size, host_caps_size;
-	int i;
-	int found_valid = -1;
+	uint32_t i, size;
 	int ret;
 	struct virtio_gpu_drv_cap_cache *cache_ent;
-	void *ptr;
 
 	if (vgdev->num_capsets == 0)
 		return -ENOSYS;
@@ -433,50 +430,17 @@ static int virtio_gpu_get_caps_ioctl(struct drm_device *dev,
 	if (args->size == 0)
 		return -EINVAL;
 
-	spin_lock(&vgdev->display_info_lock);
+	/* Discovery publishes this immutable table only after full validation. */
 	for (i = 0; i < vgdev->num_capsets; i++) {
-		if (vgdev->capsets[i].id == args->cap_set_id) {
-			if (vgdev->capsets[i].max_version >= args->cap_set_ver) {
-				found_valid = i;
-				break;
-			}
-		}
+		if (vgdev->capsets[i].id == args->cap_set_id)
+			break;
 	}
-
-	if (found_valid == -1) {
-		spin_unlock(&vgdev->display_info_lock);
-		return -EINVAL;
-	}
-
-	host_caps_size = vgdev->capsets[found_valid].max_size;
-	/* only copy to user the minimum of the host caps size or the guest caps size */
-	size = min(args->size, host_caps_size);
-
-	list_for_each_entry(cache_ent, &vgdev->cap_cache, head) {
-		if (cache_ent->id == args->cap_set_id &&
-		    cache_ent->version == args->cap_set_ver) {
-			spin_unlock(&vgdev->display_info_lock);
-			goto copy_exit;
-		}
-	}
-	spin_unlock(&vgdev->display_info_lock);
-
-	/* not in cache - need to talk to hw */
-	virtio_gpu_cmd_get_capset(vgdev, found_valid, args->cap_set_ver,
-				  &cache_ent);
-
-copy_exit:
-	ret = wait_event_timeout(vgdev->resp_wq,
-				 atomic_read(&cache_ent->is_valid), 5 * HZ);
-	if (!ret)
-		return -EBUSY;
-
-	/* is_valid check must proceed before copy of the cache entry. */
-	smp_rmb();
-
-	ptr = cache_ent->caps_cache;
-
-	if (copy_to_user(u64_to_user_ptr(args->addr), ptr, size))
+	ret = virtio_gpu_cmd_get_capset(vgdev, i, args->cap_set_ver, &cache_ent);
+	if (ret)
+		return ret;
+	/* The helper acquired the result interlock; successful bytes are immutable. */
+	size = min(args->size, cache_ent->size);
+	if (copy_to_user(u64_to_user_ptr(args->addr), cache_ent->caps_cache, size))
 		return -EFAULT;
 
 	return 0;

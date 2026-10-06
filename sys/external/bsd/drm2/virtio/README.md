@@ -8,9 +8,11 @@ session. On 2026-10-06, revision `67a611acb9b` booted under UTM 4.7.5 with
 virtio-ramfb and GL disabled. Native PCI discovery, 32 cross-process dumb
 GEM/PRIME mapping lifetimes (one page and 8 MiB), malformed size/handle
 rejection and visible 800x600 KMS color bars passed. labwc/Pixman displayed
-a native Kate window without Xorg, but keyboard/pointer integration still
-needs correction. This does not establish VirGL, reliable input, reset
-stress or physical-board support. Retest against each exact kernel and
+a native Kate window without Xorg. The subsequent Ports input adaptation
+passed physical pointer, keyboard and file-save checks documented in the
+[runtime probes](https://github.com/neonix20b/EmberBSD-Examples/tree/main/desktop/wayland-utm).
+This does not establish VirGL, reset stress or physical-board support.
+Retest against each exact kernel and
 virtual hardware configuration.
 The configuration disables default module autoload. Its VirtGPU, DRM,
 Linux compatibility and VirtIO dependencies are built into the kernel;
@@ -75,6 +77,44 @@ therefore use a separate completion workqueue, and fatal cleanup has its
 own workqueue. Reset stops DMA, fails fences and wakes submission/response
 waiters before draining workers and cancelling remaining request cookies.
 Normal live detach is rejected with EBUSY.
+
+## Classic capset queries
+
+Discovery and GET_CAPS use the existing fenced synchronous control path.
+Discovery runs during initialization; cache requests run in ioctl threads,
+never on the ordered completion worker. Initialization propagates discovery
+errors and uses the ordinary deinit/reset/drain path before freeing its table.
+No partially validated table is published. Duplicate or zero IDs, zero or
+oversized payloads and invalid response lengths/types/fences fail the query.
+Unknown IDs remain discovery metadata; only classic VIRGL/VIRGL2 IDs 1/2
+can be requested. A negotiated classic renderer with no classic capset fails
+initialization. This does not enable feature negotiation or new context types.
+
+The native local limits are 64 discovery records, 64 KiB per payload,
+1 MiB of persistent cache including entry metadata, and 128 cache entries.
+These are defensive support limits, not VirtIO specification constants.
+Response sizes must also fit the transport's actual maximum request.
+Unsigned 32-bit versions retain their ABI meaning; a large host maximum
+cannot bypass the cache budget through repeated distinct user queries.
+An exhausted budget returns ENOSPC; existing successful entries remain usable.
+
+The response-wait mutex owns lookup, allocation budget and each result state.
+Once published, a cache entry has one pending operation and a terminal success
+or errno shared by concurrent callers. Failures before entry allocation leave
+no shared operation. Later allocation/submission failures persist in the entry.
+Timeout and reset wake waiters; late callbacks cannot overwrite a terminal
+failure. Successful bytes become visible through the same mutex and then stay
+immutable. Entries, including failed entries, live until deinit has stopped
+transport and drained callbacks. GET_CAPS checks the helper result before
+accessing a pointer and preserves the standard minimum-size copyout ABI.
+
+`sh ember/tools/virtgpu-capsets-contract.sh` compiles the actual discovery,
+cache, callback, ioctl, response-validation and synchronous-wait functions.
+Allocation/transport fault injection and real pthread waiters cover malformed
+host data, duplicate queries, reset, timeout/late completion, byte copying,
+copyout failure and both aggregate limits. Host checks pass, including address
+and undefined-behavior sanitizers. Native kernel object compilation and live
+host capset checks remain separate gates; these checks do not prove 3D support.
 
 ## Build and checks
 
