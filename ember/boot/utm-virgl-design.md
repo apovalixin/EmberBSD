@@ -1,20 +1,24 @@
 # VirtIO-GPU acceleration for EmberBSD in UTM
 
 Status: revised proposal; no GPU implementation or hardware validation yet.
-Reviewed on 2026-10-06 against EmberBSD `7b1c2b3e4e9` and UTM 4.7.5.
+Reviewed on 2026-10-06 against EmberBSD `b1d21397dca` and UTM 4.7.5.
 Target: the current NetBSD 11/aarch64-based EmberBSD installation.
 
 ## Outcome and scope
 
-Run the existing GNOME X11 desktop with rendering executed by the Mac GPU.
+Make a native Wayland session the primary GPU integration target on the
+current EmberBSD. Start with labwc/wlroots to test the platform independently
+of GNOME-specific porting. Rendering must execute on the Mac GPU.
 The path is Mesa VirGL, the standard VirtGPU DRM ABI, VirtIO, UTM's
 virglrenderer, and an accelerated ANGLE backend. Keep one display initially.
 Preserve the working framebuffer kernel, display configuration and login.
 
-Native GNOME Wayland remains a subsequent integration result: the installed
-Mutter disables Wayland and its native backend. A nested Wayland client does
-not establish KMS or GPU support. Physical-board GPUs, Vulkan/Venus, compute,
-multi-head and live driver unloading are outside this first result.
+Keep the existing GNOME/Xorg session as a working recovery and comparison
+path. Native GNOME Wayland remains a subsequent integration result: the
+installed Mutter disables Wayland and its native backend. A successful labwc
+test does not complete GNOME Wayland support. Physical-board GPUs,
+Vulkan/Venus, compute, multi-head and live driver unloading remain outside
+the first result. A nested Wayland client does not establish KMS or GPU support.
 
 ## Evidence that changes the first proposal
 
@@ -109,18 +113,40 @@ that restriction must not break same-device round trips. Primary-node KMS
 and render-node permissions remain distinct. Do not allow CREATE_DUMB on a
 render node simply to make a software compositor start.
 
-### Mesa, Xorg and session integration
+### Mesa, Wayland and session integration
 
-First prove an EGL/GBM render and readback, then visible KMS rendering.
-For the desktop replace wsfb with Xorg modesetting, validate glamor, DRI3 and
-Present, then start GNOME. A render-node triangle alone is insufficient.
-See [modesetting(4)](https://man.netbsd.org/modesetting.4).
+First prove visible KMS output, then run labwc directly on DRM without an
+Xorg parent. Use its software renderer to isolate KMS/input failures. Next
+prove EGL/GBM render/readback with VirGL and switch labwc to GLES/VirGL.
+Test native clients and client/compositor dma-buf sharing before Xwayland.
 
-Pin a compatible Mesa/libdrm build with VirGL, EGL/GBM and GLX in an isolated
-prefix. Start from the installed Mesa version for the initial ABI check;
-upgrade only for an identified missing feature or fix. Record exact library
-paths for Xorg, test clients and Mutter so base X11 and pkgsrc Mesa are not
-silently mixed. Remove software overrides only in the explicit GPU test session.
+pkgsrc 2026Q2 already has labwc 0.9.7, wlroots 0.19.3, seatd 0.9.3 and
+libopeninput recipes. The latter implements the libinput interface with
+wscons/kqueue; Linux evdev is not a prerequisite for this path. The selected
+binary repository has seatd/libopeninput but no labwc/wlroots compositor
+packages in its current index. Build the missing packages reproducibly.
+
+Use the packaged NetBSD seat/VT adaptations and launch the compositor as the
+existing user. Verify device handoff, keyboard modifiers, absolute pointer
+coordinates, VT release/reacquire and text-console recovery on compositor exit
+or crash. A nested test receives input through Xorg and cannot validate this.
+Keep XDM for the saved X11 session; an XDM .xsession is not a native Wayland
+launcher. Introduce a separate console/session entry for Wayland testing.
+
+Pin a compatible Mesa/libdrm build with VirGL, EGL/GBM, GLES and Wayland EGL
+in an isolated prefix. The wlroots recipe prefers pkgsrc Mesa for GLES;
+select versions from those dependencies and the tested VirtGPU ABI, not from
+the age of base X11 Mesa. Record exact library paths to avoid mixing stacks.
+Remove software overrides only in the explicit GPU test session.
+
+Treat accelerated Xorg modesetting/glamor/DRI3 as an optional compatibility
+test, not a prerequisite for native Wayland. Porting GNOME additionally needs
+Mutter's native backend, device/session integration and compatible Shell
+dependencies. Installed Mutter already links EGL; its pkgsrc recipe disables
+Wayland/native unconditionally, but disables EGL only when unavailable.
+Mutter 40.2's native build requires libsystemd or libelogind as well as
+udev, libinput and GBM; the labwc seatd launcher does not satisfy that interface.
+Resolve this in the GNOME port instead of treating it as a configure toggle.
 
 ## Validation sequence
 
@@ -133,9 +159,10 @@ dependencies. Record source revisions, flags, hashes and host display settings.
 | Host preflight | Record the actual GL-capable UTM device and ANGLE backend. Where available, verify a known Linux guest on the same UTM build; an external FreeBSD report is a reference only. |
 | Build and ownership | Clean native kernel build, one GPU child, DRM initialization, feature mask and reachable nodes. Boot with both GL and non-GL devices. |
 | Memory and 2D | Create/map/draw/scan out a known pattern, repeated flips and cursor updates; test a buffer whose backing list exceeds direct-ring capacity. No 3D claim at this stage. |
+| Native input/session | labwc on DRM with software rendering, seat/VT handoff, wscons keyboard and pointer, orderly exit and crash recovery. No Xorg parent. |
 | VirGL | Query real capsets, create contexts, render a known image, wait for its fence and verify pixels. Run a visible EGL/GBM test such as kmscube. |
-| Sharing and Xorg | Same-device PRIME round trip between processes, modesetting/glamor, DRI3/Present and an accelerated GLX client. |
-| Desktop | GNOME redraw, pointer/keyboard, resize, applications, logout/login and a cold reboot without software overrides. |
+| Wayland and sharing | labwc GLES/VirGL, same-device PRIME/dma-buf sharing between native clients and compositor, resize, redraw and a saved file; then one legacy app through Xwayland. |
+| GNOME integration | Separate native-Mutter build and session checks before claiming GNOME Wayland. Preserve the working Xorg desktop meanwhile; test login and cold boot for any promoted default. |
 | Reliability | Thirty-minute rendering/allocation workload; kill clients with submissions in flight; malformed sizes/handles/pointers; queue exhaustion and injected attach failures. Check memory, completion counters and kernel diagnostics. |
 | Recovery | Restore both the saved UTM display configuration and framebuffer kernel/session. Confirm visible login and input. A kernel-only rollback is insufficient if the virtual device changed. |
 
@@ -146,7 +173,7 @@ Reject detach while clients or console mappings remain; hot removal and live
 unloading are not promised by the initial supported configuration.
 
 Acceptance requires correct images, a VirGL renderer backed by the Mac GPU,
-the expected loaded libraries, and a working desktop after reboot. A Metal
+the expected loaded libraries, and a native Wayland session after reboot. A Metal
 display window, `direct rendering: Yes`, a device node or high FPS alone
 does not prove guest GPU acceleration. UTM also uses Metal to present CPU frames.
 Compare frame time and CPU use against the saved llvmpipe case at the same
@@ -160,9 +187,11 @@ would add a different deployment path. Importing FreeBSD's Linux 6.13 stack
 wholesale would enlarge this task into a DRM upgrade. None is the first choice.
 
 Proceed with a narrow VirtIO compatibility layer, NetBSD-native memory glue,
-the audited existing VirtGPU core, then staged KMS, VirGL and Xorg integration.
-This replaces the original module-local shim proposal and makes buffer sharing
-and presentation explicit. It remains a design, not a statement of support.
+the audited existing VirtGPU core, then staged KMS, native input, VirGL and
+Wayland integration. This replaces the module-local shim and Xorg-first
+proposals. Wayland avoids requiring an accelerated X server for native clients;
+it does not remove DRM, buffer synchronization or input-porting work, and no
+performance gain is claimed without measurements. This remains a design.
 
 ## Pinned references
 
@@ -171,3 +200,6 @@ and presentation explicit. It remains a design, not a statement of support.
 - [Linux v5.6 VirtGPU](https://github.com/torvalds/linux/tree/v5.6/drivers/gpu/drm/virtio); [shmem helper](https://github.com/torvalds/linux/blob/v5.6/drivers/gpu/drm/drm_gem_shmem_helper.c).
 - [DRM buffer sharing and lifetime](https://www.kernel.org/doc/html/latest/gpu/drm-mm.html#prime-buffer-sharing).
 - [QEMU GPU backends](https://www.qemu.org/docs/master/system/devices/virtio/virtio-gpu.html); latest QEMU features are not assumed available in UTM 4.7.5.
+- [pkgsrc labwc](https://github.com/NetBSD/pkgsrc/tree/pkgsrc-2026Q2/wayland/labwc), [wlroots](https://github.com/NetBSD/pkgsrc/tree/pkgsrc-2026Q2/wayland/wlroots), [libopeninput](https://github.com/NetBSD/pkgsrc/tree/pkgsrc-2026Q2/devel/libopeninput), [seatd](https://github.com/NetBSD/pkgsrc/tree/pkgsrc-2026Q2/sysutils/seatd).
+- [Mutter package](https://github.com/NetBSD/pkgsrc/blob/pkgsrc-2026Q2/wm/mutter/Makefile); [reported NetBSD labwc use on Intel](https://mail-index.netbsd.org/pkgsrc-users/2026/07/05/msg043169.html), not an aarch64/UTM result.
+- [Wayland architecture](https://wayland.freedesktop.org/architecture.html).
