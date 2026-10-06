@@ -1,3 +1,4 @@
+/* Origin: EmberBSD native VirtGPU KMS adaptation of Linux v5.6, 2026-10-06. */
 /*	$NetBSD: virtgpu_display.c,v 1.3 2021/12/18 23:45:45 riastradh Exp $	*/
 
 /*
@@ -277,24 +278,29 @@ static int vgdev_output_init(struct virtio_gpu_device *vgdev, int index)
 	cursor = virtio_gpu_plane_init(vgdev, DRM_PLANE_TYPE_CURSOR, index);
 	if (IS_ERR(cursor))
 		return PTR_ERR(cursor);
-	drm_crtc_init_with_planes(dev, crtc, primary, cursor,
+	int ret = drm_crtc_init_with_planes(dev, crtc, primary, cursor,
 				  &virtio_gpu_crtc_funcs, NULL);
+	if (ret)
+		return ret;
 	drm_crtc_helper_add(crtc, &virtio_gpu_crtc_helper_funcs);
 
-	drm_connector_init(dev, connector, &virtio_gpu_connector_funcs,
+	ret = drm_connector_init(dev, connector, &virtio_gpu_connector_funcs,
 			   DRM_MODE_CONNECTOR_VIRTUAL);
+	if (ret)
+		return ret;
 	drm_connector_helper_add(connector, &virtio_gpu_conn_helper_funcs);
 	if (vgdev->has_edid)
 		drm_connector_attach_edid_property(connector);
 
-	drm_encoder_init(dev, encoder, &virtio_gpu_enc_funcs,
+	ret = drm_encoder_init(dev, encoder, &virtio_gpu_enc_funcs,
 			 DRM_MODE_ENCODER_VIRTUAL, NULL);
+	if (ret)
+		return ret;
 	drm_encoder_helper_add(encoder, &virtio_gpu_enc_helper_funcs);
 	encoder->possible_crtcs = 1 << index;
 
 	drm_connector_attach_encoder(connector, encoder);
-	drm_connector_register(connector);
-	return 0;
+	return drm_connector_register(connector);
 }
 
 static struct drm_framebuffer *
@@ -315,15 +321,24 @@ virtio_gpu_user_framebuffer_create(struct drm_device *dev,
 	if (!obj)
 		return ERR_PTR(-EINVAL);
 
+	struct virtio_gpu_object *bo = gem_to_virtio_gpu_obj(obj);
+	if (mode_cmd->width > bo->width || mode_cmd->height > bo->height ||
+	    mode_cmd->pitches[0] != bo->width * 4 || mode_cmd->offsets[0] != 0 ||
+	    virtio_gpu_translate_format(mode_cmd->pixel_format) != bo->format) {
+		drm_gem_object_put_unlocked(obj);
+		return ERR_PTR(-EINVAL);
+	}
 	virtio_gpu_fb = kzalloc(sizeof(*virtio_gpu_fb), GFP_KERNEL);
-	if (virtio_gpu_fb == NULL)
+	if (virtio_gpu_fb == NULL) {
+		drm_gem_object_put_unlocked(obj);
 		return ERR_PTR(-ENOMEM);
+	}
 
 	ret = virtio_gpu_framebuffer_init(dev, virtio_gpu_fb, mode_cmd, obj);
 	if (ret) {
 		kfree(virtio_gpu_fb);
 		drm_gem_object_put_unlocked(obj);
-		return NULL;
+		return ERR_PTR(ret);
 	}
 
 	return &virtio_gpu_fb->base;
@@ -353,7 +368,7 @@ static const struct drm_mode_config_funcs virtio_gpu_mode_funcs = {
 	.atomic_commit = drm_atomic_helper_commit,
 };
 
-void virtio_gpu_modeset_init(struct virtio_gpu_device *vgdev)
+int virtio_gpu_modeset_init(struct virtio_gpu_device *vgdev)
 {
 	int i;
 
@@ -368,10 +383,15 @@ void virtio_gpu_modeset_init(struct virtio_gpu_device *vgdev)
 	vgdev->ddev->mode_config.max_width = XRES_MAX;
 	vgdev->ddev->mode_config.max_height = YRES_MAX;
 
-	for (i = 0 ; i < vgdev->num_scanouts; ++i)
-		vgdev_output_init(vgdev, i);
-
+	for (i = 0 ; i < vgdev->num_scanouts; ++i) {
+		int ret = vgdev_output_init(vgdev, i);
+		if (ret) {
+			drm_mode_config_cleanup(vgdev->ddev);
+			return ret;
+		}
+	}
 	drm_mode_config_reset(vgdev->ddev);
+	return 0;
 }
 
 void virtio_gpu_modeset_fini(struct virtio_gpu_device *vgdev)

@@ -31,6 +31,7 @@
 
 #include <linux/virtio.h>
 #include "virtgpu_wait.h"
+#include "virtgpu_limits.h"
 #include <linux/virtio_ids.h>
 #include <linux/virtio_config.h>
 #include <linux/virtio_gpu.h>
@@ -72,6 +73,7 @@ struct virtio_gpu_object_params {
 struct virtio_gpu_object {
 	struct drm_gem_shmem_object base;
 	uint32_t hw_res_handle;
+	uint32_t width, height, format;
 
 	struct sg_table *pages;
 	uint32_t mapped;
@@ -288,7 +290,7 @@ int virtio_gpu_cmd_create_resource(struct virtio_gpu_device *vgdev,
 				    struct virtio_gpu_fence *fence);
 void virtio_gpu_cmd_unref_resource(struct virtio_gpu_device *vgdev,
 				   uint32_t resource_id);
-void virtio_gpu_cmd_transfer_to_host_2d(struct virtio_gpu_device *vgdev,
+int virtio_gpu_cmd_transfer_to_host_2d(struct virtio_gpu_device *vgdev,
 					uint64_t offset,
 					uint32_t width, uint32_t height,
 					uint32_t x, uint32_t y,
@@ -361,7 +363,7 @@ void virtio_gpu_disable_notify(struct virtio_gpu_device *vgdev);
 void virtio_gpu_enable_notify(struct virtio_gpu_device *vgdev);
 
 /* virtio_gpu_display.c */
-void virtio_gpu_modeset_init(struct virtio_gpu_device *vgdev);
+int virtio_gpu_modeset_init(struct virtio_gpu_device *vgdev);
 void virtio_gpu_modeset_fini(struct virtio_gpu_device *vgdev);
 
 /* virtio_gpu_plane.c */

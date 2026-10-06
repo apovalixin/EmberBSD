@@ -110,8 +110,11 @@ int virtio_gpu_object_create(struct virtio_gpu_device *vgdev,
 
 	*bo_ptr = NULL;
 
-	if (!params->size || params->size > 256 * 1024 * 1024 ||
+	if (!params->size || params->size > VIRTGPU_MAX_OBJECT_SIZE ||
 	    params->size > SIZE_MAX - PAGE_MASK)
+		return -EINVAL;
+	if (!params->virgl &&
+	    !virtgpu_2d_size_valid(params->width, params->height, params->size))
 		return -EINVAL;
 	params->size = roundup(params->size, PAGE_SIZE);
 	shmem_obj = drm_gem_shmem_create(vgdev->ddev, params->size);
@@ -124,6 +127,9 @@ int virtio_gpu_object_create(struct virtio_gpu_device *vgdev,
 		goto err_free_gem;
 
 	bo->dumb = params->dumb;
+	bo->width = params->width;
+	bo->height = params->height;
+	bo->format = params->format;
 
 	if (fence) {
 		ret = -ENOMEM;

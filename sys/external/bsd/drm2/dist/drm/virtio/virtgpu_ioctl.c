@@ -228,6 +228,9 @@ static int virtio_gpu_resource_create_ioctl(struct drm_device *dev, void *data,
 	struct virtio_gpu_object_params params = { 0 };
 
 	if (vgdev->has_virgl_3d == false) {
+		if (rc->format != VIRTIO_GPU_FORMAT_B8G8R8X8_UNORM &&
+		    rc->format != VIRTIO_GPU_FORMAT_B8G8R8A8_UNORM)
+			return -EINVAL;
 		if (rc->depth > 1)
 			return -EINVAL;
 		if (rc->nr_samples > 1)
@@ -355,7 +358,7 @@ static int virtio_gpu_transfer_to_host_ioctl(struct drm_device *dev, void *data,
 		return -ENOENT;
 
 	if (!vgdev->has_virgl_3d) {
-		virtio_gpu_cmd_transfer_to_host_2d
+		return virtio_gpu_cmd_transfer_to_host_2d
 			(vgdev, offset,
 			 args->box.w, args->box.h, args->box.x, args->box.y,
 			 objs, NULL);

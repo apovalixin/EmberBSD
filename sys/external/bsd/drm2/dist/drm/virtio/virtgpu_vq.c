@@ -611,7 +611,7 @@ void virtio_gpu_cmd_set_scanout(struct virtio_gpu_device *vgdev,
 	cmd_p->r.x = cpu_to_le32(x);
 	cmd_p->r.y = cpu_to_le32(y);
 
-	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
+	virtio_gpu_queue_sync(vgdev, vbuf, NULL, NULL);
 }
 
 void virtio_gpu_cmd_resource_flush(struct virtio_gpu_device *vgdev,
@@ -636,10 +636,10 @@ void virtio_gpu_cmd_resource_flush(struct virtio_gpu_device *vgdev,
 	cmd_p->r.x = cpu_to_le32(x);
 	cmd_p->r.y = cpu_to_le32(y);
 
-	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
+	virtio_gpu_queue_sync(vgdev, vbuf, NULL, NULL);
 }
 
-void virtio_gpu_cmd_transfer_to_host_2d(struct virtio_gpu_device *vgdev,
+int virtio_gpu_cmd_transfer_to_host_2d(struct virtio_gpu_device *vgdev,
 					uint64_t offset,
 					uint32_t width, uint32_t height,
 					uint32_t x, uint32_t y,
@@ -650,6 +650,13 @@ void virtio_gpu_cmd_transfer_to_host_2d(struct virtio_gpu_device *vgdev,
 	struct virtio_gpu_transfer_to_host_2d *cmd_p;
 	struct virtio_gpu_vbuffer *vbuf;
 
+	if (!virtgpu_transfer_valid(bo->width, bo->height,
+	    bo->base.base.size, x, y, width, height, offset)) {
+		if (fence)
+			virtio_gpu_array_unlock_resv(objs);
+		virtio_gpu_array_put_free(objs);
+		return -EINVAL;
+	}
 	bus_dmamap_sync(vgdev->vdev->dmat, bo->pages->sgl->sg_dmamap,
 	    0, bo->base.base.size, BUS_DMASYNC_PREWRITE);
 
@@ -661,7 +668,7 @@ void virtio_gpu_cmd_transfer_to_host_2d(struct virtio_gpu_device *vgdev,
 			virtio_gpu_array_put_free(objs);
 		}
 		vgdev->submit_error = PTR_ERR(cmd_p);
-		return;
+		return PTR_ERR(cmd_p);
 	}
 	memset(cmd_p, 0, sizeof(*cmd_p));
 	vbuf->objs = objs;
@@ -674,7 +681,7 @@ void virtio_gpu_cmd_transfer_to_host_2d(struct virtio_gpu_device *vgdev,
 	cmd_p->r.x = cpu_to_le32(x);
 	cmd_p->r.y = cpu_to_le32(y);
 
-	virtio_gpu_queue_fenced_ctrl_buffer(vgdev, vbuf, &cmd_p->hdr, fence);
+	return virtio_gpu_queue_sync(vgdev, vbuf, &cmd_p->hdr, fence);
 }
 
 static int
