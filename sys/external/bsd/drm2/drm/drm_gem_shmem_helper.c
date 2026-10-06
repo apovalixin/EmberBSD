@@ -43,6 +43,7 @@ drm_gem_shmem_create(struct drm_device *dev, size_t size)
 	return shmem;
 pages:
 	drm_gem_put_pages(obj, shmem->pages, false, false);
+	kvfree(shmem->pages);
 release:
 	drm_gem_object_release(obj);
 fail:
@@ -59,6 +60,7 @@ drm_gem_shmem_free_object(struct drm_gem_object *obj)
 	KASSERT(shmem->pin_count == 0);
 	KASSERT(shmem->vmap_count == 0);
 	drm_gem_put_pages(obj, shmem->pages, true, true);
+	kvfree(shmem->pages);
 	drm_gem_free_mmap_offset(obj);
 	drm_gem_object_release(obj);
 	linux_mutex_destroy(&shmem->lock);
@@ -149,10 +151,11 @@ drm_gem_shmem_print_info(struct drm_printer *p, unsigned int indent,
 }
 
 int
-drm_gem_shmem_mmap(struct drm_gem_object *obj, off_t *offp, size_t size,
+drm_gem_shmem_prime_mmap(struct drm_gem_object *obj, off_t *offp, size_t size,
     int prot, int *flagsp, int *advicep, struct uvm_object **uobjp,
     int *maxprotp)
 {
+	/* Direct native PRIME hook: offset is in bytes within this object. */
 	if (*offp < 0 || (uint64_t)*offp > obj->size ||
 	    size > obj->size - (size_t)*offp)
 		return -EINVAL;

@@ -65,7 +65,8 @@ static void virtio_gpu_free_object(struct drm_gem_object *obj)
 	struct virtio_gpu_object *bo = gem_to_virtio_gpu_obj(obj);
 	struct virtio_gpu_device *vgdev = obj->dev->dev_private;
 
-	if (bo->created && vgdev->vqs_ready)
+	/* A rejected submission must still wait for transport reset. */
+	if (bo->created)
 		virtio_gpu_queue_unref(vgdev, bo);
 	else
 		virtio_gpu_release_object(bo);
@@ -82,7 +83,6 @@ static const struct drm_gem_object_funcs virtio_gpu_gem_funcs = {
 	.get_sg_table = drm_gem_shmem_get_sg_table,
 	.vmap = drm_gem_shmem_vmap,
 	.vunmap = drm_gem_shmem_vunmap,
-	.mmap = &drm_gem_shmem_mmap,
 };
 
 struct drm_gem_object *virtio_gpu_create_object(struct drm_device *dev,

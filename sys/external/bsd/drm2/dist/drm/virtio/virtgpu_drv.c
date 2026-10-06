@@ -57,7 +57,7 @@ struct drm_driver virtio_gpu_driver = {
 #endif
 	.prime_handle_to_fd = drm_gem_prime_handle_to_fd,
 	.prime_fd_to_handle = drm_gem_prime_fd_to_handle,
-	.gem_prime_mmap = drm_gem_prime_mmap,
+	.gem_prime_mmap = drm_gem_shmem_prime_mmap,
 	.gem_prime_import_sg_table = virtgpu_gem_prime_import_sg_table,
 
 	.gem_create_object = virtio_gpu_create_object,

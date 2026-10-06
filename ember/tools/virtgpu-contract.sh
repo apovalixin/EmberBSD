@@ -172,6 +172,8 @@ cat > "$work/lifetime.c" <<'C'
 #include <errno.h>
 #define MAX_INLINE_RESP_SIZE 24
 #define VIRTIO_GPU_CMD_RESOURCE_UNREF 0x102
+#define VIRTIO_GPU_FLAG_FENCE 1
+#define GFP_KERNEL 0
 #define cpu_to_le32(x) (x)
 #define IS_ERR(p) ((uintptr_t)(p) >= (uintptr_t)-4095)
 #define PTR_ERR(p) ((int)(intptr_t)(p))
@@ -186,7 +188,7 @@ struct virtio_gpu_object {
 };
 struct dma_fence { int refs; };
 struct virtio_gpu_fence { struct dma_fence f; };
-struct virtio_gpu_ctrl_hdr { uint32_t type; };
+struct virtio_gpu_ctrl_hdr { uint32_t type, flags; uint64_t fence_id; };
 struct virtio_gpu_resource_unref { struct virtio_gpu_ctrl_hdr hdr; uint32_t resource_id; };
 struct virtio_gpu_vbuffer {
     struct virtio_gpu_device *vgdev;
@@ -198,7 +200,7 @@ struct virtio_gpu_vbuffer {
 static struct virtio_gpu_vbuffer *pending;
 static bool host_access;
 static int frees, map_frees, id_frees, cookie_frees, resets;
-static int allocation_error, submission_error;
+static int allocation_error, submission_error, fence_error, fence_frees;
 static void virtio_gpu_release_object(struct virtio_gpu_object *);
 static void virtio_gpu_queue_unref(struct virtio_gpu_device *, struct virtio_gpu_object *);
 static void virtio_gpu_cancel_vbuf(void *);
@@ -226,12 +228,23 @@ static void *virtio_gpu_alloc_cmd(struct virtio_gpu_device *v,
     b->vgdev = v; b->buf = b->payload; b->resp_size = 24;
     b->resp_buf = b->payload + 32; *bp = b; return b->buf;
 }
-static int virtio_gpu_queue_ctrl_buffer(struct virtio_gpu_device *v,
-    struct virtio_gpu_vbuffer *b) {
+static struct virtio_gpu_fence *virtio_gpu_fence_alloc(struct virtio_gpu_device *v) {
+    (void)v;
+    if (fence_error) return NULL;
+    struct virtio_gpu_fence *f = calloc(1, sizeof(*f)); assert(f);
+    f->f.refs = 1; return f;
+}
+static int virtio_gpu_queue_fenced_ctrl_buffer(struct virtio_gpu_device *v,
+    struct virtio_gpu_vbuffer *b, struct virtio_gpu_ctrl_hdr *hdr,
+    struct virtio_gpu_fence *f) {
     assert(((struct virtio_gpu_resource_unref *)b->buf)->resource_id == 7);
-    if (submission_error) {
-        virtio_gpu_stop(v, submission_error); virtio_gpu_cancel_vbuf(b);
-        return submission_error;
+    assert(hdr == (void *)b->buf && f);
+    hdr->flags = VIRTIO_GPU_FLAG_FENCE; hdr->fence_id = 1;
+    f->f.refs++; b->fence = f;
+    if (submission_error || !v->vqs_ready) {
+        int error = submission_error ? submission_error : -ENODEV;
+        virtio_gpu_stop(v, error); virtio_gpu_cancel_vbuf(b);
+        return error;
     }
     assert(!pending); pending = b; return 0;
 }
@@ -241,7 +254,10 @@ static void virtio_gpu_wait_done(struct virtio_gpu_vbuffer *b, int error) {
 static void virtio_gpu_array_put_free_delayed(struct virtio_gpu_device *v, void *a) {
     (void)v; (void)a; assert(false);
 }
-static void dma_fence_put(struct dma_fence *f) { assert(f->refs > 0); f->refs--; }
+static void dma_fence_put(struct dma_fence *f) {
+    assert(f->refs > 0);
+    if (--f->refs == 0) { fence_frees++; free(f); }
+}
 #define kfree free
 #define kvfree free
 static void kmem_cache_free(void *pool, struct virtio_gpu_vbuffer *b) {
@@ -261,22 +277,29 @@ static void lifetime_case(int how) {
     struct virtio_gpu_object *bo = calloc(1, sizeof(*bo)); assert(bo);
     bo->base.base.dev = &drm; bo->hw_res_handle = 7;
     bo->created = true; bo->mapped = bo->pinned = true;
-    frees = map_frees = id_frees = cookie_frees = resets = 0;
+    frees = map_frees = id_frees = cookie_frees = resets = fence_frees = 0;
     allocation_error = how == 2; submission_error = how == 3 ? -ENOMEM : 0;
+    fence_error = how == 4;
+    /* Stop has disabled submissions, but reset has not yet stopped DMA. */
+    if (how == 5) dev.vqs_ready = false;
     host_access = true; pending = NULL;
     virtio_gpu_free_object(&bo->base.base);
     if (how < 2) {
         assert(frees == 0 && map_frees == 0 && id_frees == 0 && pending);
         assert(bo->mapped && bo->pinned && host_access);
         struct virtio_gpu_vbuffer *b = pending; pending = NULL;
-        if (how == 0) { host_access = false; free_vbuf(&dev, b); }
+        assert(((struct virtio_gpu_ctrl_hdr *)b->buf)->flags & VIRTIO_GPU_FLAG_FENCE);
+        if (how == 0) {
+            host_access = false; dma_fence_put(&b->fence->f); free_vbuf(&dev, b);
+        }
         else { virtio_gpu_stop(&dev, -ENODEV); virtio_gpu_cancel_vbuf(b); }
     } else assert(resets == 1);
     assert(!host_access && frees == 1 && map_frees == 1 && id_frees == 1);
     assert(cookie_frees == (how == 2 ? 0 : 1));
+    assert(fence_frees == (how == 2 || how == 4 ? 0 : 1));
 }
 int main(void) {
-    for (int i = 0; i < 4; i++) lifetime_case(i);
+    for (int i = 0; i < 6; i++) lifetime_case(i);
     puts("VirtGPU production unref/ACK/reset/cancel GEM lifetime contracts passed");
     return 0;
 }

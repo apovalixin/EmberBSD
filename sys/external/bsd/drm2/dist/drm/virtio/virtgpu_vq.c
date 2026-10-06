@@ -47,7 +47,6 @@ __KERNEL_RCSID(0, "$NetBSD: virtgpu_vq.c,v 1.3 2021/12/18 23:45:45 riastradh Exp
 			       + MAX_INLINE_RESP_SIZE)
 
 struct virtio_gpu_wait {
-	wait_queue_head_t queue;
 	atomic_t refs;
 	bool done;
 	int error;
@@ -56,7 +55,6 @@ static void
 virtio_gpu_wait_put(struct virtio_gpu_wait *wait)
 {
 	if (atomic_dec_and_test(&wait->refs)) {
-		virtgpu_wait_destroy(&wait->queue);
 		kfree(wait);
 	}
 }
@@ -64,13 +62,14 @@ static void
 virtio_gpu_wait_done(struct virtio_gpu_vbuffer *vbuf, int error)
 {
 	struct virtio_gpu_wait *wait = vbuf->wait;
+	wait_queue_head_t *queue = &vbuf->vgdev->resp_wq;
 
 	if (wait) {
-		mutex_lock(&wait->queue.lock);
+		mutex_lock(&queue->lock);
 		wait->error = error;
 		wait->done = true;
-		DRM_WAKEUP_ALL(&wait->queue.cv, &wait->queue.lock);
-		mutex_unlock(&wait->queue.lock);
+		DRM_WAKEUP_ALL(&queue->cv, &queue->lock);
+		mutex_unlock(&queue->lock);
 		virtio_gpu_wait_put(wait);
 		vbuf->wait = NULL;
 	}
@@ -306,7 +305,9 @@ void virtio_gpu_dequeue_ctrl_func(struct work_struct *work)
 					bus_dmamap_sync(vgdev->vdev->dmat,
 					    bo->pages->sgl->sg_dmamap, 0,
 					    bo->base.base.size,
-					    BUS_DMASYNC_POSTWRITE | BUS_DMASYNC_POSTREAD);
+					    le32_to_cpu(cmd->type) ==
+					    VIRTIO_GPU_CMD_TRANSFER_FROM_HOST_3D ?
+					    BUS_DMASYNC_POSTREAD : BUS_DMASYNC_POSTWRITE);
 				}
 			}
 			if (le32_to_cpu(resp->flags) & VIRTIO_GPU_FLAG_FENCE)
@@ -419,6 +420,7 @@ virtio_gpu_queue_sync(struct virtio_gpu_device *vgdev,
     struct virtio_gpu_fence *fence)
 {
 	struct virtio_gpu_wait *wait;
+	bool own_fence = fence == NULL;
 	int ret;
 
 	wait = kzalloc(sizeof(*wait), GFP_KERNEL);
@@ -428,16 +430,41 @@ virtio_gpu_queue_sync(struct virtio_gpu_device *vgdev,
 		virtio_gpu_cancel_vbuf(vbuf);
 		return -ENOMEM;
 	}
-	init_waitqueue_head(&wait->queue);
+	/* A used descriptor alone does not establish GPU completion. */
+	if (own_fence) {
+		fence = virtio_gpu_fence_alloc(vgdev);
+		if (!fence) {
+			kfree(wait);
+			virtio_gpu_cancel_vbuf(vbuf);
+			return -ENOMEM;
+		}
+		if (vbuf->objs) {
+			ret = virtio_gpu_array_lock_resv(vbuf->objs);
+			if (ret) {
+				dma_fence_put(&fence->f);
+				kfree(wait);
+				virtio_gpu_cancel_vbuf(vbuf);
+				return ret;
+			}
+		}
+	}
+	if (!hdr)
+		hdr = (struct virtio_gpu_ctrl_hdr *)vbuf->buf;
 	atomic_set(&wait->refs, 2);
 	vbuf->wait = wait;
 	ret = virtio_gpu_queue_fenced_ctrl_buffer(vgdev, vbuf, hdr, fence);
-	if (!ret && !wait_event_timeout(wait->queue, wait->done, 5 * HZ)) {
+	if (own_fence)
+		dma_fence_put(&fence->f);
+	/* Reset wakes this common wait before cleanup drains any workers. */
+	if (!ret && !wait_event_timeout(vgdev->resp_wq,
+	    wait->done || !vgdev->vqs_ready, 5 * HZ)) {
 		virtio_gpu_stop(vgdev, -ETIMEDOUT);
 		ret = -ETIMEDOUT;
 	}
+	mutex_lock(&vgdev->resp_wq.lock);
 	if (!ret)
-		ret = wait->error;
+		ret = wait->done ? wait->error : -ENODEV;
+	mutex_unlock(&vgdev->resp_wq.lock);
 	virtio_gpu_wait_put(wait);
 	return ret;
 }
@@ -557,6 +584,7 @@ void virtio_gpu_queue_unref(struct virtio_gpu_device *vgdev,
 {
 	struct virtio_gpu_resource_unref *cmd;
 	struct virtio_gpu_vbuffer *vbuf;
+	struct virtio_gpu_fence *fence;
 
 	cmd = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd));
 	if (IS_ERR(cmd)) {
@@ -567,7 +595,14 @@ void virtio_gpu_queue_unref(struct virtio_gpu_device *vgdev,
 	cmd->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_RESOURCE_UNREF);
 	cmd->resource_id = cpu_to_le32(bo->hw_res_handle);
 	vbuf->release = bo;
-	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
+	fence = virtio_gpu_fence_alloc(vgdev);
+	if (!fence) {
+		virtio_gpu_stop(vgdev, -ENOMEM);
+		virtio_gpu_cancel_vbuf(vbuf);
+		return;
+	}
+	virtio_gpu_queue_fenced_ctrl_buffer(vgdev, vbuf, &cmd->hdr, fence);
+	dma_fence_put(&fence->f);
 }
 
 static void virtio_gpu_cmd_resource_inval_backing(struct virtio_gpu_device *vgdev,
@@ -1293,7 +1328,7 @@ int virtio_gpu_object_attach(struct virtio_gpu_device *vgdev,
 		ents[i].length = cpu_to_le32(map->dm_segs[i].ds_len);
 	}
 	bus_dmamap_sync(vgdev->vdev->dmat, map, 0, obj->base.base.size,
-	    BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
+	    BUS_DMASYNC_PREWRITE);
 	return virtio_gpu_cmd_resource_attach_backing(vgdev,
 	    obj->hw_res_handle, ents, nents, NULL);
 free_sg:
@@ -1311,7 +1346,7 @@ void virtio_gpu_object_detach(struct virtio_gpu_device *vgdev,
 	if (obj->pages) {
 		bus_dmamap_sync(vgdev->vdev->dmat, obj->pages->sgl->sg_dmamap,
 		    0, obj->base.base.size,
-		    BUS_DMASYNC_POSTWRITE | BUS_DMASYNC_POSTREAD);
+		    BUS_DMASYNC_POSTWRITE);
 		bus_dmamap_unload(vgdev->vdev->dmat, obj->pages->sgl->sg_dmamap);
 		drm_gem_shmem_vunmap(&obj->base.base, obj->dma_vaddr);
 		obj->dma_vaddr = NULL;

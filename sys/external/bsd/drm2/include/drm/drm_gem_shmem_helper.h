@@ -25,7 +25,7 @@ void *drm_gem_shmem_vmap(struct drm_gem_object *);
 void drm_gem_shmem_vunmap(struct drm_gem_object *, void *);
 void drm_gem_shmem_print_info(struct drm_printer *, unsigned int,
     const struct drm_gem_object *);
-int drm_gem_shmem_mmap(struct drm_gem_object *, off_t *, size_t, int,
+int drm_gem_shmem_prime_mmap(struct drm_gem_object *, off_t *, size_t, int,
     int *, int *, struct uvm_object **, int *);
 extern const struct uvm_pagerops drm_gem_shmem_uvm_ops;
 #endif
