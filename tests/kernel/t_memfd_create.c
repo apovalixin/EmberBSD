@@ -37,6 +37,8 @@ __RCSID("$NetBSD: t_memfd_create.c,v 1.7 2025/04/19 01:56:50 riastradh Exp $");
 #include <sys/stat.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdint.h>
+#include <unistd.h>
 
 #include <atf-c.h>
 
@@ -205,6 +207,146 @@ ATF_TC_BODY(mmap, tc)
 	    "mmap(NULL, %zu, 0x%x, 0x%x, %d, 0) failed: %s",
 	    rwbuf_size, PROT_READ|PROT_WRITE, MAP_SHARED, fd,
 	    strerror(errno));
+}
+
+static void
+check_partial_mapping(size_t filesize, off_t offset, size_t pagesize, int flags)
+{
+	struct stat st;
+	unsigned char *addr, byte;
+	size_t len, mapsize, i;
+	int fd;
+
+	len = filesize - (size_t)offset;
+	mapsize = ((len + pagesize - 1) / pagesize) * pagesize;
+	RL(fd = memfd_create("partial-page", MFD_ALLOW_SEALING));
+	RL(ftruncate(fd, (off_t)filesize));
+	RL(fcntl(fd, F_ADD_SEALS, F_SEAL_GROW|F_SEAL_SHRINK));
+
+	addr = mmap(NULL, len, PROT_READ|PROT_WRITE, flags, fd, offset);
+	ATF_CHECK_MSG(addr != MAP_FAILED,
+	    "size=%zu offset=%jd flags=%#x: mmap failed: %s",
+	    filesize, (intmax_t)offset, flags, strerror(errno));
+	if (addr == MAP_FAILED) {
+		RL(close(fd));
+		return;
+	}
+
+	ATF_CHECK_EQ(addr[0], 0);
+	ATF_CHECK_EQ(addr[len - 1], 0);
+	for (i = len; i < mapsize; i++)
+		ATF_REQUIRE_EQ_MSG(addr[i], 0, "nonzero byte after EOF at %zu", i);
+
+	addr[0] = 0x57;
+	addr[len - 1] = 0xa6;
+	ATF_REQUIRE_EQ(pread(fd, &byte, 1, offset), 1);
+	ATF_CHECK_EQ(byte, flags == MAP_PRIVATE ? 0 : len == 1 ? 0xa6 : 0x57);
+	ATF_REQUIRE_EQ(pread(fd, &byte, 1, (off_t)filesize - 1), 1);
+	ATF_CHECK_EQ(byte, flags == MAP_PRIVATE ? 0 : 0xa6);
+	if (len < mapsize)
+		addr[mapsize - 1] = 0x7c;
+	ATF_REQUIRE_EQ(pread(fd, &byte, 1, (off_t)filesize), 0);
+	RL(fstat(fd, &st));
+	ATF_CHECK_EQ(st.st_size, (off_t)filesize);
+
+	/* A mapping retains the object after its descriptor is closed. */
+	RL(close(fd));
+	ATF_CHECK_EQ(addr[len - 1], 0xa6);
+	RL(munmap(addr, len));
+}
+
+ATF_TC(mmap_partial_page);
+ATF_TC_HEAD(mmap_partial_page, tc)
+{
+
+	atf_tc_set_md_var(tc, "descr",
+	    "Map partial final pages without changing the logical file size");
+}
+ATF_TC_BODY(mmap_partial_page, tc)
+{
+	long page;
+	size_t i;
+
+	page = sysconf(_SC_PAGESIZE);
+	ATF_REQUIRE(page > 1);
+	ATF_REQUIRE((size_t)page < SIZE_MAX / 4);
+	const size_t lengths[] = {
+		1, page - 1, page, page + 1, 2 * page - 1, 2 * page, 1920000,
+	};
+
+	for (i = 0; i < __arraycount(lengths); i++) {
+		check_partial_mapping(lengths[i], 0, page, MAP_SHARED);
+		check_partial_mapping(lengths[i], 0, page, MAP_PRIVATE);
+		if (lengths[i] > (size_t)page)
+			check_partial_mapping(lengths[i], page, page, MAP_SHARED);
+	}
+}
+
+ATF_TC(mmap_partial_seals);
+ATF_TC_HEAD(mmap_partial_seals, tc)
+{
+
+	atf_tc_set_md_var(tc, "descr",
+	    "Write seals still protect mappings with a partial final page");
+}
+ATF_TC_BODY(mmap_partial_seals, tc)
+{
+	const int seals[] = { F_SEAL_WRITE, F_SEAL_FUTURE_WRITE };
+	void *addr;
+	long page;
+	size_t i, len;
+	int fd;
+
+	page = sysconf(_SC_PAGESIZE);
+	ATF_REQUIRE(page > 1);
+	len = (size_t)page + 1;
+	for (i = 0; i < __arraycount(seals); i++) {
+		RL(fd = memfd_create("partial-seal", MFD_ALLOW_SEALING));
+		RL(ftruncate(fd, (off_t)len));
+		RL(fcntl(fd, F_ADD_SEALS, seals[i]));
+		ATF_CHECK_ERRNO(EPERM,
+		    mmap(NULL, len, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0)
+		    == MAP_FAILED);
+		addr = mmap(NULL, len, PROT_READ, MAP_SHARED, fd, 0);
+		ATF_REQUIRE_MSG(addr != MAP_FAILED, "read-only mmap: %s",
+		    strerror(errno));
+		RL(munmap(addr, len));
+		addr = mmap(NULL, len, PROT_READ|PROT_WRITE, MAP_PRIVATE, fd, 0);
+		ATF_REQUIRE_MSG(addr != MAP_FAILED, "private mmap: %s",
+		    strerror(errno));
+		RL(munmap(addr, len));
+		RL(close(fd));
+	}
+}
+
+ATF_TC(mmap_range);
+ATF_TC_HEAD(mmap_range, tc)
+{
+
+	atf_tc_set_md_var(tc, "descr",
+	    "Keep rejecting empty files, negative offsets and whole pages past EOF");
+}
+ATF_TC_BODY(mmap_range, tc)
+{
+	long page;
+	int fd;
+
+	page = sysconf(_SC_PAGESIZE);
+	ATF_REQUIRE(page > 1);
+	RL(fd = memfd_create("mapping-range", 0));
+	ATF_CHECK_ERRNO(EINVAL,
+	    mmap(NULL, page, PROT_READ, MAP_SHARED, fd, 0) == MAP_FAILED);
+	RL(ftruncate(fd, 1));
+	ATF_CHECK_ERRNO(EINVAL,
+	    mmap(NULL, 2 * page, PROT_READ, MAP_SHARED, fd, 0) == MAP_FAILED);
+	ATF_CHECK_ERRNO(EINVAL,
+	    mmap(NULL, page, PROT_READ, MAP_SHARED, fd, page) == MAP_FAILED);
+	ATF_CHECK_ERRNO(EINVAL,
+	    mmap(NULL, page, PROT_READ, MAP_SHARED, fd, -page) == MAP_FAILED);
+	ATF_CHECK_ERRNO(EINVAL,
+	    mmap(NULL, page, PROT_READ, MAP_SHARED, fd,
+	    INT64_MAX - (INT64_MAX % page)) == MAP_FAILED);
+	RL(close(fd));
 }
 
 ATF_TC(create_no_sealing);
@@ -481,6 +623,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, read_write);
 	ATF_TP_ADD_TC(tp, truncate);
 	ATF_TP_ADD_TC(tp, mmap);
+	ATF_TP_ADD_TC(tp, mmap_partial_page);
+	ATF_TP_ADD_TC(tp, mmap_partial_seals);
+	ATF_TP_ADD_TC(tp, mmap_range);
 	ATF_TP_ADD_TC(tp, create_no_sealing);
 	ATF_TP_ADD_TC(tp, seal_seal);
 	ATF_TP_ADD_TC(tp, seal_shrink);
