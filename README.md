@@ -6,8 +6,10 @@ EmberBSD is an independent fork of [NetBSD](https://github.com/NetBSD/src),
 based on version 11, for single-board computers and embedded systems.
 It adds hardware support for Raspberry Pi 5 and related boards, for
 the Allwinner A733 and for the ESP32-S31, a 32-bit RISC-V chip with
-16 MB of memory: device drivers, kernel fixes, device trees, and tools
-for building the kernel and UEFI firmware.
+16 MB of memory. The OS and its companion projects bring together board
+support, local AI, robotics, graphical interfaces, and the system work
+needed for GPU acceleration. Capabilities and validation limits are
+summarized below; application stacks are installed separately.
 
 ## Purpose and getting started
 
@@ -63,9 +65,75 @@ testing, following the accepting project's rules.
 
 ## What this fork adds to NetBSD 11
 
-EmberBSD stays NetBSD 11 in everything except hardware support: the
-same userland, the same pkgsrc packages, the same licence. The
-additions are:
+EmberBSD builds on NetBSD 11 to make useful device workflows reproducible:
+local inference, robot telemetry, vision and positioning, and graphical
+controls. This tree owns the OS changes; Ports and Examples supply optional
+application stacks, adaptations and runnable checks. Small installations
+can keep only the components they need. Upstream components retain their
+own licenses and authorship.
+
+The following results were checked on **2026-10-06**. Application tests on
+an AArch64 VM do not establish support on every board in the hardware table.
+
+### Local AI and robotics
+
+- **Local text and speech models:** pkgsrc recipes for llama.cpp 0.6.0 and
+  whisper.cpp 1.9.4, with separately supplied models. Native AArch64 VM tests
+  cover package installation, text generation, a loopback HTTP completion
+  service and WAV transcription on CPU. This is a usable starting point for
+  local assistants; microphone capture, image understanding and GPU/NPU
+  inference still need validation. See the [AI packages](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/ai-cpu)
+  and [model execution example](https://github.com/neonix20b/EmberBSD-Examples/tree/main/ai/local-inference).
+- **Robot telemetry and commands:** Zenoh-Pico 1.10.1 packages and a C device
+  controller exchange typed data and commands with ROS 2 Jazzy through a
+  C++ bridge. The two-VM test covers acknowledgements, stale-command rejection
+  and reconnection. This connects EmberBSD devices to ROS systems; it is
+  bridge interoperability, not a native ROS 2 distribution. See the
+  [Zenoh/ROS 2 example](https://github.com/neonix20b/EmberBSD-Examples/tree/main/robotics/zenoh-ros2).
+- **Vision, geometry and positioning:** OpenCV 5.0.0, Eigen 5.0.1 and gpsd
+  3.27.5 build and pass installed-consumer tests on AArch64. Checks include
+  image processing, features and camera-pose recovery, numerical solvers,
+  transforms, and a real gpsd process receiving synthetic GNSS data.
+  These are [experimental source builds](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/robotics-foundations);
+  physical cameras/GNSS receivers and accelerated vision remain unverified.
+
+### Graphical interfaces
+
+- **Desktop and touch-oriented applications:** [GNOME/X11](https://github.com/neonix20b/EmberBSD-Examples/tree/main/desktop/gnome-utm)
+  provides a tested desktop scenario. [Phosh 0.58.0](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/phosh)
+  runs inside it with software-rendered Wayland, application switching,
+  GTK applications and the Stevia English/Russian screen keyboard.
+  [Enlightenment 0.27.1/EFL 1.28.1](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/enlightenment)
+  runs with system Lua 5.4; window management and session exit are tested.
+  These VM checks provide interface prototypes, not validated phone images.
+- **Current KDE/Qt integration:** KWin 6.7.5 runs a nested Qt Wayland window
+  with software rendering and tested keyboard input. Plasma Mobile 6.7.5
+  builds and installs with checked library loading and QML components.
+  A complete mobile shell workflow, native display and power management
+  still need validation. See the [Plasma Mobile port](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/plasma-mobile).
+
+### GPU foundations and NPU direction
+
+- **Native graphics infrastructure:** experimental VirtIO DRM/KMS, UVM-backed
+  GEM buffers and PRIME sharing make direct Wayland sessions possible.
+  UTM tests cover visible KMS output, 32 cross-process buffer-lifetime cycles
+  and labwc/Pixman displaying Kate without Xorg. The tree also includes DRM
+  device-identity, fence-validation, console-recovery and partial-page memfd
+  fixes; their individual build/runtime boundaries are documented separately.
+  See the [VirtGPU implementation](sys/external/bsd/drm2/virtio/README.md),
+  [DRM identity checks](ember/boot/drm-native-identity.md) and
+  [graphics probes](https://github.com/neonix20b/EmberBSD-Examples/tree/main/desktop/wayland-utm).
+  VirGL remains disabled; GPU rendering, reliable console recovery and
+  Vulkan Compute are not yet established.
+- **Physical GPU and NPU porting targets:** CIX P1 is the first selected
+  direction: Mali-G720 through Panthor/[Mesa PanVK](https://docs.mesa3d.org/drivers/panfrost.html),
+  and Zhouyi v3/X2 through the [Compass driver/runtime sources](https://github.com/Arm-China/Compass_NPU_Driver).
+  A733 PowerVR/Vivante integration is a separate investigation. These are
+  porting targets, not available EmberBSD acceleration. Board bring-up,
+  driver/DMA integration, compatible runtime and real model execution must
+  all pass before an accelerated AI workflow is claimed.
+
+### Board support and system builds
 
 - **Allwinner A733** (Orange Pi Zero 4 and Zero 3W), a chip the base
   system has no support for: eight cores, the card at SDR104 speed,
@@ -81,14 +149,19 @@ additions are:
 - **Kernel fixes found on these boards** that are not specific to
   them: the `bwfm` Wi-Fi driver stalling on large transfers and after
   an access point asks the client to change band, idle cores on
-  aarch64 missing a reschedule, the SD host controller driver. Each
-  is a separate diff in `ember/patches` with its origin stated.
-- **A reproducible build**: the kernel, the firmware and a card image
-  come from a pinned revision; one image boots several of the boards.
+  aarch64 missing a reschedule, and the SD host controller driver.
+  Source changes preserve their provenance; `ember/patches` records the
+  original board adaptations already applied to this tree.
+- **Reproducible builds and development:** pinned kernel/UEFI inputs and
+  checked firmware assets, pkgsrc overlays, versioned source probes and
+  standalone examples. [Developer skills](#connect-developer-skills) help
+  AI coding assistants find the owning project, test changes and prepare
+  contributions. A general validated installation image is not yet released.
 
 The costs are equally plain. Fixes from upstream are merged by hand.
-Only what the table below marks "Tested" has been seen working, and
-only on the boards we have. Wi-Fi on the A733 boards and the ESP32-S31
+Only what the board table below marks "Tested" is claimed on physical
+hardware. Each application or graphics result has its own test environment
+and limits in the linked documentation. Wi-Fi on the A733 boards and the ESP32-S31
 needs vendor files that are not open.
 
 ## Supported boards
