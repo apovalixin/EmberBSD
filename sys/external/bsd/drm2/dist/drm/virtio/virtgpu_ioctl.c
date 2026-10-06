@@ -68,7 +68,7 @@ static int virtio_gpu_execbuffer_ioctl(struct drm_device *dev, void *data,
 	uint32_t *bo_handles = NULL;
 	void __user *user_bo_handles = NULL;
 	struct virtio_gpu_object_array *buflist = NULL;
-	struct sync_file *sync_file;
+	struct sync_file *sync_file = NULL;
 	struct file *fp = NULL;
 	int in_fence_fd = exbuf->fence_fd;
 	int out_fence_fd = -1;
@@ -77,28 +77,33 @@ static int virtio_gpu_execbuffer_ioctl(struct drm_device *dev, void *data,
 	if (vgdev->has_virgl_3d == false)
 		return -ENOSYS;
 
-	if (exbuf->size == 0 || exbuf->size > vgdev->vdev->max_request - 256 ||
+	exbuf->fence_fd = -1;
+	if (!vfpriv || !vfpriv->ctx_id)
+		return -EINVAL;
+	if (vgdev->vdev->max_request <= 256 || exbuf->size == 0 ||
+	    exbuf->size > vgdev->vdev->max_request - 256 ||
 	    exbuf->num_bo_handles > 65536)
 		return -EINVAL;
 	if ((exbuf->flags & ~VIRTGPU_EXECBUF_FLAGS))
 		return -EINVAL;
 
-	exbuf->fence_fd = -1;
-
 	if (exbuf->flags & VIRTGPU_EXECBUF_FENCE_FD_IN) {
 		struct dma_fence *in_fence;
+		long waited;
 
 		in_fence = sync_file_get_fence(in_fence_fd);
 
 		if (!in_fence)
 			return -EINVAL;
 
-		/*
-		 * Wait if the fence is from a foreign context, or if the fence
-		 * array contains any fence from a foreign context.
-		 */
-		ret = 0;
-		ret = dma_fence_wait(in_fence, true);
+		/* Reject an unresolved dependency before submitting any command. */
+		waited = dma_fence_wait_timeout(in_fence, true, 15 * HZ);
+		if (waited > 0) {
+			ret = dma_fence_get_status(in_fence);
+			ret = ret > 0 ? 0 : (ret < 0 ? ret : -EIO);
+		} else {
+			ret = waited < 0 ? waited : -ETIMEDOUT;
+		}
 
 		dma_fence_put(in_fence);
 		if (ret)
@@ -165,15 +170,20 @@ static int virtio_gpu_execbuffer_ioctl(struct drm_device *dev, void *data,
 			ret = -ENOMEM;
 			goto out_memdup;
 		}
-
-		exbuf->fence_fd = out_fence_fd;
-		fd_install(out_fence_fd, sync_file->file);
-		fd_set_exclose(curlwp, out_fence_fd, true);
 	}
 
-	virtio_gpu_cmd_submit(vgdev, buf, exbuf->size,
+	/* Submit consumes buf and the locked array on both success and failure. */
+	ret = virtio_gpu_cmd_submit(vgdev, buf, exbuf->size,
 			      vfpriv->ctx_id, buflist, out_fence);
+	buflist = NULL;
+	if (!ret && out_fence_fd >= 0) {
+		fd_set_exclose(curlwp, out_fence_fd, true);
+		fd_install(out_fence_fd, sync_file->file);
+		exbuf->fence_fd = out_fence_fd;
+	}
 	dma_fence_put(&out_fence->f);
+	if (ret)
+		goto out_unused_fd;
 	return 0;
 
 out_memdup:
@@ -186,8 +196,12 @@ out_unused_fd:
 	if (buflist)
 		virtio_gpu_array_put_free(buflist);
 
-	if (out_fence_fd >= 0)
+	if (out_fence_fd >= 0) {
+		/* fd_abort frees the private file but does not call fo_close. */
+		if (sync_file)
+			(void)fp->f_ops->fo_close(fp);
 		fd_abort(curproc, fp, out_fence_fd);
+	}
 
 	return ret;
 }

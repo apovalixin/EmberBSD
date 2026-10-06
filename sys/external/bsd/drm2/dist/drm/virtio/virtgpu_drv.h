@@ -367,7 +367,11 @@ int virtio_gpu_cmd_context_attach_resource(struct virtio_gpu_device *vgdev,
 int virtio_gpu_cmd_context_detach_resource(struct virtio_gpu_device *vgdev,
 					    uint32_t ctx_id,
 					    struct virtio_gpu_object_array *objs);
-void virtio_gpu_cmd_submit(struct virtio_gpu_device *vgdev,
+/*
+ * Consumes data/locked objs on every call; fence stays caller-owned.
+ * Zero means accepted by the transport, not completed by the GPU.
+ */
+int virtio_gpu_cmd_submit(struct virtio_gpu_device *vgdev,
 			   void *data, uint32_t data_size,
 			   uint32_t ctx_id,
 			   struct virtio_gpu_object_array *objs,

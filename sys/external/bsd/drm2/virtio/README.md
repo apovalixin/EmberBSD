@@ -22,8 +22,10 @@ The attachment requires modern VirtIO and negotiates no optional GPU
 features. VIRGL, EDID, blob resources and context-init remain disabled.
 The standard VirtGPU ioctl numbers and permission flags are retained;
 unsupported 3D requests fail through their existing feature checks.
-The retained 3D code needs native error propagation and readback DMA
-preparation before VIRGL can be enabled and tested.
+The retained 3D code has a source contract for
+[asynchronous EXECBUFFER errors and private fence descriptors](submit-ownership.md).
+Transfer error propagation and readback DMA preparation remain required
+before VIRGL can be enabled and tested.
 
 ## Provenance
 
