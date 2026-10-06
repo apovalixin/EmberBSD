@@ -1,4 +1,5 @@
 /* $NetBSD: __aarch64_lse.S,v 1.7 2022/08/06 21:31:33 riastradh Exp $ */
+/* Origin: EmberBSD; normalize narrow LL/SC CAS expected arguments. */
 
 /*-
  * Copyright (c) 2021 The NetBSD Foundation, Inc.
@@ -171,7 +172,13 @@ ENTRY_NP(CAS_FUNC)
 	ret
 99:
 #endif
+#if SZ == 1
+	uxtb	w4, w0			/* ignore unspecified upper bits */
+#elif SZ == 2
+	uxth	w4, w0
+#else
 	mov	x4, x0			/* need x0 for return value	*/
+#endif
 	DMB				/* potential barrier		*/
 1:	LDXR	R0, [x2]		/* load old value		*/
 	cmp	R0, R4			/* compare			*/
