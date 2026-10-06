@@ -1,4 +1,5 @@
 /*	$NetBSD: drm_drv.c,v 1.24 2022/10/15 15:19:28 riastradh Exp $	*/
+/* Origin: EmberBSD; AI-assisted registered native DRM identity. */
 
 /*
  * Created: Fri Jan 19 10:48:35 2001 by faith@acm.org
@@ -52,6 +53,9 @@ __KERNEL_RCSID(0, "$NetBSD: drm_drv.c,v 1.24 2022/10/15 15:19:28 riastradh Exp $
 #include "drm_legacy.h"
 
 #include <linux/nbsd-namespace.h>
+#ifdef __NetBSD__
+#include <drm/drm_sysctl.h>
+#endif
 
 MODULE_AUTHOR("Gareth Hughes, Leif Delgass, José Fonseca, Jon Smirl");
 MODULE_DESCRIPTION("DRM shared core routines");
@@ -677,6 +681,10 @@ int drm_dev_init(struct drm_device *dev,
 	if (WARN_ON(!parent))
 		return -EINVAL;
 
+#ifdef __NetBSD__
+	dev->native_identity = NULL;
+	memset(&dev->native_pci, 0, sizeof(dev->native_pci));
+#endif
 	kref_init(&dev->ref);
 	dev->dev = get_device(parent);
 	dev->driver = driver;
@@ -1071,6 +1079,15 @@ int drm_dev_register(struct drm_device *dev, unsigned long flags)
 			goto err_minors;
 	}
 
+#ifdef __NetBSD__
+	ret = drm_sysctl_identity_register(dev);
+	if (ret) {
+		if (dev->driver->load && dev->driver->unload)
+			dev->driver->unload(dev);
+		goto err_minors;
+	}
+#endif
+
 	if (drm_core_check_feature(dev, DRIVER_MODESET))
 		drm_modeset_register_all(dev);
 
@@ -1085,6 +1102,7 @@ int drm_dev_register(struct drm_device *dev, unsigned long flags)
 	goto out_unlock;
 
 err_minors:
+	dev->registered = false;
 	remove_compat_control_link(dev);
 	drm_minor_unregister(dev, DRM_MINOR_PRIMARY);
 	drm_minor_unregister(dev, DRM_MINOR_RENDER);
@@ -1112,6 +1130,11 @@ EXPORT_SYMBOL(drm_dev_register);
  */
 void drm_dev_unregister(struct drm_device *dev)
 {
+#ifdef __NetBSD__
+	/* Remove metadata before minors can disappear or be reused. */
+	drm_sysctl_identity_unregister(dev);
+#endif
+
 	if (drm_core_check_feature(dev, DRIVER_LEGACY))
 		drm_lastclose(dev);
 

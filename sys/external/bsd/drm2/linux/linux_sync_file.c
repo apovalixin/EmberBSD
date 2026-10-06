@@ -1,4 +1,5 @@
 /*	$NetBSD: linux_sync_file.c,v 1.3 2024/04/28 15:35:39 riastradh Exp $	*/
+/* Origin: EmberBSD; AI-assisted native sync descriptor validation. */
 
 /*-
  * Copyright (c) 2020 The NetBSD Foundation, Inc.
@@ -215,8 +216,13 @@ sync_file_get_fence(int fd)
 
 	if ((fp = fd_getfile(fd)) == NULL)
 		return NULL;
-	sf = fp->f_data;
-	fence = dma_fence_get(sf->sf_fence);
+	/* fd_getfile holds the file alive through identity and fence lookup. */
+	fence = NULL;
+	if (fp->f_type == DTYPE_MISC && fp->f_ops == &sync_file_ops) {
+		sf = fp->f_data;
+		if (sf != NULL)
+			fence = dma_fence_get(sf->sf_fence);
+	}
 	fd_putfile(fd);
 
 	return fence;

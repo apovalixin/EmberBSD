@@ -5,6 +5,7 @@
 #include <sys/device.h>
 #include <sys/errno.h>
 #include <sys/systm.h>
+#include <dev/pci/pcireg.h>
 #include <dev/pci/pcivar.h>
 #include <dev/pci/virtiovar.h>
 #include <drm/drm_drv.h>
@@ -99,6 +100,9 @@ virtiodrm_set_busid(struct drm_device *dev)
 	device_t transport = device_parent(dev->dev);
 	device_t bus = device_parent(transport);
 	struct pci_softc *psc;
+	struct drm_native_pci_record *r = &dev->native_pci;
+	pcitag_t tag;
+	pcireg_t id, class, subsystem;
 	int d, f;
 	char busid[40];
 
@@ -110,6 +114,26 @@ virtiodrm_set_busid(struct drm_device *dev)
 	f = device_locator(transport, PCICF_FUNCTION);
 	if (d < 0 || d >= 32 || f < 0 || f >= 8)
 		return -ENODEV;
+	/* Snapshot public identity once, using the actual transport locators. */
+	tag = pci_make_tag(psc->sc_pc, psc->sc_bus, d, f);
+	id = pci_conf_read(psc->sc_pc, tag, PCI_ID_REG);
+	class = pci_conf_read(psc->sc_pc, tag, PCI_CLASS_REG);
+	subsystem = pci_conf_read(psc->sc_pc, tag, PCI_SUBSYS_ID_REG);
+	if (PCI_VENDOR(id) == 0xffff || PCI_VENDOR(id) == 0)
+		return -ENODEV;
+	r->version = DRM_NATIVE_PCI_VERSION;
+	r->length = sizeof(*r);
+	r->flags = DRM_NATIVE_REVISION;
+	r->bus_type = DRM_NATIVE_BUS_PCI;
+	r->domain = pci_get_segment(psc->sc_pc);
+	r->bus = psc->sc_bus;
+	r->device = d;
+	r->function = f;
+	r->vendor = PCI_VENDOR(id);
+	r->product = PCI_PRODUCT(id);
+	r->subvendor = PCI_SUBSYS_VENDOR(subsystem);
+	r->subproduct = PCI_SUBSYS_ID(subsystem);
+	r->revision = PCI_REVISION(class);
 	snprintf(busid, sizeof(busid), "pci:%04x:%02x:%02x.%d",
 	    pci_get_segment(psc->sc_pc), psc->sc_bus, d, f);
 	aprint_normal_dev(dev->dev, "DRM bus ID %s\n", busid);

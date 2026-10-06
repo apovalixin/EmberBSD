@@ -1,4 +1,5 @@
 /*	$NetBSD: drm_device.h,v 1.11 2022/10/15 15:19:28 riastradh Exp $	*/
+/* Origin: EmberBSD; AI-assisted native DRM identity lifetime. */
 
 #ifndef _DRM_DEVICE_H_
 #define _DRM_DEVICE_H_
@@ -13,6 +14,7 @@
 
 #ifdef __NetBSD__
 #include <drm/drm_wait_netbsd.h>
+#include <drm/drm_native_identity.h>
 #include <dev/sysmon/sysmonvar.h>
 #endif
 
@@ -55,6 +57,11 @@ enum switch_power_state {
  * may contain multiple heads.
  */
 struct drm_device {
+#ifdef __NetBSD__
+	/* Owned until sysctl readers drain during unregister. */
+	struct drm_native_identity *native_identity;
+	struct drm_native_pci_record native_pci;
+#endif
 	/**
 	 * @legacy_dev_list:
 	 *

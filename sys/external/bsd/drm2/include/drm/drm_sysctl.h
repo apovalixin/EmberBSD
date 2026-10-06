@@ -1,3 +1,4 @@
+/* Origin: EmberBSD; AI-assisted native DRM identity interface. */
 /*-
  * Copyright (c) 2014 The NetBSD Foundation, Inc.
  * All rights reserved.
@@ -27,6 +28,10 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 struct sysctllog;
+struct drm_device;
+
+int drm_sysctl_identity_register(struct drm_device *);
+void drm_sysctl_identity_unregister(struct drm_device *);
 
 struct drm_sysctl_def {
 	struct sysctllog *log;

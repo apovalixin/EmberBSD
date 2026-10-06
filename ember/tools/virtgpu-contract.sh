@@ -833,13 +833,31 @@ cat > "$work/busid.c" <<'C'
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
+#include <stdint.h>
+#include "drm_native_identity.h"
+typedef uint32_t pcitag_t, pcireg_t;
+#define PCI_ID_REG 0
+#define PCI_CLASS_REG 8
+#define PCI_SUBSYS_ID_REG 44
+#define PCI_VENDOR(v) ((v)&0xffff)
+#define PCI_PRODUCT(v) (((v)>>16)&0xffff)
+#define PCI_SUBSYS_VENDOR PCI_VENDOR
+#define PCI_SUBSYS_ID PCI_PRODUCT
+#define PCI_REVISION(v) ((v)&255)
+static pcitag_t pci_make_tag(unsigned pc, int b, int d, int f) {
+    assert(pc==3 && b==7 && d==4 && f==2); return 123;
+}
+static pcireg_t pci_conf_read(unsigned pc, pcitag_t tag, int reg) {
+    assert(pc==3 && tag==123);
+    return reg==PCI_ID_REG ? 0x10501af4 : reg==PCI_CLASS_REG ? 1 : 0x11001af4;
+}
 #define PCICF_DEV 0
 #define PCICF_FUNCTION 1
 struct device {
     struct device *parent; const char *name, *kind; void *priv; int locators[2];
 };
 typedef struct device *device_t;
-struct drm_device { device_t dev; char unique[40]; };
+struct drm_device { device_t dev; char unique[40]; struct drm_native_pci_record native_pci; };
 struct pci_softc {
     unsigned int sc_pc; int sc_bus;
     struct { device_t c_dev; } sc_devices[32 * 8];
@@ -882,5 +900,5 @@ int main(void) {
     return 0;
 }
 C
-${CC:-cc} -std=c11 -Wall -Wextra -Werror "$work/busid.c" -o "$work/busid"
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -I"$src/sys/external/bsd/drm2/include/drm" "$work/busid.c" -o "$work/busid"
 "$work/busid"

@@ -1,4 +1,5 @@
 /*	$NetBSD: drm_sysctl.c,v 1.8 2021/12/19 11:36:57 riastradh Exp $	*/
+/* Origin: EmberBSD; AI-assisted read-only native DRM PCI metadata. */
 
 /*-
  * Copyright (c) 2014 The NetBSD Foundation, Inc.
@@ -35,6 +36,11 @@ __KERNEL_RCSID(0, "$NetBSD: drm_sysctl.c,v 1.8 2021/12/19 11:36:57 riastradh Exp
 #include <sys/types.h>
 #include <sys/systm.h>
 #include <sys/sysctl.h>
+#include <sys/conf.h>
+#include <sys/kmem.h>
+#include <drm/drm_device.h>
+#include <drm/drm_file.h>
+#include <drm/drm_native_identity.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 /* We need to specify the type programmatically */
@@ -168,4 +174,82 @@ void
 drm_sysctl_fini(struct drm_sysctl_def *def)
 {
 	sysctl_teardown(&def->log);
+}
+
+/* sysctl lookup and teardown serialize immutable data with sysctl_treelock. */
+struct drm_native_identity {
+	struct sysctllog *log;
+	struct drm_native_pci_record record;
+};
+
+int
+drm_sysctl_identity_register(struct drm_device *dev)
+{
+	struct drm_native_identity *identity;
+	struct drm_native_pci_record *r;
+	const struct sysctlnode *root = NULL;
+	const struct drm_minor *nodes[2] = { dev->primary, dev->render };
+	devmajor_t maj;
+	char name[32];
+	unsigned int i;
+	int error;
+
+	/* Drivers without a cached record retain existing discovery. */
+	if (dev->native_pci.version != DRM_NATIVE_PCI_VERSION)
+		return 0;
+	CTASSERT(sizeof(struct drm_native_pci_record) == 68);
+	KASSERT(dev->native_identity == NULL);
+	maj = cdevsw_lookup_major(&drm_cdevsw);
+	if (maj == NODEVMAJOR || dev->primary == NULL)
+		return -ENODEV;
+
+	identity = kmem_zalloc(sizeof(*identity), KM_SLEEP);
+	r = &identity->record;
+	*r = dev->native_pci;
+	r->flags |= DRM_NATIVE_PRIMARY;
+	r->primary_major = maj;
+	r->primary_minor = dev->primary->index;
+	if (dev->render != NULL) {
+		r->flags |= DRM_NATIVE_RENDER;
+		r->render_major = maj;
+		r->render_minor = dev->render->index;
+	}
+
+	/* The shared permanent parent belongs to the DRM core. */
+	error = sysctl_createv(NULL, 0, NULL, &root, CTLFLAG_PERMANENT,
+	    CTLTYPE_NODE, "drm2", NULL, NULL, 0, NULL, 0,
+	    CTL_HW, CTL_CREATE, CTL_EOL);
+	if (error)
+		goto fail;
+	for (i = 0; i < __arraycount(nodes); i++) {
+		if (nodes[i] == NULL)
+			continue;
+		snprintf(name, sizeof(name), "identity%d", nodes[i]->index);
+		error = sysctl_createv(&identity->log, 0, &root, NULL, 0,
+		    CTLTYPE_STRUCT, name, SYSCTL_DESCR("DRM native PCI identity"),
+		    NULL, 0, r, sizeof(*r), CTL_CREATE, CTL_EOL);
+		if (error)
+			goto fail;
+	}
+	dev->native_identity = identity;
+	return 0;
+
+fail:
+	/* A failed second leaf must not leave the first one published. */
+	sysctl_teardown(&identity->log);
+	kmem_free(identity, sizeof(*identity));
+	return -error;
+}
+
+void
+drm_sysctl_identity_unregister(struct drm_device *dev)
+{
+	struct drm_native_identity *identity = dev->native_identity;
+
+	if (identity == NULL)
+		return;
+	/* This waits for in-flight sysctl lookups before freeing their data. */
+	sysctl_teardown(&identity->log);
+	dev->native_identity = NULL;
+	kmem_free(identity, sizeof(*identity));
 }
