@@ -7,10 +7,11 @@ Target: the current NetBSD 11/aarch64-based EmberBSD installation.
 On 2026-10-06, `67a611acb9b` booted with the native DRM child. PCI discovery,
 32 cross-process GEM/PRIME mapping lifetimes and visible 800x600 KMS color
 bars passed. A native labwc/Pixman session displayed Kate without Xorg.
-Absolute pointer handling and visible console recovery still need correction;
-this is not a usable desktop or accelerated-session acceptance result. Wscons
-keyboard traces show correct key/modifier transitions; rapid UI injection is
-not a reliable keyboard acceptance test. Reproducible
+Physical pointer motion, clicks, dragging, typing and saving a file passed
+with the Ports absolute-input adaptation. Console repair source, native kernel
+builds and contract tests also pass; visible VT handoff and exit/crash recovery
+still need runtime acceptance. These results do not establish GPU rendering.
+Rapid UI injection is not a reliable physical-input acceptance test. Reproducible
 third-party recipes and patches live in
 [EmberBSD Ports](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/wayland-utm),
 and runtime probes live in
@@ -145,11 +146,23 @@ or crash. A nested test receives input through Xorg and cannot validate this.
 Keep XDM for the saved X11 session; an XDM .xsession is not a native Wayland
 launcher. Introduce a separate console/session entry for Wayland testing.
 
-Pin a compatible Mesa/libdrm build with VirGL, EGL/GBM, GLES and Wayland EGL
-in an isolated prefix. The wlroots recipe prefers pkgsrc Mesa for GLES;
-select versions from those dependencies and the tested VirtGPU ABI, not from
-the age of base X11 Mesa. Record exact library paths to avoid mixing stacks.
-Remove software overrides only in the explicit GPU test session.
+Select current supported common dependencies and carry compatibility fixes
+in Ports. Its Mesa 26.2.4 source recipe selects classic VirGL, softpipe and
+llvmpipe with common LLVM 23.1.2/GCC 16.2, EGL/GBM, GLES, X11 and Wayland.
+ORC JIT is our selected current LLVM path, not an AArch64 upstream requirement.
+The complete new build and software/JIT runtime remain pending. Existing
+Mesa 21 software results apply only to the temporary recovery/comparison stack.
+Remove that prefix after current Mesa and rebuilt wlroots/labwc pass the same
+lifecycle and native-input/session checks. Do not keep older per-application
+LLVM or disable llvmpipe to bypass compatibility failures.
+
+Stage the common stack privately before any package replacement. Mesa 26 no
+longer installs shared libglapi and instead uses a versioned libgallium DSO.
+Audit actual EGL/GLX/GBM, Qt/GNOME/Xorg and compositor dependencies; rebuild
+consumers instead of creating fake SONAME links. Preserve the matched libdrm
+and input-library selection. Full pixel readback, load/unload, JIT and native
+session checks gate promotion. Remove software overrides only in the explicit
+GPU test session.
 
 Treat accelerated Xorg modesetting/glamor/DRI3 as an optional compatibility
 test, not a prerequisite for native Wayland. Porting GNOME additionally needs

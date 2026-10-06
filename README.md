@@ -123,8 +123,11 @@ an AArch64 VM do not establish support on every board in the hardware table.
   See the [VirtGPU implementation](sys/external/bsd/drm2/virtio/README.md),
   [DRM identity checks](ember/boot/drm-native-identity.md) and
   [graphics probes](https://github.com/neonix20b/EmberBSD-Examples/tree/main/desktop/wayland-utm).
-  VirGL remains disabled; GPU rendering, reliable console recovery and
-  Vulkan Compute are not yet established.
+  Ports owns the [current Mesa 26.2.4 source adaptation](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/wayland-utm),
+  with DSO-lifetime/numeric regressions and common-toolchain staging rules;
+  its complete build and consumer migration remain pending. VirGL remains
+  disabled; GPU rendering, reliable console recovery and Vulkan Compute
+  are not yet established.
 - **Physical GPU and NPU porting targets:** CIX P1 is the first selected
   direction: Mali-G720 through Panthor/[Mesa PanVK](https://docs.mesa3d.org/drivers/panfrost.html),
   and Zhouyi v3/X2 through the [Compass driver/runtime sources](https://github.com/Arm-China/Compass_NPU_Driver).
