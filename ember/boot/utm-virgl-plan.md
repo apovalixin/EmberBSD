@@ -69,6 +69,9 @@ input; X11 recovery still works. Record versions and library paths.
 
 ## Task 4: VirGL and buffer sharing
 
+Prerequisite: Task 3a's normal console recovery is verified before promoting
+the experimental display path or its session entry.
+
 Enable only classic VirGL capabilities after 2D passes. Validate standard
 ioctl permissions, real capsets, context/resource creation, transfers,
 EXECBUFFER and fenced readback. Exercise same-device PRIME export/import
@@ -93,3 +96,24 @@ unverified stages explicitly; GNOME Wayland is a separate integration.
 Review focus: asynchronous object lifetime, non-coherent DMA, impossible
 queue submissions, reset/workqueue races, malicious ioctl input, GEM mmap
 reference ownership, driver attach failure and two-driver ownership.
+
+## Task 3a: Native console recovery
+
+The native Task 3 run exposed missing console restoration. Implement the
+design's native console section before completing Task 3. Files: native
+VirtGPU fb helper/child, its experimental build wiring, narrow optional
+genfb damage/mode hooks, and early arm simplefb selection/deferred fallback.
+Ordinary EMBER64 behavior and other DRM drivers must remain unchanged.
+
+Consume the tested Task 2 GEM/DMA and fenced 2D submission APIs. Retain a
+private kernel framebuffer; use a separate upload worker and CPU shadow.
+Publish exactly one final wsdisplay console with normal keyboard/tty
+ownership. Restore it after MODE_EMUL/lastclose without stealing userland
+scanout. Fail before takeover into the original firmware console.
+
+Add production-code regressions for selection/fallback, damage arriving
+during upload, mode ownership, bounds, and stopped/reset work. Build the
+experimental kernel and normal EMBER64. After independent review, verify
+visible login, keyboard, repeated session exit/restart, live VT switching
+and killed-compositor recovery in the VM. Panic/DDB polling remains outside
+this milestone and must stay explicitly unverified.

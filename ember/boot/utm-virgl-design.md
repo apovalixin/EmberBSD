@@ -7,8 +7,10 @@ Target: the current NetBSD 11/aarch64-based EmberBSD installation.
 On 2026-10-06, `67a611acb9b` booted with the native DRM child. PCI discovery,
 32 cross-process GEM/PRIME mapping lifetimes and visible 800x600 KMS color
 bars passed. A native labwc/Pixman session displayed Kate without Xorg.
-Keyboard mapping and pointer handling still need correction; this is not
-a usable desktop or accelerated-session acceptance result. Reproducible
+Absolute pointer handling and visible console recovery still need correction;
+this is not a usable desktop or accelerated-session acceptance result. Wscons
+keyboard traces show correct key/modifier transitions; rapid UI injection is
+not a reliable keyboard acceptance test. Reproducible
 third-party recipes and patches live in
 [EmberBSD Ports](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/wayland-utm),
 and runtime probes live in
@@ -157,6 +159,27 @@ Wayland/native unconditionally, but disables EGL only when unavailable.
 Mutter 40.2's native build requires libsystemd or libelogind as well as
 udev, libinput and GBM; the labwc seatd launcher does not satisfy that interface.
 Resolve this in the GNOME port instead of treating it as a configure toggle.
+
+### Native console restoration
+
+The first native session exits cleanly but leaves the display inactive. The
+firmware genfb console remains attached to the old ramfb; VirtGPU has no DRM
+console framebuffer. Native generic drm_client framebuffer helpers are stubs.
+Do not attach a second final wsdisplay console or rely on genfb flag toggles
+to migrate the existing console.
+
+Use a driver-owned framebuffer helper and native drmfb child. Reserve the
+selected firmware display before its final simplefb attachment, only in the
+experimental configuration; retain early output and a pre-takeover failure
+fallback. Keep console pages and the DMA mapping alive across user sessions.
+A CPU shadow and a separate upload worker isolate rasops from sleeping GPU
+commands. Coalesce damage and fence TRANSFER, SET_SCANOUT and FLUSH; never
+upload or restore console scanout while userland owns graphics mode.
+
+Restore on native wsdisplay mode changes and lastclose, including redraws
+after VT reacquisition and compositor death. This is ordinary console
+recovery; panic/DDB output requires a separate bounded polling path and is
+not promised. Preserve the original kernel and SSH/serial recovery.
 
 ## Validation sequence
 
