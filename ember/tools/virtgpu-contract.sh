@@ -833,7 +833,11 @@ cat > "$work/busid.c" <<'C'
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
-struct device { struct device *parent; const char *name, *kind; void *priv; };
+#define PCICF_DEV 0
+#define PCICF_FUNCTION 1
+struct device {
+    struct device *parent; const char *name, *kind; void *priv; int locators[2];
+};
 typedef struct device *device_t;
 struct drm_device { device_t dev; char unique[40]; };
 struct pci_softc {
@@ -842,6 +846,7 @@ struct pci_softc {
 };
 #define PCI_SC_DEVICESC(d,f) sc_devices[(d) * 8 + (f)]
 static device_t device_parent(device_t d) { return d->parent; }
+static int device_locator(device_t d, unsigned int n) { assert(n < 2); return d->locators[n]; }
 static int device_is_a(device_t d, const char *kind) { return strcmp(d->kind, kind) == 0; }
 static void *device_private(device_t d) { return d->priv; }
 static const char *device_xname(device_t d) { return d->name; }
@@ -856,15 +861,20 @@ cat >> "$work/busid.c" <<'C'
 int main(void) {
     struct pci_softc psc = { .sc_pc = 3, .sc_bus = 7 };
     struct device bus = { .kind = "pci", .priv = &psc };
-    struct device parent = { .parent = &bus, .name = "virtio33" };
+    struct device parent = { .parent = &bus, .name = "virtio33", .locators = {4, 2} };
     struct device sibling = { .parent = &bus, .name = "virtio34" };
     struct device self = { .parent = &parent, .name = "virtiodrm0" };
     struct drm_device dev = { .dev = &self };
     psc.PCI_SC_DEVICESC(1, 0).c_dev = &sibling;
-    psc.PCI_SC_DEVICESC(4, 2).c_dev = &parent;
+    /* Real PCI config_found has not yet returned to fill this c_dev. */
+    assert(psc.PCI_SC_DEVICESC(4, 2).c_dev == NULL);
     assert(virtiodrm_set_busid(&dev) == 0);
     assert(strcmp(dev.unique, "pci:0003:07:04.2") == 0);
-    psc.PCI_SC_DEVICESC(4, 2).c_dev = NULL;
+    parent.locators[0] = -1;
+    assert(virtiodrm_set_busid(&dev) == -ENODEV);
+    parent.locators[0] = 32;
+    assert(virtiodrm_set_busid(&dev) == -ENODEV);
+    parent.locators[0] = 4; parent.locators[1] = 8;
     assert(virtiodrm_set_busid(&dev) == -ENODEV);
     bus.kind = "acpi";
     assert(virtiodrm_set_busid(&dev) == 0 && strcmp(dev.unique, "virtiodrm0") == 0);

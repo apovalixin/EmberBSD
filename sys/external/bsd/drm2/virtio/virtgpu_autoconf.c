@@ -11,6 +11,7 @@
 #include <drm/drm_device.h>
 #include <drm/drm_gem_shmem_helper.h>
 #include "virtgpu_drv.h"
+#include "locators.h"
 
 struct virtiodrm_softc {
 	device_t sc_dev;
@@ -98,24 +99,21 @@ virtiodrm_set_busid(struct drm_device *dev)
 	device_t transport = device_parent(dev->dev);
 	device_t bus = device_parent(transport);
 	struct pci_softc *psc;
-	unsigned int d, f;
+	int d, f;
 	char busid[40];
 
 	if (!bus || !device_is_a(bus, "pci"))
 		return drm_dev_set_unique(dev, device_xname(dev->dev));
 	psc = device_private(bus);
-	/* PCI bookkeeping identifies this exact parent, even with two GPUs. */
-	for (d = 0; d < 32; d++) {
-		for (f = 0; f < 8; f++) {
-			if (psc->PCI_SC_DEVICESC(d, f).c_dev != transport)
-				continue;
-			snprintf(busid, sizeof(busid), "pci:%04x:%02x:%02x.%u",
-			    pci_get_segment(psc->sc_pc), psc->sc_bus, d, f);
-			aprint_normal_dev(dev->dev, "DRM bus ID %s\n", busid);
-			return drm_dev_set_unique(dev, busid);
-		}
-	}
-	return -ENODEV;
+	/* Actual locators exist before attach, even if c_dev is unfilled. */
+	d = device_locator(transport, PCICF_DEV);
+	f = device_locator(transport, PCICF_FUNCTION);
+	if (d < 0 || d >= 32 || f < 0 || f >= 8)
+		return -ENODEV;
+	snprintf(busid, sizeof(busid), "pci:%04x:%02x:%02x.%d",
+	    pci_get_segment(psc->sc_pc), psc->sc_bus, d, f);
+	aprint_normal_dev(dev->dev, "DRM bus ID %s\n", busid);
+	return drm_dev_set_unique(dev, busid);
 }
 
 static void
