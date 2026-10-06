@@ -1,3 +1,4 @@
+/* Origin: EmberBSD optional native damage and mode hooks, 2026-10-06. */
 /*	$NetBSD: drmfb.h,v 1.3 2021/12/19 12:21:30 riastradh Exp $	*/
 
 /*-
@@ -45,6 +46,8 @@ struct drmfb_params;
 struct drmfb_softc;
 
 struct drmfb_params {
+	void		(*dp_damage)(struct drmfb_softc *);
+	bool		(*dp_setmode)(struct drmfb_softc *, int);
 	/*
 	 * Framebuffer mmap.
 	 */

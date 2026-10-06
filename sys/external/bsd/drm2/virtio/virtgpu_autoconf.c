@@ -146,6 +146,9 @@ virtiodrm_attach_deferred(device_t self)
 		goto put;
 	}
 	sc->sc_drm = dev;
+	ret = virtgpu_console_init(dev);
+	if (ret)
+		aprint_error_dev(self, "console unavailable: %d\n", ret);
 	return;
 put:
 	drm_dev_put(dev);

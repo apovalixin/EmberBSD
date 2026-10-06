@@ -1,5 +1,7 @@
 # Origin: EmberBSD experimental native VirtGPU, 2026-10-06.
-device virtiodrm: drmkms
+defflag opt_virtgpu_console.h VIRTGPU_CONSOLE
+define virtiodrmfbbus { }
+device virtiodrm: drmkms, virtiodrmfbbus
 attach virtiodrm at virtio
 makeoptions virtiodrm "CPPFLAGS.virtiodrm"+="${CPPFLAGS.drmkms}"
 makeoptions virtiodrm "CPPFLAGS.virtiodrm"+="-I$S/external/bsd/drm2/dist/drm/virtio"
@@ -19,3 +21,7 @@ file external/bsd/drm2/dist/drm/virtio/virtgpu_ioctl.c virtiodrm
 file external/bsd/drm2/dist/drm/virtio/virtgpu_display.c virtiodrm
 file external/bsd/drm2/dist/drm/virtio/virtgpu_plane.c virtiodrm
 makeoptions virtiodrm "CPPFLAGS.virtiodrm"+="-I$S/external/bsd/drm2/virtio"
+device virtiodrmfb: drmfb, wsemuldisplaydev
+attach virtiodrmfb at virtiodrmfbbus
+makeoptions virtiodrmfb "CPPFLAGS.virtiodrmfb"+="${CPPFLAGS.virtiodrm}"
+file external/bsd/drm2/virtio/virtgpu_console.c virtiodrm

@@ -1,3 +1,4 @@
+/* Origin: EmberBSD optional native damage and mode hooks, 2026-10-06. */
 /*	$NetBSD: drmfb.c,v 1.16 2022/09/01 17:54:47 riastradh Exp $	*/
 
 /*-
@@ -75,6 +76,14 @@ static paddr_t	drmfb_genfb_mmap(void *, void *, off_t, int);
 static int	drmfb_genfb_enable_polling(void *);
 static int	drmfb_genfb_disable_polling(void *);
 static bool	drmfb_genfb_setmode(struct genfb_softc *, int);
+
+static void
+drmfb_genfb_damage(void *cookie)
+{
+	struct drmfb_softc *sc = cookie;
+
+	sc->sc_da.da_params->dp_damage(sc);
+}
 
 static const struct genfb_mode_callback drmfb_genfb_mode_callback = {
 	.gmc_setmode = drmfb_genfb_setmode,
@@ -163,6 +172,8 @@ drmfb_attach(struct drmfb_softc *sc, const struct drmfb_attach_args *da)
 	genfb_ops.genfb_mmap = drmfb_genfb_mmap;
 	genfb_ops.genfb_enable_polling = drmfb_genfb_enable_polling;
 	genfb_ops.genfb_disable_polling = drmfb_genfb_disable_polling;
+	if (da->da_params->dp_damage != NULL)
+		genfb_ops.genfb_damage = drmfb_genfb_damage;
 
 	KERNEL_LOCK(1, NULL);
 	error = genfb_attach(&sc->sc_genfb, &genfb_ops);
@@ -279,6 +290,9 @@ drmfb_genfb_setmode(struct genfb_softc *genfb, int mode)
 	struct drmfb_softc *sc = container_of(genfb, struct drmfb_softc,
 	    sc_genfb);
 	struct drm_fb_helper *fb_helper = sc->sc_da.da_fb_helper;
+
+	if (sc->sc_da.da_params->dp_setmode != NULL)
+		return sc->sc_da.da_params->dp_setmode(sc, mode);
 
 	if (mode == WSDISPLAYIO_MODE_EMUL)
 		drm_fb_helper_restore_fbdev_mode_unlocked(fb_helper);

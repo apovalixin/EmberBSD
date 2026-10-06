@@ -63,6 +63,7 @@ static void virtio_gpu_reset_work(struct work_struct *work)
 	struct virtio_gpu_device *vgdev = container_of(work,
 	    struct virtio_gpu_device, reset_work);
 
+	virtgpu_console_drain(vgdev);
 	flush_work(&vgdev->ctrlq.dequeue_work);
 	flush_work(&vgdev->cursorq.dequeue_work);
 	flush_work(&vgdev->config_changed_work);
@@ -73,6 +74,7 @@ static void virtio_gpu_reset_work(struct work_struct *work)
 void virtio_gpu_stop(struct virtio_gpu_device *vgdev, int error)
 {
 	vgdev->vqs_ready = false;
+	virtgpu_console_stop(vgdev);
 	vgdev->submit_error = error;
 	vgdev->vdev->config->reset(vgdev->vdev);
 	virtio_gpu_fail_fences(vgdev, error);

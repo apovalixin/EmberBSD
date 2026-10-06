@@ -1,3 +1,4 @@
+/* Origin: EmberBSD optional framebuffer damage notification, 2026-10-06. */
 /*	$NetBSD: genfbvar.h,v 1.28 2022/07/17 13:10:54 riastradh Exp $ */
 
 /*-
@@ -66,6 +67,8 @@ struct genfb_ops {
 	int (*genfb_borrow)(void *, bus_addr_t, bus_space_handle_t *);
 	int (*genfb_enable_polling)(void *);
 	int (*genfb_disable_polling)(void *);
+	/* Non-sleeping notification after CPU drawing; no GPU submission. */
+	void (*genfb_damage)(void *);
 };
 
 struct genfb_colormap_callback {
@@ -111,6 +114,7 @@ struct genfb_softc {
 	size_t sc_fbsize;
 };
 
+void	genfb_restore_console(struct genfb_softc *);
 void	genfb_cnattach(void);
 int	genfb_cndetach(void);
 void	genfb_disable(void);

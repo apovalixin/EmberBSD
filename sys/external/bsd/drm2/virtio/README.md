@@ -96,3 +96,37 @@ GPU-fence response validation, reset/UNREF lifetime, PRIME offsets/references,
 page-array release, cursor failures before fence emission, and stale bounce
 copyback. They do not prove actual DMA coherency, UVM/MMU behavior, SMP
 interrupt safety, visible scanout or an accelerated userland session.
+
+## Ordinary console recovery
+
+EMBERGPU alone enables `VIRTGPU_CONSOLE` and the native `virtiodrmfb`
+child. The selected FDT simple framebuffer postpones its final wsdisplay
+attachment until autoconfiguration finishes; the early ARM renderer stays
+available. A selected PCI VirtGPU can reserve it and prepare a private
+XRGB8888 framebuffer through the native DRM helper. Failure before final
+attachment leaves the firmware fallback to attach once. The regular
+EMBER64 configuration does not enable this selection.
+
+The child uses drmfb/genfb/wsdisplay with the existing keyboard and tty
+ownership. Its CPU shadow is separate from the retained wired GEM backing
+and DMA map. Optional genfb raster notifications only mark atomic damage.
+A dedicated 20-ms upload worker consumes damage before copying, transfers
+with PREWRITE/POSTWRITE and a GPU fence, then waits for fenced FLUSH.
+Concurrent drawing can transiently tear a copied snapshot; its trailing
+damage notification guarantees a later upload. Drawing never waits for a
+GPU fence or writes the DMA buffer. wsdisplay mmap is unavailable because
+untracked mappings would defeat this contract; the DRM GEM mmap ABI remains.
+
+DRM master and wsdisplay modes serialize against the worker. A graphics
+owner suppresses console restore and upload. Returning to MODE_EMUL marks
+a full restore, and lastclose also redraws the active terminal. Raster
+notifications after that redraw retain the final pixels. Reset stops
+periodic requeue before a separate cleanup worker drains uploads, after
+waking fence/response waiters. A stopped console retains its framebuffer
+and pages rather than submitting a stale host resource.
+
+`sh ember/tools/virtgpu-console-contract.sh` compiles production selection,
+geometry, upload, ownership and stop functions against API models. Native
+builds and these models do not prove visible login, live VT switching or
+compositor-crash recovery; those need VM acceptance. Panic/DDB and reset
+reinitialization are unsupported. There is no live unload or VirGL claim.

@@ -128,8 +128,10 @@ static void virtio_gpu_update_dumb_bo(struct virtio_gpu_device *vgdev,
 		return;
 	virtio_gpu_array_add_obj(objs, &bo->base.base);
 
-	virtio_gpu_cmd_transfer_to_host_2d(vgdev, off, w, h, x, y,
+	int error = virtio_gpu_cmd_transfer_to_host_2d(vgdev, off, w, h, x, y,
 					   objs, NULL);
+	if (error)
+		vgdev->submit_error = error;
 }
 
 static void virtio_gpu_primary_plane_update(struct drm_plane *plane,

@@ -176,7 +176,9 @@ struct virtio_gpu_drv_cap_cache {
 	atomic_t is_valid;
 };
 
+struct virtgpu_console;
 struct virtio_gpu_device {
+	struct virtgpu_console *console;
 	struct device *dev;
 	struct drm_device *ddev;
 
@@ -233,6 +235,16 @@ struct virtio_gpu_fpriv {
 extern struct drm_ioctl_desc virtio_gpu_ioctls[DRM_VIRTIO_NUM_IOCTLS];
 
 extern struct drm_driver virtio_gpu_driver;
+int virtio_gpu_framebuffer_init(struct drm_device *,
+    struct virtio_gpu_framebuffer *, const struct drm_mode_fb_cmd2 *,
+    struct drm_gem_object *);
+int virtgpu_console_init(struct drm_device *);
+void virtgpu_console_lastclose(struct drm_device *);
+int virtgpu_console_master_set(struct drm_device *, struct drm_file *, bool);
+void virtgpu_console_master_drop(struct drm_device *, struct drm_file *);
+void virtgpu_console_stop(struct virtio_gpu_device *);
+void virtgpu_console_drain(struct virtio_gpu_device *);
+
 void virtio_gpu_cancel_vbuf(void *);
 void virtio_gpu_release_object(struct virtio_gpu_object *);
 void virtio_gpu_queue_unref(struct virtio_gpu_device *, struct virtio_gpu_object *);
@@ -297,11 +309,11 @@ int virtio_gpu_cmd_transfer_to_host_2d(struct virtio_gpu_device *vgdev,
 					uint32_t x, uint32_t y,
 					struct virtio_gpu_object_array *objs,
 					struct virtio_gpu_fence *fence);
-void virtio_gpu_cmd_resource_flush(struct virtio_gpu_device *vgdev,
+int virtio_gpu_cmd_resource_flush(struct virtio_gpu_device *vgdev,
 				   uint32_t resource_id,
 				   uint32_t x, uint32_t y,
 				   uint32_t width, uint32_t height);
-void virtio_gpu_cmd_set_scanout(struct virtio_gpu_device *vgdev,
+int virtio_gpu_cmd_set_scanout(struct virtio_gpu_device *vgdev,
 				uint32_t scanout_id, uint32_t resource_id,
 				uint32_t width, uint32_t height,
 				uint32_t x, uint32_t y);

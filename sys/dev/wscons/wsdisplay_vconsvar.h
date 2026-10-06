@@ -1,3 +1,4 @@
+/* Origin: EmberBSD optional per-screen raster wrappers, 2026-10-06. */
 /*	$NetBSD: wsdisplay_vconsvar.h,v 1.35 2025/07/25 18:19:12 martin Exp $ */
 
 /*-
@@ -43,6 +44,8 @@ struct vcons_data;
 
 struct vcons_screen {
 	struct rasops_info scr_ri;
+	/* Optional driver wrappers retain each screen's font-specific ops. */
+	struct wsdisplay_emulops scr_driver_ops;
 	LIST_ENTRY(vcons_screen) next;
 	void *scr_cookie;
 	struct vcons_data *scr_vd;

@@ -640,7 +640,7 @@ static void virtio_gpu_cmd_resource_inval_backing(struct virtio_gpu_device *vgde
 	virtio_gpu_queue_fenced_ctrl_buffer(vgdev, vbuf, &cmd_p->hdr, fence);
 }
 
-void virtio_gpu_cmd_set_scanout(struct virtio_gpu_device *vgdev,
+int virtio_gpu_cmd_set_scanout(struct virtio_gpu_device *vgdev,
 				uint32_t scanout_id, uint32_t resource_id,
 				uint32_t width, uint32_t height,
 				uint32_t x, uint32_t y)
@@ -651,7 +651,7 @@ void virtio_gpu_cmd_set_scanout(struct virtio_gpu_device *vgdev,
 	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
 	if (IS_ERR(cmd_p)) {
 		vgdev->submit_error = PTR_ERR(cmd_p);
-		return;
+		return PTR_ERR(cmd_p);
 	}
 	memset(cmd_p, 0, sizeof(*cmd_p));
 
@@ -663,10 +663,13 @@ void virtio_gpu_cmd_set_scanout(struct virtio_gpu_device *vgdev,
 	cmd_p->r.x = cpu_to_le32(x);
 	cmd_p->r.y = cpu_to_le32(y);
 
-	virtio_gpu_queue_sync(vgdev, vbuf, NULL, NULL);
+	int error = virtio_gpu_queue_sync(vgdev, vbuf, NULL, NULL);
+	if (error)
+		vgdev->submit_error = error;
+	return error;
 }
 
-void virtio_gpu_cmd_resource_flush(struct virtio_gpu_device *vgdev,
+int virtio_gpu_cmd_resource_flush(struct virtio_gpu_device *vgdev,
 				   uint32_t resource_id,
 				   uint32_t x, uint32_t y,
 				   uint32_t width, uint32_t height)
@@ -677,7 +680,7 @@ void virtio_gpu_cmd_resource_flush(struct virtio_gpu_device *vgdev,
 	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
 	if (IS_ERR(cmd_p)) {
 		vgdev->submit_error = PTR_ERR(cmd_p);
-		return;
+		return PTR_ERR(cmd_p);
 	}
 	memset(cmd_p, 0, sizeof(*cmd_p));
 
@@ -688,7 +691,10 @@ void virtio_gpu_cmd_resource_flush(struct virtio_gpu_device *vgdev,
 	cmd_p->r.x = cpu_to_le32(x);
 	cmd_p->r.y = cpu_to_le32(y);
 
-	virtio_gpu_queue_sync(vgdev, vbuf, NULL, NULL);
+	int error = virtio_gpu_queue_sync(vgdev, vbuf, NULL, NULL);
+	if (error)
+		vgdev->submit_error = error;
+	return error;
 }
 
 int virtio_gpu_cmd_transfer_to_host_2d(struct virtio_gpu_device *vgdev,

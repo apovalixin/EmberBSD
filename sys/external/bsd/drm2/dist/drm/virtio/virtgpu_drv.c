@@ -47,6 +47,9 @@ __KERNEL_RCSID(0, "$NetBSD: virtgpu_drv.c,v 1.3 2021/12/18 23:45:45 riastradh Ex
 struct drm_driver virtio_gpu_driver = {
 	.driver_features = DRIVER_MODESET | DRIVER_GEM | DRIVER_RENDER | DRIVER_ATOMIC,
 	.open = virtio_gpu_driver_open,
+	.lastclose = virtgpu_console_lastclose,
+	.master_set = virtgpu_console_master_set,
+	.master_drop = virtgpu_console_master_drop,
 	.postclose = virtio_gpu_driver_postclose,
 
 	.dumb_create = virtio_gpu_mode_dumb_create,

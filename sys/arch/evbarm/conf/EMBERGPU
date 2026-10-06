@@ -5,3 +5,5 @@ include "arch/evbarm/conf/EMBER64"
 no options MODULAR_DEFAULT_AUTOLOAD
 no viogpu* at virtio?
 virtiodrm* at virtio?
+options VIRTGPU_CONSOLE
+virtiodrmfb* at virtiodrm?

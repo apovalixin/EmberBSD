@@ -1,3 +1,4 @@
+/* Origin: EmberBSD early native console selection and fallback, 2026-10-06. */
 /* $NetBSD: simplefb.c,v 1.15 2021/08/30 22:47:24 jmcneill Exp $ */
 
 /*-
@@ -27,6 +28,7 @@
  */
 
 #include "opt_wsdisplay_compat.h"
+#include "opt_virtgpu_console.h"
 
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD: simplefb.c,v 1.15 2021/08/30 22:47:24 jmcneill Exp $");
@@ -37,6 +39,7 @@ __KERNEL_RCSID(0, "$NetBSD: simplefb.c,v 1.15 2021/08/30 22:47:24 jmcneill Exp $
 #include <sys/systm.h>
 
 #include <dev/fdt/fdtvar.h>
+#include <dev/fdt/simplefbvar.h>
 
 #include <dev/wsfb/genfbvar.h>
 
@@ -55,6 +58,43 @@ struct simplefb_softc {
 };
 
 static int simplefb_console_phandle = -1;
+
+#ifdef VIRTGPU_CONSOLE
+static struct simplefb_softc *simplefb_deferred;
+static device_t simplefb_owner;
+static bool simplefb_committed;
+
+bool
+simplefb_console_reserve(device_t owner)
+{
+	if (simplefb_deferred == NULL || simplefb_owner != NULL)
+		return false;
+	simplefb_owner = owner;
+	return true;
+}
+
+void
+simplefb_console_commit(device_t owner)
+{
+	KASSERT(simplefb_owner == owner);
+	simplefb_committed = true;
+}
+
+/* config_finalize runs after every config_interrupts job has completed. */
+static int simplefb_attach_genfb(struct simplefb_softc *);
+static int
+simplefb_console_fallback(device_t dev)
+{
+	struct simplefb_softc *sc = device_private(dev);
+
+	if (simplefb_deferred == NULL)
+		return 0;
+	simplefb_deferred = NULL;
+	if (!simplefb_committed)
+		(void)simplefb_attach_genfb(sc);
+	return 0;
+}
+#endif
 
 static bool
 simplefb_shutdown(device_t self, int flags)
@@ -253,8 +293,20 @@ simplefb_attach(device_t parent, device_t self, void *aux)
 	sc->sc_phandle = phandle;
 	sc->sc_bst = faa->faa_bst;
 
+#ifdef VIRTGPU_CONSOLE
+	/* Keep the early arm renderer until exactly one final attachment. */
+	if (phandle == simplefb_console_phandle && simplefb_deferred == NULL) {
+		simplefb_deferred = sc;
+		if (config_finalize_register(self, simplefb_console_fallback) == 0) {
+			aprint_normal(": reserving early firmware console\n");
+			return;
+		}
+		simplefb_deferred = NULL;
+	}
+#endif
 	if (simplefb_attach_genfb(sc) != 0)
 		return;
+
 }
 
 CFATTACH_DECL_NEW(simplefb, sizeof(struct simplefb_softc),

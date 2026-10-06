@@ -1,3 +1,4 @@
+/* Origin: EmberBSD optional damage and console redraw hooks, 2026-10-06. */
 /*	$NetBSD: genfb.c,v 1.92 2025/04/29 12:20:36 tsutsui Exp $ */
 
 /*-
@@ -155,6 +156,73 @@ static void	genfb_brightness_down(device_t);
 static int	genfb_setup_glyphcache(struct genfb_softc *, long);
 static void	genfb_putchar(void *, int, int, u_int, long);
 #endif
+
+/* These wrap rasops, including its optional shadow-to-framebuffer copy. */
+static void
+genfb_damage_putchar(void *cookie, int row, int col, u_int ch, long attr)
+{
+	struct rasops_info *ri = cookie;
+	struct vcons_screen *scr = ri->ri_hw;
+	struct genfb_softc *sc = scr->scr_cookie;
+
+	scr->scr_driver_ops.putchar(cookie, row, col, ch, attr);
+	sc->sc_private->sc_ops.genfb_damage(sc);
+}
+
+static void
+genfb_damage_cursor(void *cookie, int on, int row, int col)
+{
+	struct rasops_info *ri = cookie;
+	struct vcons_screen *scr = ri->ri_hw;
+	struct genfb_softc *sc = scr->scr_cookie;
+
+	scr->scr_driver_ops.cursor(cookie, on, row, col);
+	sc->sc_private->sc_ops.genfb_damage(sc);
+}
+
+static void
+genfb_damage_copycols(void *cookie, int row, int src, int dst, int n)
+{
+	struct rasops_info *ri = cookie;
+	struct vcons_screen *scr = ri->ri_hw;
+	struct genfb_softc *sc = scr->scr_cookie;
+
+	scr->scr_driver_ops.copycols(cookie, row, src, dst, n);
+	sc->sc_private->sc_ops.genfb_damage(sc);
+}
+
+static void
+genfb_damage_erasecols(void *cookie, int row, int col, int n, long attr)
+{
+	struct rasops_info *ri = cookie;
+	struct vcons_screen *scr = ri->ri_hw;
+	struct genfb_softc *sc = scr->scr_cookie;
+
+	scr->scr_driver_ops.erasecols(cookie, row, col, n, attr);
+	sc->sc_private->sc_ops.genfb_damage(sc);
+}
+
+static void
+genfb_damage_copyrows(void *cookie, int src, int dst, int n)
+{
+	struct rasops_info *ri = cookie;
+	struct vcons_screen *scr = ri->ri_hw;
+	struct genfb_softc *sc = scr->scr_cookie;
+
+	scr->scr_driver_ops.copyrows(cookie, src, dst, n);
+	sc->sc_private->sc_ops.genfb_damage(sc);
+}
+
+static void
+genfb_damage_eraserows(void *cookie, int row, int n, long attr)
+{
+	struct rasops_info *ri = cookie;
+	struct vcons_screen *scr = ri->ri_hw;
+	struct genfb_softc *sc = scr->scr_cookie;
+
+	scr->scr_driver_ops.eraserows(cookie, row, n, attr);
+	sc->sc_private->sc_ops.genfb_damage(sc);
+}
 
 extern const u_char rasops_cmap[768];
 
@@ -742,6 +810,16 @@ genfb_init_screen(void *cookie, struct vcons_screen *scr,
 	scp->sc_putchar = ri->ri_ops.putchar;
 	ri->ri_ops.putchar = genfb_putchar;
 #endif
+	if (scp->sc_ops.genfb_damage != NULL) {
+		scr->scr_driver_ops = ri->ri_ops;
+		ri->ri_ops.putchar = genfb_damage_putchar;
+		ri->ri_ops.cursor = genfb_damage_cursor;
+		ri->ri_ops.copycols = genfb_damage_copycols;
+		ri->ri_ops.erasecols = genfb_damage_erasecols;
+		ri->ri_ops.copyrows = genfb_damage_copyrows;
+		ri->ri_ops.eraserows = genfb_damage_eraserows;
+		scp->sc_ops.genfb_damage(sc);
+	}
 #ifdef GENFB_DISABLE_TEXT
 	if (scr == &scp->sc_console_screen && !DISABLESPLASH)
 		SCREEN_DISABLE_DRAWING(&scp->sc_console_screen);
