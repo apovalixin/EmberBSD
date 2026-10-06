@@ -124,8 +124,10 @@ static void virtio_gpu_update_dumb_bo(struct virtio_gpu_device *vgdev,
 		y * state->fb->pitches[0];
 
 	objs = virtio_gpu_array_alloc(1);
-	if (!objs)
+	if (!objs) {
+		vgdev->submit_error = -ENOMEM;
 		return;
+	}
 	virtio_gpu_array_add_obj(objs, &bo->base.base);
 
 	int error = virtio_gpu_cmd_transfer_to_host_2d(vgdev, off, w, h, x, y,

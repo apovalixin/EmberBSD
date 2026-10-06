@@ -5,12 +5,16 @@
 #include <sys/atomic.h>
 #include <sys/device.h>
 #include <dev/pci/pcivar.h>
+#include <dev/pci/wsdisplay_pci.h>
 #include <dev/fdt/simplefbvar.h>
 #include <drm/drm_drv.h>
 #include <drm/drm_fourcc.h>
 #include <drm/drmfb.h>
 #include "virtgpu_drv.h"
 #include "locators.h"
+#include "opt_virtgpu_console.h"
+
+#ifdef VIRTGPU_CONSOLE
 
 struct virtgpu_console {
 	struct drm_fb_helper helper;
@@ -345,7 +349,7 @@ virtgpu_console_init(struct drm_device *dev)
 		return -ENOMEM;
 	vc->vgdev = vgdev;
 	vc->emul = true;
-	mutex_init(&vc->lock);
+	linux_mutex_init(&vc->lock);
 	spin_lock_init(&vc->schedule_lock);
 	INIT_DELAYED_WORK(&vc->work, virtgpu_console_work);
 	vc->wq = alloc_ordered_workqueue("virtgpucon", 0);
@@ -402,3 +406,22 @@ free:
 	kfree(vc);
 	return error;
 }
+#else
+int
+virtgpu_console_init(struct drm_device *dev)
+{
+	return -ENODEV;
+}
+
+int
+virtgpu_console_master_set(struct drm_device *dev, struct drm_file *file,
+    bool new_master)
+{
+	return 0;
+}
+
+void virtgpu_console_master_drop(struct drm_device *dev, struct drm_file *file) { }
+void virtgpu_console_lastclose(struct drm_device *dev) { }
+void virtgpu_console_stop(struct virtio_gpu_device *vgdev) { }
+void virtgpu_console_drain(struct virtio_gpu_device *vgdev) { }
+#endif

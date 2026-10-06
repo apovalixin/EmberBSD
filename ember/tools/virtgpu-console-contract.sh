@@ -216,3 +216,75 @@ int main(void) {
 C
 ${CC:-cc} -std=c99 -Wall -Wextra -Werror "$work/selection.c" -o "$work/selection"
 "$work/selection"
+cat > "$work/raster.c" <<'C'
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+typedef unsigned int u_int;
+struct wsdisplay_emulops {
+    void (*putchar)(void *, int, int, u_int, long);
+    void (*cursor)(void *, int, int, int);
+    void (*copycols)(void *, int, int, int, int);
+    void (*erasecols)(void *, int, int, int, long);
+    void (*copyrows)(void *, int, int, int);
+    void (*eraserows)(void *, int, int, long);
+};
+struct rasops_info { void *ri_hw; };
+struct vcons_screen {
+    struct rasops_info scr_ri; struct wsdisplay_emulops scr_driver_ops;
+    void *scr_cookie;
+};
+struct genfb_private { struct { void (*genfb_damage)(void *); } sc_ops; };
+struct genfb_softc { struct genfb_private *sc_private; };
+static int draws, notifications, font;
+static void damage(void *sc) {
+    assert(sc && draws == notifications + 1); notifications++;
+}
+static void glyph(void *r,int row,int col,u_int ch,long a) {
+    assert(r && row==1 && col==2 && ch==3 && a==4); font=1; draws++;
+}
+static void glyph2(void *r,int row,int col,u_int ch,long a) {
+    glyph(r,row,col,ch,a); font=2;
+}
+static void cursor(void *r,int on,int row,int col) {
+    assert(r && on==1 && row==2 && col==3); draws++;
+}
+static void copycols(void *r,int row,int src,int dst,int n) {
+    assert(r && row==1 && src==2 && dst==3 && n==4); draws++;
+}
+static void erasecols(void *r,int row,int col,int n,long a) {
+    assert(r && row==1 && col==2 && n==3 && a==4); draws++;
+}
+static void copyrows(void *r,int src,int dst,int n) {
+    assert(r && src==1 && dst==2 && n==3); draws++;
+}
+static void eraserows(void *r,int row,int n,long a) {
+    assert(r && row==1 && n==2 && a==3); draws++;
+}
+C
+for op in putchar cursor copycols erasecols copyrows eraserows; do
+    extract "genfb_damage_$op" "$src/sys/dev/wsfb/genfb.c" 'static void' >> "$work/raster.c"
+done
+cat >> "$work/raster.c" <<'C'
+int main(void) {
+    struct genfb_private priv={ .sc_ops={damage} };
+    struct genfb_softc sc={ &priv };
+    struct vcons_screen s={ .scr_cookie=&sc,
+        .scr_driver_ops={glyph,cursor,copycols,erasecols,copyrows,eraserows} };
+    s.scr_ri.ri_hw=&s;
+    genfb_damage_putchar(&s.scr_ri,1,2,3,4); assert(font==1);
+    genfb_damage_cursor(&s.scr_ri,1,2,3);
+    genfb_damage_copycols(&s.scr_ri,1,2,3,4);
+    genfb_damage_erasecols(&s.scr_ri,1,2,3,4);
+    genfb_damage_copyrows(&s.scr_ri,1,2,3);
+    genfb_damage_eraserows(&s.scr_ri,1,2,3);
+    struct vcons_screen s2=s; s2.scr_ri.ri_hw=&s2;
+    s2.scr_driver_ops.putchar=glyph2;
+    genfb_damage_putchar(&s2.scr_ri,1,2,3,4); assert(font==2);
+    genfb_damage_putchar(&s.scr_ri,1,2,3,4); assert(font==1);
+    assert(draws==8 && notifications==8);
+    puts("genfb production glyph, cursor, copy, erase and per-screen font damage hooks passed");
+}
+C
+${CC:-cc} -std=c99 -Wall -Wextra -Werror "$work/raster.c" -o "$work/raster"
+"$work/raster"
