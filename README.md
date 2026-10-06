@@ -72,7 +72,8 @@ application stacks, adaptations and runnable checks. Small installations
 can keep only the components they need. Upstream components retain their
 own licenses and authorship.
 
-The following results were checked on **2026-10-06**. Application tests on
+The following results were checked on **2026-10-06**, with additional X11
+desktop checks on **2026-10-07**. Application tests on
 an AArch64 VM do not establish support on every board in the hardware table.
 
 ### Local AI and robotics
@@ -103,9 +104,19 @@ an AArch64 VM do not establish support on every board in the hardware table.
   provides a tested desktop scenario. [Phosh 0.58.0](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/phosh)
   runs inside it with software-rendered Wayland, application switching,
   GTK applications and the Stevia English/Russian screen keyboard.
-  [Enlightenment 0.27.1/EFL 1.28.1](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/enlightenment)
-  runs with system Lua 5.4; window management and session exit are tested.
   These VM checks provide interface prototypes, not validated phone images.
+- **Additional X11 desktops:** [Openbox 3.6.1](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/openbox)
+  and [Enlightenment 0.27.1/EFL 1.28.1](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/enlightenment)
+  pass software X11 window management, two application windows, keyboard
+  input through XTEST, text editing/saving and clean session exit.
+  The [common launcher and checks](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/x11-desktops)
+  isolate session configuration while preserving the user's HOME.
+  [awesomeWM 4.3](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/awesome)
+  also builds and passes the same workflow with system Lua and patched LGI.
+  [Xfce 4.20](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/xfce)
+  has a source recipe and checked session profile; native build and runtime
+  remain pending. These checks do not validate physical input, touch or GPU
+  acceleration.
 - **Current KDE/Qt integration:** KWin 6.7.5 runs a nested Qt Wayland window
   with software rendering and tested keyboard input. Plasma Mobile 6.7.5
   builds and installs with checked library loading and QML components.
