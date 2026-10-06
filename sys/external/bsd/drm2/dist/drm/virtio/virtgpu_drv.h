@@ -30,6 +30,7 @@
 #define VIRTIO_DRV_H
 
 #include <linux/virtio.h>
+#include "virtgpu_wait.h"
 #include <linux/virtio_ids.h>
 #include <linux/virtio_config.h>
 #include <linux/virtio_gpu.h>
@@ -74,6 +75,7 @@ struct virtio_gpu_object {
 
 	struct sg_table *pages;
 	uint32_t mapped;
+	void *dma_vaddr;
 	bool dumb;
 	bool created;
 };

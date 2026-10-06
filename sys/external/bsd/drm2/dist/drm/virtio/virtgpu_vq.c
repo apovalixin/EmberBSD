@@ -55,8 +55,10 @@ struct virtio_gpu_wait {
 static void
 virtio_gpu_wait_put(struct virtio_gpu_wait *wait)
 {
-	if (atomic_dec_and_test(&wait->refs))
+	if (atomic_dec_and_test(&wait->refs)) {
+		virtgpu_wait_destroy(&wait->queue);
 		kfree(wait);
+	}
 }
 static void
 virtio_gpu_wait_done(struct virtio_gpu_vbuffer *vbuf, int error)
@@ -268,7 +270,7 @@ void virtio_gpu_dequeue_ctrl_func(struct work_struct *work)
 
 			if (fence_id > f) {
 				DRM_ERROR("%s: Oops: fence %llx -> %llx\n",
-					  __func__, fence_id, f);
+					  __func__, (unsigned long long)fence_id, (unsigned long long)f);
 			} else {
 				fence_id = f;
 			}
@@ -632,10 +634,8 @@ void virtio_gpu_cmd_transfer_to_host_2d(struct virtio_gpu_device *vgdev,
 	struct virtio_gpu_transfer_to_host_2d *cmd_p;
 	struct virtio_gpu_vbuffer *vbuf;
 
-	if (use_dma_api)
-		dma_sync_sg_for_device(vgdev->vdev->dev.parent,
-				       bo->pages->sgl, bo->pages->nents,
-				       DMA_TO_DEVICE);
+	bus_dmamap_sync(vgdev->vdev->dmat, bo->pages->sgl->sg_dmamap,
+	    0, bo->base.base.size, BUS_DMASYNC_PREWRITE);
 
 	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
 	if (IS_ERR(cmd_p)) {
@@ -858,7 +858,7 @@ int virtio_gpu_cmd_get_capset_info(struct virtio_gpu_device *vgdev, int idx)
 }
 
 int virtio_gpu_cmd_get_capset(struct virtio_gpu_device *vgdev,
-			      int idx, int version,
+			      int idx, int cap_version,
 			      struct virtio_gpu_drv_cap_cache **cache_p)
 {
 	struct virtio_gpu_get_capset *cmd_p;
@@ -873,7 +873,7 @@ int virtio_gpu_cmd_get_capset(struct virtio_gpu_device *vgdev,
 	if (idx >= vgdev->num_capsets)
 		return -EINVAL;
 
-	if (version > vgdev->capsets[idx].max_version)
+	if (cap_version > vgdev->capsets[idx].max_version)
 		return -EINVAL;
 
 	cache_ent = kzalloc(sizeof(*cache_ent), GFP_KERNEL);
@@ -895,7 +895,7 @@ int virtio_gpu_cmd_get_capset(struct virtio_gpu_device *vgdev,
 		return -ENOMEM;
 	}
 
-	cache_ent->version = version;
+	cache_ent->version = cap_version;
 	cache_ent->id = vgdev->capsets[idx].id;
 	atomic_set(&cache_ent->is_valid, 0);
 	cache_ent->size = max_size;
@@ -903,7 +903,7 @@ int virtio_gpu_cmd_get_capset(struct virtio_gpu_device *vgdev,
 	/* Search while under lock in case it was added by another task. */
 	list_for_each_entry(search_ent, &vgdev->cap_cache, head) {
 		if (search_ent->id == vgdev->capsets[idx].id &&
-		    search_ent->version == version) {
+		    search_ent->version == cap_version) {
 			*cache_p = search_ent;
 			break;
 		}
@@ -931,7 +931,7 @@ int virtio_gpu_cmd_get_capset(struct virtio_gpu_device *vgdev,
 	}
 	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_GET_CAPSET);
 	cmd_p->capset_id = cpu_to_le32(vgdev->capsets[idx].id);
-	cmd_p->capset_version = cpu_to_le32(version);
+	cmd_p->capset_version = cpu_to_le32(cap_version);
 	*cache_p = cache_ent;
 	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
 
@@ -1113,10 +1113,8 @@ void virtio_gpu_cmd_transfer_to_host_3d(struct virtio_gpu_device *vgdev,
 	struct virtio_gpu_transfer_host_3d *cmd_p;
 	struct virtio_gpu_vbuffer *vbuf;
 
-	if (use_dma_api)
-		dma_sync_sg_for_device(vgdev->vdev->dev.parent,
-				       bo->pages->sgl, bo->pages->nents,
-				       DMA_TO_DEVICE);
+	bus_dmamap_sync(vgdev->vdev->dmat, bo->pages->sgl->sg_dmamap,
+	    0, bo->base.base.size, BUS_DMASYNC_PREWRITE);
 
 	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
 	if (IS_ERR(cmd_p)) {
@@ -1233,11 +1231,20 @@ int virtio_gpu_object_attach(struct virtio_gpu_device *vgdev,
 		ret = -ret;
 		goto free_sg;
 	}
-	ret = bus_dmamap_load_pages(vgdev->vdev->dmat, map,
-	    sgt->sgl->sg_pgs, obj->base.base.size,
-	    BUS_DMA_WAITOK | BUS_DMA_WRITE | BUS_DMA_READ);
+	obj->dma_vaddr = drm_gem_shmem_vmap(&obj->base.base);
+	if (IS_ERR(obj->dma_vaddr)) {
+		ret = PTR_ERR(obj->dma_vaddr);
+		obj->dma_vaddr = NULL;
+	} else {
+		ret = -bus_dmamap_load(vgdev->vdev->dmat, map, obj->dma_vaddr,
+		    obj->base.base.size, NULL,
+		    BUS_DMA_WAITOK | BUS_DMA_WRITE | BUS_DMA_READ);
+	}
 	if (ret) {
-		ret = -ret;
+		if (obj->dma_vaddr) {
+			drm_gem_shmem_vunmap(&obj->base.base, obj->dma_vaddr);
+			obj->dma_vaddr = NULL;
+		}
 		bus_dmamap_destroy(vgdev->vdev->dmat, map);
 		goto free_sg;
 	}
@@ -1281,6 +1288,8 @@ void virtio_gpu_object_detach(struct virtio_gpu_device *vgdev,
 		    0, obj->base.base.size,
 		    BUS_DMASYNC_POSTWRITE | BUS_DMASYNC_POSTREAD);
 		bus_dmamap_unload(vgdev->vdev->dmat, obj->pages->sgl->sg_dmamap);
+		drm_gem_shmem_vunmap(&obj->base.base, obj->dma_vaddr);
+		obj->dma_vaddr = NULL;
 		sg_free_table(obj->pages);
 		kfree(obj->pages);
 		obj->pages = NULL;

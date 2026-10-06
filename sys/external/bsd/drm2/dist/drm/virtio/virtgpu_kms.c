@@ -139,7 +139,7 @@ int virtio_gpu_init(struct drm_device *dev, struct virtio_device *vdev)
 	vgdev->vdev = vdev;
 	vgdev->dev = dev->dev;
 
-	mutex_init(&vgdev->submit_lock);
+	linux_mutex_init(&vgdev->submit_lock);
 	spin_lock_init(&vgdev->display_info_lock);
 	ida_init(&vgdev->ctx_id_ida);
 	ida_init(&vgdev->resource_ida);
@@ -226,7 +226,7 @@ err_scanouts:
 err_vbufs:
 	vgdev->vdev->config->del_vqs(vgdev->vdev);
 err_vqs:
-	mutex_destroy(&vgdev->submit_lock);
+	linux_mutex_destroy(&vgdev->submit_lock);
 	dev->dev_private = NULL;
 	kfree(vgdev);
 	return ret;
@@ -262,7 +262,7 @@ void virtio_gpu_deinit(struct drm_device *dev)
 	virtio_gpu_free_vbufs(vgdev);
 	virtio_gpu_cleanup_cap_cache(vgdev);
 	kfree(vgdev->capsets);
-	mutex_destroy(&vgdev->submit_lock);
+	linux_mutex_destroy(&vgdev->submit_lock);
 	dev->dev_private = NULL;
 	kfree(vgdev);
 }

@@ -27,7 +27,7 @@ drm_gem_shmem_create(struct drm_device *dev, size_t size)
 	if (obj == NULL)
 		return ERR_PTR(-ENOMEM);
 	shmem = to_shmem(obj);
-	mutex_init(&shmem->lock);
+	linux_mutex_init(&shmem->lock);
 	ret = drm_gem_object_init(dev, obj, size);
 	if (ret)
 		goto fail;
@@ -46,7 +46,7 @@ pages:
 release:
 	drm_gem_object_release(obj);
 fail:
-	mutex_destroy(&shmem->lock);
+	linux_mutex_destroy(&shmem->lock);
 	kfree(shmem);
 	return ERR_PTR(ret);
 }
@@ -61,7 +61,7 @@ drm_gem_shmem_free_object(struct drm_gem_object *obj)
 	drm_gem_put_pages(obj, shmem->pages, true, true);
 	drm_gem_free_mmap_offset(obj);
 	drm_gem_object_release(obj);
-	mutex_destroy(&shmem->lock);
+	linux_mutex_destroy(&shmem->lock);
 	kfree(shmem);
 }
 

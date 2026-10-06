@@ -18,3 +18,4 @@ file external/bsd/drm2/dist/drm/virtio/virtgpu_fence.c virtiodrm
 file external/bsd/drm2/dist/drm/virtio/virtgpu_ioctl.c virtiodrm
 file external/bsd/drm2/dist/drm/virtio/virtgpu_display.c virtiodrm
 file external/bsd/drm2/dist/drm/virtio/virtgpu_plane.c virtiodrm
+makeoptions virtiodrm "CPPFLAGS.virtiodrm"+="-I$S/external/bsd/drm2/virtio"

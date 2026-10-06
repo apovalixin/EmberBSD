@@ -33,38 +33,21 @@ __KERNEL_RCSID(0, "$NetBSD: virtgpu_object.c,v 1.3 2021/12/18 23:45:45 riastradh
 
 #include "virtgpu_drv.h"
 
-static int virtio_gpu_virglrenderer_workaround = 1;
-module_param_named(virglhack, virtio_gpu_virglrenderer_workaround, int, 0400);
-
 static int virtio_gpu_resource_id_get(struct virtio_gpu_device *vgdev,
-				       uint32_t *resid)
+    uint32_t *resid)
 {
-	if (virtio_gpu_virglrenderer_workaround) {
-		/*
-		 * Hack to avoid re-using resource IDs.
-		 *
-		 * virglrenderer versions up to (and including) 0.7.0
-		 * can't deal with that.  virglrenderer commit
-		 * "f91a9dd35715 Fix unlinking resources from hash
-		 * table." (Feb 2019) fixes the bug.
-		 */
-		static int handle;
-		handle++;
-		*resid = handle + 1;
-	} else {
-		int handle = ida_alloc(&vgdev->resource_ida, GFP_KERNEL);
-		if (handle < 0)
-			return handle;
-		*resid = handle + 1;
-	}
+	int handle = ida_alloc(&vgdev->resource_ida, GFP_KERNEL);
+
+	if (handle < 0)
+		return handle;
+	*resid = handle + 1;
 	return 0;
 }
 
-static void virtio_gpu_resource_id_put(struct virtio_gpu_device *vgdev, uint32_t id)
+static void virtio_gpu_resource_id_put(struct virtio_gpu_device *vgdev,
+    uint32_t id)
 {
-	if (!virtio_gpu_virglrenderer_workaround) {
-		ida_free(&vgdev->resource_ida, id - 1);
-	}
+	ida_free(&vgdev->resource_ida, id - 1);
 }
 
 void virtio_gpu_release_object(struct virtio_gpu_object *bo)

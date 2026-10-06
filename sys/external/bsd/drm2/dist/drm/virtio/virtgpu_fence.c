@@ -61,14 +61,14 @@ static bool virtio_fence_signaled(struct dma_fence *f)
 
 static void virtio_fence_value_str(struct dma_fence *f, char *str, int size)
 {
-	snprintf(str, size, "%llu", f->seqno);
+	snprintf(str, size, "%llu", (unsigned long long)f->seqno);
 }
 
 static void virtio_timeline_value_str(struct dma_fence *f, char *str, int size)
 {
 	struct virtio_gpu_fence *fence = to_virtio_fence(f);
 
-	snprintf(str, size, "%llu", (u64)atomic64_read(&fence->drv->last_seq));
+	snprintf(str, size, "%llu", (unsigned long long)atomic64_read(&fence->drv->last_seq));
 }
 
 static const struct dma_fence_ops virtio_fence_ops = {
