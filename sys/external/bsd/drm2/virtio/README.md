@@ -4,8 +4,14 @@
 `EMBERGPU` replaces the existing framebuffer-only `viogpu` attachment with
 native `virtiodrm` DRM/KMS. The ordinary `EMBER64` configuration is unchanged.
 This is an experimental 2D integration, not a claim of a validated graphics
-session. Native attachment, mmap, PRIME, visible scanout and reset stress
-must be checked with the exact kernel and virtual hardware configuration.
+session. On 2026-10-06, revision `67a611acb9b` booted under UTM 4.7.5 with
+virtio-ramfb and GL disabled. Native PCI discovery, 32 cross-process dumb
+GEM/PRIME mapping lifetimes (one page and 8 MiB), malformed size/handle
+rejection and visible 800x600 KMS color bars passed. labwc/Pixman displayed
+a native Kate window without Xorg, but keyboard/pointer integration still
+needs correction. This does not establish VirGL, reliable input, reset
+stress or physical-board support. Retest against each exact kernel and
+virtual hardware configuration.
 The configuration disables default module autoload. Its VirtGPU, DRM,
 Linux compatibility and VirtIO dependencies are built into the kernel;
 do not load modules from a different build during the experiment.

@@ -1,8 +1,18 @@
 # VirtIO-GPU acceleration for EmberBSD in UTM
 
-Status: revised proposal; no GPU implementation or hardware validation yet.
+Status: experimental native 2D implementation; VirGL remains disabled.
 Reviewed on 2026-10-06 against EmberBSD `b1d21397dca` and UTM 4.7.5.
 Target: the current NetBSD 11/aarch64-based EmberBSD installation.
+
+On 2026-10-06, `67a611acb9b` booted with the native DRM child. PCI discovery,
+32 cross-process GEM/PRIME mapping lifetimes and visible 800x600 KMS color
+bars passed. A native labwc/Pixman session displayed Kate without Xorg.
+Keyboard mapping and pointer handling still need correction; this is not
+a usable desktop or accelerated-session acceptance result. Reproducible
+third-party recipes and patches live in
+[EmberBSD Ports](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/wayland-utm),
+and runtime probes live in
+[EmberBSD Examples](https://github.com/neonix20b/EmberBSD-Examples/tree/main/desktop/wayland-utm).
 
 ## Outcome and scope
 
@@ -42,13 +52,13 @@ uses a different graphics protocol. [UTM 4.7.5](https://github.com/utmapp/UTM/bl
 marks gfxstream, Venus and MoltenVK as future work. Do not base this port on
 features documented only for newer upstream QEMU or another VMM.
 
-## Current gaps and baseline audit
+## Initial gaps and baseline audit
 
-The working VM uses virtio-ramfb with GL off, genfb/wsfb and llvmpipe.
+The saved recovery VM configuration uses virtio-ramfb with GL off, genfb/wsfb and llvmpipe.
 The console driver has no DRM interface; opening the existing DRM device
 nodes returns ENODEV. Installed Mesa 21.3.7 lacks the VirGL DRI driver.
 
-The imported `dist/drm/virtio` sources are not built or attached. They require
+The initial `dist/drm/virtio` sources were not built or attached. They required
 missing Linux VirtIO and GEM shmem interfaces. NetBSD already has UVM-backed
 GEM allocation, page pinning and a native mmap fault path; reuse that base.
 
@@ -191,7 +201,8 @@ the audited existing VirtGPU core, then staged KMS, native input, VirGL and
 Wayland integration. This replaces the module-local shim and Xorg-first
 proposals. Wayland avoids requiring an accelerated X server for native clients;
 it does not remove DRM, buffer synchronization or input-porting work, and no
-performance gain is claimed without measurements. This remains a design.
+performance gain is claimed without measurements. The validation sequence
+remains the acceptance contract for the experimental implementation.
 
 ## Pinned references
 
