@@ -44,7 +44,17 @@ variants; the repaired source must pass all twenty variants.
 
 The original production source at `7f47b7c3f935ccba2207fe73b57742ae4b6b9f92`
 failed 140 of 850 checks in an AArch64 UTM guest with GCC 16.2.0.
-The source repair requires the same native GREEN gate before acceptance.
+The repair at `a32a88d7b71a50f795df8a1b291b26968224e0b0` passed all 850 checks
+on 2026-10-07. Comparing all twenty native object bodies found only the
+first instruction changed in narrow helpers; all other bytes matched.
+
+The unchanged GCC 16.2.0 `gcc.dg/atomic/c11-atomic-exec-2.c` was also linked
+to the original named production objects in separate executables, using
+`-O2 -flto -fuse-linker-plugin -fno-fat-lto-objects -std=c11 -pedantic-errors`
+and the same build-tree libatomic/runtime paths as its earlier reproduction.
+The original objects reproduced SIGABRT (134); fixed objects passed (0).
+ELF symbols, link maps and direct call instructions confirmed that these
+executables used the selected objects. Neither executable replaced libc.
 This is an isolated software contract, not an installed libc update,
 physical-board check or acceptance of the ongoing GCC test suite.
 
