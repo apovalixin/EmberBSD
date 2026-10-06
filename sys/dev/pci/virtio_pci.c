@@ -320,11 +320,6 @@ virtio_pci_attach(device_t parent, device_t self, void *aux)
 	if (virtio_pci_adjust_config_region(psc))
 		return;
 
-	/* generic */
-	virtio_device_reset(sc);
-	virtio_set_status(sc, VIRTIO_CONFIG_DEVICE_STATUS_ACK);
-	virtio_set_status(sc, VIRTIO_CONFIG_DEVICE_STATUS_DRIVER);
-
 	sc->sc_childdevid = id;
 	sc->sc_child = NULL;
 	virtio_pci_rescan(self, NULL, NULL);
@@ -338,6 +333,7 @@ virtio_pci_rescan(device_t self, const char *ifattr, const int *locs)
 	struct virtio_pci_softc * const psc = device_private(self);
 	struct virtio_softc * const sc = &psc->sc_sc;
 	struct virtio_attach_args va;
+	cfdata_t cf;
 
 	if (sc->sc_child)	/* Child already attached? */
 		return 0;
@@ -345,7 +341,18 @@ virtio_pci_rescan(device_t self, const char *ifattr, const int *locs)
 	memset(&va, 0, sizeof(va));
 	va.sc_childdevid = sc->sc_childdevid;
 
-	config_found(self, &va, NULL, CFARGS_NONE);
+	/*
+	 * Preserve firmware state when no child driver will take ownership.
+	 * In particular, resetting a disabled GPU can destroy its firmware
+	 * framebuffer before genfb attaches.
+	 */
+	cf = config_search(self, &va, CFARGS_NONE);
+	if (cf != NULL) {
+		virtio_device_reset(sc);
+		virtio_set_status(sc, VIRTIO_CONFIG_DEVICE_STATUS_ACK);
+		virtio_set_status(sc, VIRTIO_CONFIG_DEVICE_STATUS_DRIVER);
+		config_attach(self, cf, &va, NULL, CFARGS_NONE);
+	}
 
 	if (virtio_attach_failed(sc))
 		return 0;
