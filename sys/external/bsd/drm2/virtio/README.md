@@ -6,6 +6,9 @@ native `virtiodrm` DRM/KMS. The ordinary `EMBER64` configuration is unchanged.
 This is an experimental 2D integration, not a claim of a validated graphics
 session. Native attachment, mmap, PRIME, visible scanout and reset stress
 must be checked with the exact kernel and virtual hardware configuration.
+The configuration disables default module autoload. Its VirtGPU, DRM,
+Linux compatibility and VirtIO dependencies are built into the kernel;
+do not load modules from a different build during the experiment.
 
 The attachment requires modern VirtIO and negotiates no optional GPU
 features. VIRGL, EDID, blob resources and context-init remain disabled.
