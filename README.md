@@ -120,9 +120,19 @@ on every board in the hardware catalog.
   provides a tested desktop scenario. [Phosh 0.58.0](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/phosh)
   runs inside it with software-rendered Wayland, application switching,
   GTK applications and the Stevia English/Russian screen keyboard.
-  [Enlightenment 0.27.1/EFL 1.28.1](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/enlightenment)
-  runs with system Lua 5.4; window management and session exit are tested.
   These VM checks provide interface prototypes, not validated phone images.
+- **Additional X11 desktops:** [Openbox 3.6.1](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/openbox)
+  and [Enlightenment 0.27.1/EFL 1.28.1](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/enlightenment)
+  pass software X11 window management, two application windows, keyboard
+  input through XTEST, text editing/saving and clean session exit.
+  The [common launcher and checks](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/x11-desktops)
+  isolate session configuration while preserving the user's HOME.
+  [awesomeWM 4.3](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/awesome)
+  also builds and passes the same workflow with system Lua and patched LGI.
+  [Xfce 4.20](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/xfce)
+  has a source recipe and checked session profile; native build and runtime
+  remain pending. These checks do not validate physical input, touch or GPU
+  acceleration.
 - **Current KDE/Qt integration:** KWin 6.7.5 runs a nested Qt Wayland window
   with software rendering and tested keyboard input. Plasma Mobile 6.7.5
   builds and installs with checked library loading and QML components.
@@ -140,8 +150,11 @@ on every board in the hardware catalog.
   See the [VirtGPU implementation](sys/external/bsd/drm2/virtio/README.md),
   [DRM identity checks](ember/boot/drm-native-identity.md) and
   [graphics probes](https://github.com/neonix20b/EmberBSD-Examples/tree/main/desktop/wayland-utm).
-  VirGL remains disabled; GPU rendering, reliable console recovery and
-  Vulkan Compute are not yet established.
+  Ports owns the [current Mesa 26.2.4 source adaptation](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/wayland-utm),
+  with DSO-lifetime/numeric regressions and common-toolchain staging rules;
+  its complete build and consumer migration remain pending. VirGL remains
+  disabled; GPU rendering, reliable console recovery and Vulkan Compute
+  are not yet established.
 - **Physical GPU and NPU porting targets:** CIX P1 is the first selected
   direction: Mali-G720 through Panthor/[Mesa PanVK](https://docs.mesa3d.org/drivers/panfrost.html),
   and Zhouyi v3/X2 through the [Compass driver/runtime sources](https://github.com/Arm-China/Compass_NPU_Driver).
@@ -171,7 +184,11 @@ on every board in the hardware catalog.
   original board adaptations already applied to this tree.
 - **Reproducible builds and development:** pinned kernel/UEFI inputs and
   checked firmware assets, pkgsrc overlays, versioned source probes and
-  standalone examples. [Developer skills](#connect-developer-skills) help
+  standalone examples. The [Ports development toolchain](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/development-toolchain)
+  provides a GCC 16.2 candidate built and installed on the AArch64 VM, with
+  native C11/C++20 thread, TLS and shared-library checks passing. Full upstream
+  tests and a coherent Qt/LLVM runtime rebuild remain required before adopting
+  it as the default compiler in new images. [Developer skills](#connect-developer-skills) help
   AI coding assistants find the owning project, test changes and prepare
   contributions. A general validated installation image is not yet released.
 
