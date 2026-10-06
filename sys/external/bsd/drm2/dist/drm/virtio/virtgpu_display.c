@@ -323,8 +323,7 @@ virtio_gpu_user_framebuffer_create(struct drm_device *dev,
 
 	struct virtio_gpu_object *bo = gem_to_virtio_gpu_obj(obj);
 	if (mode_cmd->width > bo->width || mode_cmd->height > bo->height ||
-	    mode_cmd->pitches[0] != bo->width * 4 || mode_cmd->offsets[0] != 0 ||
-	    virtio_gpu_translate_format(mode_cmd->pixel_format) != bo->format) {
+	    mode_cmd->pitches[0] != bo->width * 4 || mode_cmd->offsets[0] != 0) {
 		drm_gem_object_put_unlocked(obj);
 		return ERR_PTR(-EINVAL);
 	}
