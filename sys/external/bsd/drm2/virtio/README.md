@@ -146,8 +146,10 @@ open/postclose, synchronous waits, response validation, stop and native reset.
 Host checks pass with address/undefined-behavior sanitizers. Allocation and
 transport seams cover errors, malformed replies, concurrent ID reuse, delayed
 publication, timeout/late cookies and reset overlapping ID retirement. They
-model GPU execution and hardware reset; native object compilation, a complete
-kernel build and live context checks remain pending for this change.
+model GPU execution and hardware reset. All six context groups, the five
+capset groups and nine existing VirtGPU groups also pass on NetBSD 11/aarch64.
+The changed KMS/VQ objects compile with native GCC 12.5 and normal `-Werror`
+flags. A complete matched kernel build and live context checks remain pending.
 GEM attach/detach ownership and resource creation need separate work. VIRGL
 remains disabled, and these source contracts do not establish 3D acceleration.
 
