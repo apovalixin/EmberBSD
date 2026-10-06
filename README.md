@@ -159,6 +159,9 @@ on every board in the hardware catalog.
 - **Physical GPU and NPU porting targets:** CIX P1 is the first selected
   direction: Mali-G720 through Panthor/[Mesa PanVK](https://docs.mesa3d.org/drivers/panfrost.html),
   and Zhouyi v3/X2 through the [Compass driver/runtime sources](https://github.com/Arm-China/Compass_NPU_Driver).
+  The [Compass Ports probe](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/compass-umd)
+  fixes descriptor ownership during initialization and cleanup; 13 isolated
+  production-method contracts pass on NetBSD/AArch64 with GCC 16.2.
   A733 PowerVR/Vivante integration is a separate investigation. These are
   porting targets, not available EmberBSD acceleration. Board bring-up,
   driver/DMA integration, compatible runtime and real model execution must
