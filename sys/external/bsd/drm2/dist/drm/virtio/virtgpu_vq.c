@@ -349,6 +349,8 @@ void virtio_gpu_dequeue_cursor_func(struct work_struct *work)
 	spin_unlock(&vgdev->cursorq.qlock);
 
 	list_for_each_entry_safe(entry, tmp, &reclaim_list, list) {
+		if (entry->objs)
+			virtio_gpu_array_put_free_delayed(vgdev, entry->objs);
 		list_del(&entry->list);
 		free_vbuf(vgdev, entry);
 	}
@@ -1322,17 +1324,28 @@ void virtio_gpu_object_detach(struct virtio_gpu_device *vgdev,
 }
 
 void virtio_gpu_cursor_ping(struct virtio_gpu_device *vgdev,
-			    struct virtio_gpu_output *output)
+			    struct virtio_gpu_output *output,
+			    struct virtio_gpu_object *bo)
 {
 	struct virtio_gpu_vbuffer *vbuf;
+	struct virtio_gpu_object_array *objs = NULL;
 	struct virtio_gpu_update_cursor *cur_p;
 
+	if (bo) {
+		objs = virtio_gpu_array_alloc(1);
+		if (!objs)
+			return;
+		virtio_gpu_array_add_obj(objs, &bo->base.base);
+	}
 	output->cursor.pos.scanout_id = cpu_to_le32(output->index);
 	cur_p = virtio_gpu_alloc_cursor(vgdev, &vbuf);
 	if (IS_ERR(cur_p)) {
+		if (objs)
+			virtio_gpu_array_put_free(objs);
 		vgdev->submit_error = PTR_ERR(cur_p);
 		return;
 	}
+	vbuf->objs = objs;
 	memcpy(cur_p, &output->cursor, sizeof(output->cursor));
 	virtio_gpu_queue_cursor(vgdev, vbuf);
 }

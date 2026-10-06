@@ -312,7 +312,8 @@ void virtio_gpu_object_detach(struct virtio_gpu_device *vgdev,
 int virtio_gpu_attach_status_page(struct virtio_gpu_device *vgdev);
 int virtio_gpu_detach_status_page(struct virtio_gpu_device *vgdev);
 void virtio_gpu_cursor_ping(struct virtio_gpu_device *vgdev,
-			    struct virtio_gpu_output *output);
+			    struct virtio_gpu_output *output,
+			    struct virtio_gpu_object *bo);
 int virtio_gpu_cmd_get_display_info(struct virtio_gpu_device *vgdev);
 int virtio_gpu_cmd_get_capset_info(struct virtio_gpu_device *vgdev, int idx);
 int virtio_gpu_cmd_get_capset(struct virtio_gpu_device *vgdev,

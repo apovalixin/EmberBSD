@@ -1,3 +1,4 @@
+/* Origin: EmberBSD native VirtGPU cursor lifetime of Linux v5.6, 2026-10-06. */
 /*	$NetBSD: virtgpu_plane.c,v 1.3 2021/12/18 23:45:45 riastradh Exp $	*/
 
 /*
@@ -222,10 +223,10 @@ static void virtio_gpu_cursor_cleanup_fb(struct drm_plane *plane,
 {
 	struct virtio_gpu_framebuffer *vgfb;
 
-	if (!plane->state->fb)
+	if (!old_state->fb)
 		return;
 
-	vgfb = to_virtio_gpu_framebuffer(plane->state->fb);
+	vgfb = to_virtio_gpu_framebuffer(old_state->fb);
 	if (vgfb->fence) {
 		dma_fence_put(&vgfb->fence->f);
 		vgfb->fence = NULL;
@@ -265,12 +266,16 @@ static void virtio_gpu_cursor_plane_update(struct drm_plane *plane,
 		if (!objs)
 			return;
 		virtio_gpu_array_add_obj(objs, vgfb->base.obj[0]);
-		virtio_gpu_array_lock_resv(objs);
-		virtio_gpu_cmd_transfer_to_host_2d
+		if (virtio_gpu_array_lock_resv(objs)) {
+			virtio_gpu_array_put_free(objs);
+			return;
+		}
+		if (virtio_gpu_cmd_transfer_to_host_2d
 			(vgdev, 0,
 			 plane->state->crtc_w,
 			 plane->state->crtc_h,
-			 0, 0, objs, vgfb->fence);
+			 0, 0, objs, vgfb->fence))
+			return;
 		dma_fence_wait(&vgfb->fence->f, true);
 		dma_fence_put(&vgfb->fence->f);
 		vgfb->fence = NULL;
@@ -303,7 +308,7 @@ static void virtio_gpu_cursor_plane_update(struct drm_plane *plane,
 	}
 	output->cursor.pos.x = cpu_to_le32(plane->state->crtc_x);
 	output->cursor.pos.y = cpu_to_le32(plane->state->crtc_y);
-	virtio_gpu_cursor_ping(vgdev, output);
+	virtio_gpu_cursor_ping(vgdev, output, bo);
 }
 
 static const struct drm_plane_helper_funcs virtio_gpu_primary_helper_funcs = {
