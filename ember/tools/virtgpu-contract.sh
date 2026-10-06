@@ -828,3 +828,49 @@ C
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
     "$work/attach.c" -o "$work/attach"
 "$work/attach"
+cat > "$work/busid.c" <<'C'
+#include <assert.h>
+#include <stdio.h>
+#include <string.h>
+#include <errno.h>
+struct device { struct device *parent; const char *name, *kind; void *priv; };
+typedef struct device *device_t;
+struct drm_device { device_t dev; char unique[40]; };
+struct pci_softc {
+    unsigned int sc_pc; int sc_bus;
+    struct { device_t c_dev; } sc_devices[32 * 8];
+};
+#define PCI_SC_DEVICESC(d,f) sc_devices[(d) * 8 + (f)]
+static device_t device_parent(device_t d) { return d->parent; }
+static int device_is_a(device_t d, const char *kind) { return strcmp(d->kind, kind) == 0; }
+static void *device_private(device_t d) { return d->priv; }
+static const char *device_xname(device_t d) { return d->name; }
+static unsigned int pci_get_segment(unsigned int pc) { return pc; }
+static void aprint_normal_dev(device_t d, const char *format, ...) { (void)d; (void)format; }
+static int drm_dev_set_unique(struct drm_device *dev, const char *name) {
+    assert(strlen(name) < sizeof(dev->unique)); strcpy(dev->unique, name); return 0;
+}
+C
+extract virtiodrm_set_busid "$autoconf" int >> "$work/busid.c"
+cat >> "$work/busid.c" <<'C'
+int main(void) {
+    struct pci_softc psc = { .sc_pc = 3, .sc_bus = 7 };
+    struct device bus = { .kind = "pci", .priv = &psc };
+    struct device parent = { .parent = &bus, .name = "virtio33" };
+    struct device sibling = { .parent = &bus, .name = "virtio34" };
+    struct device self = { .parent = &parent, .name = "virtiodrm0" };
+    struct drm_device dev = { .dev = &self };
+    psc.PCI_SC_DEVICESC(1, 0).c_dev = &sibling;
+    psc.PCI_SC_DEVICESC(4, 2).c_dev = &parent;
+    assert(virtiodrm_set_busid(&dev) == 0);
+    assert(strcmp(dev.unique, "pci:0003:07:04.2") == 0);
+    psc.PCI_SC_DEVICESC(4, 2).c_dev = NULL;
+    assert(virtiodrm_set_busid(&dev) == -ENODEV);
+    bus.kind = "acpi";
+    assert(virtiodrm_set_busid(&dev) == 0 && strcmp(dev.unique, "virtiodrm0") == 0);
+    puts("VirtGPU production bus metadata uses exact PCI parent identity and preserves MMIO");
+    return 0;
+}
+C
+${CC:-cc} -std=c11 -Wall -Wextra -Werror "$work/busid.c" -o "$work/busid"
+"$work/busid"

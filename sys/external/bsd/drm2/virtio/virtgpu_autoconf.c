@@ -4,6 +4,8 @@
 #include <sys/cdefs.h>
 #include <sys/device.h>
 #include <sys/errno.h>
+#include <sys/systm.h>
+#include <dev/pci/pcivar.h>
 #include <dev/pci/virtiovar.h>
 #include <drm/drm_drv.h>
 #include <drm/drm_device.h>
@@ -90,6 +92,32 @@ virtiodrm_attach(device_t parent, device_t self, void *aux)
 	config_interrupts(self, virtiodrm_attach_deferred);
 }
 
+static int
+virtiodrm_set_busid(struct drm_device *dev)
+{
+	device_t transport = device_parent(dev->dev);
+	device_t bus = device_parent(transport);
+	struct pci_softc *psc;
+	unsigned int d, f;
+	char busid[40];
+
+	if (!bus || !device_is_a(bus, "pci"))
+		return drm_dev_set_unique(dev, device_xname(dev->dev));
+	psc = device_private(bus);
+	/* PCI bookkeeping identifies this exact parent, even with two GPUs. */
+	for (d = 0; d < 32; d++) {
+		for (f = 0; f < 8; f++) {
+			if (psc->PCI_SC_DEVICESC(d, f).c_dev != transport)
+				continue;
+			snprintf(busid, sizeof(busid), "pci:%04x:%02x:%02x.%u",
+			    pci_get_segment(psc->sc_pc), psc->sc_bus, d, f);
+			aprint_normal_dev(dev->dev, "DRM bus ID %s\n", busid);
+			return drm_dev_set_unique(dev, busid);
+		}
+	}
+	return -ENODEV;
+}
+
 static void
 virtiodrm_attach_deferred(device_t self)
 {
@@ -108,7 +136,7 @@ virtiodrm_attach_deferred(device_t self)
 	}
 	dev->bus_dmat = dev->bus_dmat32 = dev->dmat = sc->sc_vdev.dmat;
 	sc->sc_vdev.priv = dev;
-	ret = drm_dev_set_unique(dev, device_xname(self));
+	ret = virtiodrm_set_busid(dev);
 	if (ret)
 		goto put;
 	ret = virtio_gpu_init(dev, &sc->sc_vdev, sc->sc_vqs);
