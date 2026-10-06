@@ -349,7 +349,13 @@ memfd_mmap(file_t *fp, off_t *offp, size_t size, int prot, int *flagsp,
 		error = EINVAL;
 		goto leave;
 	}
-	if (*offp + size > mfd->mfd_size) {
+	/*
+	 * The last mapped page must start before EOF.  Its tail may extend
+	 * past the logical file size.  Compare distances to avoid overflow
+	 * when adding the mapping size or rounding a large file offset.
+	 */
+	if (*offp >= mfd->mfd_size ||
+	    size - PAGE_SIZE >= (uint64_t)(mfd->mfd_size - *offp)) {
 		error = EINVAL;
 		goto leave;
 	}
