@@ -204,6 +204,11 @@ on every board in the hardware catalog.
   addresses lost subnormal values and NaN payloads on CPUs without AArch32.
   Production contracts and native object compilation pass; verification
   after booting the corrected kernel remains pending.
+- **AArch64 atomic correctness:** [narrow outlined CAS helpers](ember/boot/aarch64-outlined-cas.md)
+  now normalize expected arguments so matching byte/halfword updates are
+  not skipped. All 850 native production checks and an isolated unchanged
+  GCC atomic regression pass with the repaired objects. Installing the
+  corrected libc and accepting the complete compiler suite remain pending.
 - **Reproducible builds and development:** pinned kernel/UEFI inputs and
   checked firmware assets, pkgsrc overlays, versioned source probes and
   standalone examples. The [Ports development toolchain](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/development-toolchain)
