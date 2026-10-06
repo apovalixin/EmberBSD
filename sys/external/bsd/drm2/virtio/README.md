@@ -84,7 +84,10 @@ Discovery and GET_CAPS use the existing fenced synchronous control path.
 Discovery runs during initialization; cache requests run in ioctl threads,
 never on the ordered completion worker. Initialization propagates discovery
 errors and uses the ordinary deinit/reset/drain path before freeing its table.
-No partially validated table is published. Duplicate or zero IDs, zero or
+The reset interlock publishes the retained pointer/count together and checks
+the latched error before publishing the usable count. A reset during allocation
+discards only the still-local table. No partially validated table is published.
+Duplicate or zero IDs, zero or
 oversized payloads and invalid response lengths/types/fences fail the query.
 Unknown IDs remain discovery metadata; only classic VIRGL/VIRGL2 IDs 1/2
 can be requested. A negotiated classic renderer with no classic capset fails

@@ -130,6 +130,7 @@ static void virtio_gpu_init_vq(struct virtio_gpu_queue *vgvq,
 static int
 virtio_gpu_get_capsets(struct virtio_gpu_device *vgdev, uint32_t num_capsets)
 {
+	struct virtio_gpu_drv_capset *capsets;
 	uint32_t i, j;
 	bool classic = false;
 	int ret;
@@ -139,15 +140,22 @@ virtio_gpu_get_capsets(struct virtio_gpu_device *vgdev, uint32_t num_capsets)
 	if (num_capsets == 0)
 		return -ENODEV;
 
-	vgdev->capsets = kcalloc(num_capsets,
-				 sizeof(struct virtio_gpu_drv_capset),
-				 GFP_KERNEL);
-	if (!vgdev->capsets) {
-		DRM_ERROR("failed to allocate cap sets\n");
-		return -ENOMEM;
+	capsets = kcalloc(num_capsets, sizeof(*capsets), GFP_KERNEL);
+	/* Reset workers are already live; publish their pointer/count atomically. */
+	mutex_lock(&vgdev->resp_wq.lock);
+	ret = vgdev->capset_error;
+	if (!ret && !capsets)
+		ret = -ENOMEM;
+	if (!ret) {
+		vgdev->capsets = capsets;
+		vgdev->capsets_allocated = num_capsets;
+	}
+	mutex_unlock(&vgdev->resp_wq.lock);
+	if (ret) {
+		kfree(capsets);
+		return ret;
 	}
 	/* Retain this table until deinit drains every completion/reset cookie. */
-	vgdev->capsets_allocated = num_capsets;
 	for (i = 0; i < num_capsets; i++) {
 		ret = virtio_gpu_cmd_get_capset_info(vgdev, i);
 		if (ret)
@@ -166,8 +174,12 @@ virtio_gpu_get_capsets(struct virtio_gpu_device *vgdev, uint32_t num_capsets)
 	if (!classic)
 		return -ENODEV;
 	/* Unknown IDs remain metadata only; GET_CAPS admits classic IDs 1/2. */
-	vgdev->num_capsets = num_capsets;
-	return 0;
+	mutex_lock(&vgdev->resp_wq.lock);
+	ret = vgdev->capset_error;
+	if (!ret)
+		vgdev->num_capsets = num_capsets;
+	mutex_unlock(&vgdev->resp_wq.lock);
+	return ret;
 }
 
 int virtio_gpu_init(struct drm_device *dev, struct virtio_device *vdev,

@@ -20,7 +20,8 @@
 #define MAX_INLINE_CMD_SIZE 96
 #define MAX_INLINE_RESP_SIZE 24
 #define DRM_ERROR(...) ((void)0)
-#define DRM_INFO(...) ((void)0)
+static void test_info(void);
+#define DRM_INFO(...) test_info()
 #define BUG_ON(c) assert(!(c))
 #define cpu_to_le32(x) (x)
 #define le32_to_cpu(x) (x)
@@ -37,9 +38,12 @@ typedef atomic_int atomic_t;
 struct mutex {
 	pthread_mutex_t value;
 };
+enum publication_boundary { ALLOCATION, RESULT_LOCK };
+static void pause_boundary(enum publication_boundary, struct mutex *);
 static void
 mutex_lock(struct mutex *m)
 {
+	pause_boundary(RESULT_LOCK, m);
 	assert(pthread_mutex_lock(&m->value) == 0);
 }
 static void
@@ -114,6 +118,30 @@ struct virtio_gpu_fence {
 };
 static atomic_int allocations, allocation_calls;
 static int allocation_fail_at;
+/* Pause only real allocator/lock API boundaries, never a copied algorithm. */
+static pthread_mutex_t boundary_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t boundary_cv = PTHREAD_COND_INITIALIZER;
+static pthread_t boundary_thread;
+static enum publication_boundary boundary_kind;
+static struct mutex *boundary_mutex;
+static bool boundary_active, boundary_reached, boundary_release;
+
+static void
+pause_boundary(enum publication_boundary kind, struct mutex *lock)
+{
+	assert(pthread_mutex_lock(&boundary_lock) == 0);
+	if (boundary_active && boundary_kind == kind &&
+	    (kind == ALLOCATION || lock == boundary_mutex) &&
+	    pthread_equal(pthread_self(), boundary_thread)) {
+		boundary_reached = true;
+		assert(pthread_cond_broadcast(&boundary_cv) == 0);
+		while (!boundary_release)
+			assert(pthread_cond_wait(&boundary_cv, &boundary_lock) == 0);
+		boundary_active = false;
+	}
+	assert(pthread_mutex_unlock(&boundary_lock) == 0);
+}
+
 static void *
 test_alloc(size_t size, bool zero)
 {
@@ -123,6 +151,7 @@ test_alloc(size_t size, bool zero)
 	void *p = zero ? calloc(1, size) : malloc(size);
 	assert(p);
 	atomic_fetch_add(&allocations, 1);
+	pause_boundary(ALLOCATION, NULL);
 	return p;
 }
 static void
@@ -198,6 +227,17 @@ static int
 virtio_gpu_queue_fenced_ctrl_buffer(struct virtio_gpu_device *,
     struct virtio_gpu_vbuffer *, struct virtio_gpu_ctrl_hdr *, struct virtio_gpu_fence *);
 #include "capsets-production.h"
+
+static struct virtio_gpu_device *stop_at_info;
+static void
+test_info(void)
+{
+	if (stop_at_info) {
+		struct virtio_gpu_device *d = stop_at_info;
+		stop_at_info = NULL;
+		virtio_gpu_stop(d, -EIO);
+	}
+}
 
 /* Transport-only models call the real response validator, callbacks and waits. */
 enum response_mode {
@@ -384,6 +424,74 @@ discovery(void)
 	drain(&d);
 	puts("PASS: discovery limits, IDs, sizes, allocation/submission errors, exact replies, fenced completion and late callback");
 }
+
+struct discovery_query {
+	struct virtio_gpu_device *dev;
+	int ret;
+};
+
+static void *
+discovery_thread(void *arg)
+{
+	struct discovery_query *q = arg;
+
+	assert(pthread_mutex_lock(&boundary_lock) == 0);
+	boundary_thread = pthread_self();
+	assert(pthread_mutex_unlock(&boundary_lock) == 0);
+	q->ret = virtio_gpu_get_capsets(q->dev, 1);
+	return NULL;
+}
+
+static void
+discovery_publication(void)
+{
+	struct virtio_gpu_device d;
+	pthread_t thread;
+
+	for (unsigned stage = ALLOCATION; stage <= RESULT_LOCK; stage++) {
+		struct discovery_query q = { .dev = &d };
+		struct timespec deadline;
+
+		init(&d);
+		boundary_kind = stage;
+		boundary_mutex = &d.resp_wq.lock;
+		boundary_active = true;
+		boundary_reached = boundary_release = false;
+		assert(pthread_create(&thread, NULL, discovery_thread, &q) == 0);
+		assert(timespec_get(&deadline, TIME_UTC) == TIME_UTC);
+		deadline.tv_sec += 2;
+		assert(pthread_mutex_lock(&boundary_lock) == 0);
+		while (!boundary_reached)
+			assert(pthread_cond_timedwait(&boundary_cv, &boundary_lock,
+			    &deadline) == 0);
+		assert(pthread_mutex_unlock(&boundary_lock) == 0);
+
+		/* A reset reader must not see storage before its publication lock. */
+		mutex_lock(&d.resp_wq.lock);
+		assert(!d.capsets && d.capsets_allocated == 0);
+		mutex_unlock(&d.resp_wq.lock);
+		virtio_gpu_stop(&d, -EIO);
+		assert(pthread_mutex_lock(&boundary_lock) == 0);
+		boundary_release = true;
+		assert(pthread_cond_broadcast(&boundary_cv) == 0);
+		assert(pthread_mutex_unlock(&boundary_lock) == 0);
+		assert(pthread_join(thread, NULL) == 0);
+		assert(q.ret == -EIO && d.capset_error == -EIO);
+		assert(!d.capsets && !d.capsets_allocated && !d.num_capsets);
+		assert(atomic_load(&allocations) == 0);
+		assert(atomic_load(&submissions) == 0);
+		drain(&d);
+	}
+
+	/* A reset after the last reply must also prevent usable-table publication. */
+	init(&d);
+	stop_at_info = &d;
+	assert(virtio_gpu_get_capsets(&d, 1) == -EIO);
+	assert(d.capsets && d.capsets_allocated == 1 && !d.num_capsets);
+	assert(d.capset_error == -EIO);
+	drain(&d);
+	puts("PASS: discovery allocation/publication/reset interlock and final error latch");
+}
 static void
 cache_errors(void)
 {
@@ -549,6 +657,7 @@ ioctls_and_budget(void)
 int
 main(void)
 {
+	discovery_publication();
 	discovery();
 	cache_errors();
 	concurrent();
