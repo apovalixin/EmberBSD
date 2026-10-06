@@ -56,8 +56,9 @@ mmap and visible scanout. A compile alone does not complete this task.
 
 ## Task 3: Native Wayland software session
 
-Files: reproducible build/session/probe scripts and README in
-EmberBSD-Examples `desktop/wayland-utm`; OS notes only reference that example.
+Files: reproducible build recipes, original archive URLs, SHA256 and patches
+in EmberBSD-Ports; session/probe scripts in EmberBSD-Examples
+`desktop/wayland-utm`. OS notes reference those repositories.
 
 Pin pkgsrc dependencies and build labwc/wlroots with NetBSD input and seatd.
 Keep a private, documented graphics prefix where a Mesa replacement is
