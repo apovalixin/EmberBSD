@@ -99,6 +99,15 @@ on every board in the hardware catalog.
   and reconnection. This connects EmberBSD devices to ROS systems; it is
   bridge interoperability, not a native ROS 2 distribution. See the
   [Zenoh/ROS 2 example](https://github.com/neonix20b/EmberBSD-Examples/tree/main/robotics/zenoh-ros2).
+- **Model APIs and speech processing:** ONNX Runtime 1.30.0 and ncnn 20260526
+  provide installed C/C++ CPU inference libraries. RNNoise 0.2 processes audio,
+  and Silero VAD 6.2.3 detects speech through the same ONNX Runtime library.
+  Seven AArch64 VM checks cover numerical results, recurrent stream state,
+  speech/silence boundaries and invalid inputs; ORT worker affinity is checked
+  separately. Ports preserves the NetBSD adaptations and
+  [build and test instructions](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/ai-engines).
+  These source probes support application development; microphone capture,
+  real-world audio quality and GPU/NPU execution remain unverified.
 - **Vision, geometry and positioning:** OpenCV 5.0.0, Eigen 5.0.1 and gpsd
   3.27.5 build and pass installed-consumer tests on AArch64. Checks include
   image processing, features and camera-pose recovery, numerical solvers,
@@ -222,7 +231,8 @@ Add a catalog row and a board page; keep detailed feature matrices on those page
 
 ## Wi-Fi work in progress
 
-None of this is in the tree yet; the table above describes what is.
+See the board pages for published Wi-Fi support. The following work has not
+been integrated into the tree yet.
 
 - **Roaming in `bwfm`** between access points and between bands. The
   host, not the radio firmware, decides on a transition: the tree

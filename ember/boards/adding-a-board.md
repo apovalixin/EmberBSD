@@ -82,6 +82,10 @@ hardware evidence exists. Keep planned boards visibly separate from tested
 boards. Use the [catalog's terms](README.md#read-a-support-claim); never label an
 entire board fully supported from a successful boot alone.
 
+Record the artifact actually selected by the loader. With QEMU direct kernel
+boot, the host's `-kernel` input can differ from the guest's `/netbsd`; hashing
+that guest file alone does not identify the running kernel.
+
 ## Submit the contribution
 
 After relevant checks, open a focused PR with code, build integration, regression
