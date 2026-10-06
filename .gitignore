@@ -4,10 +4,10 @@ __pycache__/
 *.img
 *.kmod
 *.o
-sys/arch/evbarm/compile/OXTORG*/
-oxtorg/tools/bluetooth-control
-oxtorg/tools/bluetooth-pair
-oxtorg/tools/bluetooth-a2dp
-oxtorg/tools/a2dp-source/
+sys/arch/evbarm/compile/EMBER*/
+ember/tools/bluetooth-control
+ember/tools/bluetooth-pair
+ember/tools/bluetooth-a2dp
+ember/tools/a2dp-source/
 build-output/
 private/

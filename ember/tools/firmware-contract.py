@@ -24,7 +24,7 @@ class FirmwareFailure(unittest.TestCase):
                 for name in variants:
                     (cache / name).mkdir()
                     (cache / name / "RPI_EFI.fd").write_bytes(b"previous firmware")
-                command = ["/bin/bash", str(ROOT / "oxtorg/build-firmware.sh"), str(cache)]
+                command = ["/bin/bash", str(ROOT / "ember/build-firmware.sh"), str(cache)]
                 if option:
                     command.append(option)
                 result = subprocess.run(command, env=dict(os.environ, PATH=str(fake) + ":/usr/bin:/bin"),

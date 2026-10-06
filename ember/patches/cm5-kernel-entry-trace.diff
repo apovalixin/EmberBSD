@@ -2,7 +2,7 @@ Origin:
 
 Optional UART entry, bootstrap-stage and early exception diagnostics
 for the CM5 diagnostic kernel.
-Only the explicit EARLYCONS/CONSADDR combination from OXTORG64_CM5_DIAG
+Only the explicit EARLYCONS/CONSADDR combination from EMBER64_CM5_DIAG
 enables it. Normal kernels are unchanged.
 
 --- sys/arch/aarch64/aarch64/start.S.orig

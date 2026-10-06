@@ -28,7 +28,7 @@ additions are:
   them: the `bwfm` Wi-Fi driver stalling on large transfers and after
   an access point asks the client to change band, idle cores on
   aarch64 missing a reschedule, the SD host controller driver. Each
-  is a separate diff in `oxtorg/patches` with its origin stated.
+  is a separate diff in `ember/patches` with its origin stated.
 - **A reproducible build**: the kernel, the firmware and a card image
   come from a pinned revision; one image boots several of the boards.
 
@@ -94,7 +94,7 @@ None of this is in the tree yet; the table above describes what is.
 Changes to association and command handling in `bwfm` should be
 coordinated with this work until it lands.
 
-See [hardware support, build instructions, and limitations](README.oxtorg.md)
+See [hardware support, build instructions, and limitations](README.ember.md)
 for validation details and source provenance. Changes in this fork should
 not be treated as changes accepted into upstream NetBSD.
 

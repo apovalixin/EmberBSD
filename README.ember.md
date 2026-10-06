@@ -8,8 +8,8 @@ should not be treated as changes accepted by the NetBSD developers.
 
 The kernel and common sources are based on the verified NetBSD 11.0
 `syssrc.tgz` release archive. The rest of the tree retains the upstream
-`netbsd-11` snapshot recorded in `oxtorg/source.json`. The adaptation patches
-are already applied to the source tree. Copies in `oxtorg/patches` document
+`netbsd-11` snapshot recorded in `ember/source.json`. The adaptation patches
+are already applied to the source tree. Copies in `ember/patches` document
 their provenance and support future porting; do not apply them again.
 
 ## Hardware support and validation
@@ -44,7 +44,7 @@ The native build environment is NetBSD 11/aarch64 with gcc, config, dtc,
 and Python 3.13 from pkgsrc. From a clean checkout of a pinned commit:
 
 ```sh
-sh oxtorg/build-kernel.sh /absolute/output OXTORG64
+sh ember/build-kernel.sh /absolute/output EMBER64
 ```
 
 The build produces an ELF kernel, a native kernel image, device trees for
@@ -57,13 +57,13 @@ current installation recipe uses the official NetBSD 11.0 userland.
 Build Raspberry Pi 5 UEFI firmware using Docker on macOS or Linux:
 
 ```sh
-bash oxtorg/build-firmware.sh /absolute/cache --rp1-console
+bash ember/build-firmware.sh /absolute/cache --rp1-console
 ```
 
 The eotics firmware source and submodules are pinned. The adaptation patch
-order is defined in `oxtorg/firmware/series`. Standard, console, and diagnostic
+order is defined in `ember/firmware/series`. Standard, console, and diagnostic
 variants use separate output directories. Radio firmware assets are fetched
-according to `oxtorg/boot/image-assets.tsv`, with hash verification and
+according to `ember/boot/image-assets.tsv`, with hash verification and
 license preservation; their binaries are not included in the repository.
 
 The RV32 kernels are cross-built with the stock `build.sh`:
@@ -81,7 +81,7 @@ Orange Pi Zero 4 and Zero 3W start through the board vendor's boot0 and
 U-Boot. They are closed binaries and are not included in the repository: an
 image builder copies them from the vendor's own card image; the Zero 4
 binaries start the Zero 3W as well. U-Boot then runs
-`oxtorg/boot/orangepi-zero4-boot.cmd`, which loads the native kernel and
+`ember/boot/orangepi-zero4-boot.cmd`, which loads the native kernel and
 the device tree from the first partition. The boot loader does not name
 the board, so the script reads the pins of the Ethernet MAC: with no PHY
 they float and follow the pull resistors both ways, and only then the
@@ -90,7 +90,7 @@ Zero 3W tree is chosen.
 Starting a UEFI rebuild removes the previous output for the selected
 variant. If Docker or compilation fails, an image builder will stop because
 the required input is missing. The host-side contract check covers this
-case: `python3 oxtorg/tools/firmware-contract.py`.
+case: `python3 ember/tools/firmware-contract.py`.
 
 ## Deploying to a device
 
@@ -119,5 +119,5 @@ updates are incorporated through separate commits followed by rebuilds
 and hardware validation.
 
 NetBSD and third-party licenses remain in the source files. Additional
-utilities under `oxtorg/` use the BSD-2-Clause license, except where a file
+utilities under `ember/` use the BSD-2-Clause license, except where a file
 carries its own license.

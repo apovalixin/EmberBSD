@@ -102,7 +102,7 @@ which selects the same code silently.
 +++ sys/arch/arm/sunxi/sun60i_a733_ccu.c
 @@ -0,0 +1,386 @@
 +/*-
-+ * Copyright (c) 2026 Anton and oxtorg contributors
++ * Copyright (c) 2026 Anton and EmberBSD contributors
 + * All rights reserved.
 + *
 + * Redistribution and use in source and binary forms, with or without
@@ -491,7 +491,7 @@ which selects the same code silently.
 +++ sys/arch/arm/sunxi/sun60i_a733_ccu.h
 @@ -0,0 +1,121 @@
 +/*-
-+ * Copyright (c) 2026 Anton and oxtorg contributors
++ * Copyright (c) 2026 Anton and EmberBSD contributors
 + * All rights reserved.
 + *
 + * Redistribution and use in source and binary forms, with or without
@@ -2768,7 +2768,7 @@ which selects the same code silently.
 +++ sys/arch/arm/sunxi/sun60i_a733_eqos.c
 @@ -0,0 +1,262 @@
 +/*-
-+ * Copyright (c) 2026 Anton and oxtorg contributors
++ * Copyright (c) 2026 Anton and EmberBSD contributors
 + * All rights reserved.
 + *
 + * Redistribution and use in source and binary forms, with or without
@@ -3033,7 +3033,7 @@ which selects the same code silently.
 +++ sys/arch/arm/sunxi/sun60i_a733_gpio.c
 @@ -0,0 +1,465 @@
 +/*-
-+ * Copyright (c) 2026 Anton and oxtorg contributors
++ * Copyright (c) 2026 Anton and EmberBSD contributors
 + * All rights reserved.
 + *
 + * Redistribution and use in source and binary forms, with or without
@@ -3501,7 +3501,7 @@ which selects the same code silently.
 +++ sys/arch/arm/sunxi/sun60i_a733_ths.c
 @@ -0,0 +1,327 @@
 +/*-
-+ * Copyright (c) 2026 Anton and oxtorg contributors
++ * Copyright (c) 2026 Anton and EmberBSD contributors
 + * All rights reserved.
 + *
 + * Redistribution and use in source and binary forms, with or without
@@ -4065,7 +4065,7 @@ which selects the same code silently.
 +++ sys/arch/arm/sunxi/sun60i_a733_r_ccu.c
 @@ -0,0 +1,142 @@
 +/*-
-+ * Copyright (c) 2026 Anton and oxtorg contributors
++ * Copyright (c) 2026 Anton and EmberBSD contributors
 + * All rights reserved.
 + *
 + * Redistribution and use in source and binary forms, with or without
@@ -4210,7 +4210,7 @@ which selects the same code silently.
 +++ sys/arch/arm/sunxi/sun60i_a733_r_ccu.h
 @@ -0,0 +1,48 @@
 +/*-
-+ * Copyright (c) 2026 Anton and oxtorg contributors
++ * Copyright (c) 2026 Anton and EmberBSD contributors
 + * All rights reserved.
 + *
 + * Redistribution and use in source and binary forms, with or without
@@ -4261,7 +4261,7 @@ which selects the same code silently.
 +++ sys/dev/i2c/axp8191.c
 @@ -0,0 +1,447 @@
 +/*-
-+ * Copyright (c) 2026 Anton and oxtorg contributors
++ * Copyright (c) 2026 Anton and EmberBSD contributors
 + * All rights reserved.
 + *
 + * Redistribution and use in source and binary forms, with or without
@@ -4817,7 +4817,7 @@ which selects the same code silently.
 +++ sys/arch/arm/sunxi/sun60i_a733_crypto.c
 @@ -0,0 +1,260 @@
 +/*-
-+ * Copyright (c) 2026 Anton and oxtorg contributors
++ * Copyright (c) 2026 Anton and EmberBSD contributors
 + * All rights reserved.
 + *
 + * Redistribution and use in source and binary forms, with or without
@@ -5080,7 +5080,7 @@ which selects the same code silently.
 +++ sys/arch/arm/sunxi/sun60i_a733_cpupll.c
 @@ -0,0 +1,397 @@
 +/*-
-+ * Copyright (c) 2026 Anton and oxtorg contributors
++ * Copyright (c) 2026 Anton and EmberBSD contributors
 + * All rights reserved.
 + *
 + * Redistribution and use in source and binary forms, with or without

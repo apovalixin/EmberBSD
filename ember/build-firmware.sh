@@ -20,11 +20,11 @@ mkdir -p "$out"
 out="$(cd "$out" && pwd)"
 # A failed rebuild must make the previous binary unusable as an image input.
 rm -f "$out/RPI_EFI.fd" "$out/RPI_EFI.fd.incoming"
-series="$ROOT/oxtorg/firmware/series"
-[[ "$(sort "$series")" == "$(cd "$ROOT/oxtorg/firmware" && ls ./*.diff | sed 's|^\./||' | sort)" ]] \
+series="$ROOT/ember/firmware/series"
+[[ "$(sort "$series")" == "$(cd "$ROOT/ember/firmware" && ls ./*.diff | sed 's|^\./||' | sort)" ]] \
     || { echo 'firmware series must name every diff once' >&2; exit 1; }
 docker info >/dev/null 2>&1
-docker run --rm -v "$ROOT/oxtorg/firmware:/diffs:ro" -v "$out:/out" \
+docker run --rm -v "$ROOT/ember/firmware:/diffs:ro" -v "$out:/out" \
     ubuntu:24.04 bash -c "set -e
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq >/dev/null

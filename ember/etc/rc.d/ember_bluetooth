@@ -1,17 +1,17 @@
 #!/bin/sh
-# PROVIDE: oxtorg_bluetooth
+# PROVIDE: ember_bluetooth
 # REQUIRE: DAEMON
-# BEFORE: oxtorg_agent oxtorg_voice LOGIN
+# BEFORE: LOGIN
 # Bootstrap the Bluetooth UART of the observed boards: Pi 5 C1, Orange Pi
 # Zero 4 and Orange Pi Zero 3W. Restart preserves an attached controller.
 
 . /etc/rc.subr
-name=oxtorg_bluetooth
+name=ember_bluetooth
 rcvar=$name
-start_cmd=oxtorg_bluetooth_start
+start_cmd=ember_bluetooth_start
 stop_cmd=:
 
-oxtorg_bluetooth_attach()
+ember_bluetooth_attach()
 {
 	case "$1" in
 	'Raspberry Pi 5 Model B')
@@ -24,7 +24,7 @@ oxtorg_bluetooth_attach()
 	esac
 }
 
-oxtorg_bluetooth_start()
+ember_bluetooth_start()
 {
 	board=$(sysctl -n machdep.dmi.system-product 2>/dev/null)
 	[ -n "$board" ] || board=$(sysctl -n hw.model 2>/dev/null)
@@ -35,11 +35,11 @@ oxtorg_bluetooth_start()
 	bluetooth_name='Asenta NetBSD'
 	bluetooth_address=
 	bluetooth_class=0x000104
-	[ ! -r /etc/oxtorg/bluetooth.conf ] || . /etc/oxtorg/bluetooth.conf
-	control=/opt/oxtorg/bin/bluetooth-control
+	[ ! -r /etc/ember/bluetooth.conf ] || . /etc/ember/bluetooth.conf
+	control=/opt/ember/bin/bluetooth-control
 	[ -x "$control" ] || return 1
 	if ! btconfig -l | tr ' ' '\n' | grep -qx btuart0; then
-		oxtorg_bluetooth_attach "$board" || return 1
+		ember_bluetooth_attach "$board" || return 1
 	fi
 	btconfig btuart0 | grep -q '<UP,RUNNING>' || \
 	    btconfig btuart0 enable || return 1

@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 
-source = Path(__file__).resolve().parents[1] / "etc/rc.d/oxtorg_bluetooth"
+source = Path(__file__).resolve().parents[1] / "etc/rc.d/ember_bluetooth"
 with tempfile.TemporaryDirectory(prefix="bluetooth-rc-") as directory:
     base = Path(directory)
     subr = base / "rc.subr"
@@ -34,8 +34,8 @@ esac
         (base / name).symlink_to(stub)
     script = base / "rc"
     script.write_text(source.read_text().replace('/etc/rc.subr', str(subr))
-                      .replace('/etc/oxtorg/bluetooth.conf', str(base / 'absent.conf'))
-                      .replace('/opt/oxtorg/bin/bluetooth-control', str(base / 'bluetooth-control')))
+                      .replace('/etc/ember/bluetooth.conf', str(base / 'absent.conf'))
+                      .replace('/opt/ember/bin/bluetooth-control', str(base / 'bluetooth-control')))
     failed = False
     for case in ("live", "cold", "orangepi", "foreign", "rejected"):
         log = base / "commands"

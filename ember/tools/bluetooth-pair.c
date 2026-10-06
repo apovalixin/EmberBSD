@@ -202,7 +202,7 @@ require_security(int fd)
 		req.rlen = sizeof(reply);
 		if (bt_devreq(fd, &req, 3) < 0 || req.rlen != 2 ||
 		    reply[0] != 0 || reply[1] != 1)
-			errx(1, "SSP/SC must be enabled by oxtorg_bluetooth first");
+			errx(1, "SSP/SC must be enabled by ember_bluetooth first");
 	}
 }
 

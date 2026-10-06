@@ -3,9 +3,9 @@
 # Check this address against the loader's SPCR probe on another board or
 # PCI configuration. The earlier Raspberry Pi boot message uses a
 # different address before UEFI reassigns the RP1 PCI BAR.
-# The normal OXTORG64 kernel does not enable this early console.
+# The normal EMBER64 kernel does not enable this early console.
 
-include "arch/evbarm/conf/OXTORG64"
+include "arch/evbarm/conf/EMBER64"
 
 options EARLYCONS=plcom,CONSADDR=0x1f00030000
 options VERBOSE_INIT_ARM

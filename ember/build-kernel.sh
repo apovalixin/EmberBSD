@@ -5,7 +5,7 @@ src=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 [ "$(uname -s)" = NetBSD ] || { echo 'native NetBSD build required' >&2; exit 1; }
 [ "$#" -ge 1 ] && [ "$#" -le 2 ] || { echo 'usage: build-kernel.sh ABSOLUTE_OUTPUT [CONFIG]' >&2; exit 1; }
 out=$1
-config=${2:-OXTORG64}
+config=${2:-EMBER64}
 case "$out" in /*) ;; *) echo 'output must be an absolute path' >&2; exit 1 ;; esac
 case "$config" in ''|*[!A-Za-z0-9_]*) echo 'invalid kernel configuration' >&2; exit 1 ;; esac
 [ -f "$src/sys/arch/evbarm/conf/$config" ] || { echo 'kernel configuration missing' >&2; exit 1; }
@@ -34,16 +34,16 @@ for board in orangepi-zero4 orangepi-zero3w; do
 done
 for module in if_cemac_acpi bcm2712btcom rp1wmcodec; do
     cd "$src/sys/modules/$module"
-    make OXTORG_KERNEL_CONFIG="$config" >> "$out/build.log" 2>&1
+    make EMBER_KERNEL_CONFIG="$config" >> "$out/build.log" 2>&1
     cp "$module.kmod" "$out/"
 done
 {
-    "$python" "$src/oxtorg/tools/btuart-contract.py" "$src/sys/dev/bluetooth/btuart.c"
-    "$python" "$src/oxtorg/tools/bluetooth-uart-contract.py" "$src/sys/dev/ic/bcm2712btcom.c"
-    "$python" "$src/oxtorg/tools/bluetooth-control-contract.py" "$src/oxtorg/tools/bluetooth-control.c"
-    "$python" "$src/oxtorg/tools/bluetooth-pair-contract.py" "$src/oxtorg/tools/bluetooth-pair.c"
-    "$python" "$src/oxtorg/tools/bluetooth-rc-contract.py"
-    "$python" "$src/oxtorg/tools/codec-contract.py" "$src"
+    "$python" "$src/ember/tools/btuart-contract.py" "$src/sys/dev/bluetooth/btuart.c"
+    "$python" "$src/ember/tools/bluetooth-uart-contract.py" "$src/sys/dev/ic/bcm2712btcom.c"
+    "$python" "$src/ember/tools/bluetooth-control-contract.py" "$src/ember/tools/bluetooth-control.c"
+    "$python" "$src/ember/tools/bluetooth-pair-contract.py" "$src/ember/tools/bluetooth-pair.c"
+    "$python" "$src/ember/tools/bluetooth-rc-contract.py"
+    "$python" "$src/ember/tools/codec-contract.py" "$src"
 } > "$out/contracts.log" 2>&1
 echo "kernel and three modules built: $out"
 cat "$out/contracts.log"

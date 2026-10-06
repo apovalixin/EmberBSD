@@ -39,7 +39,7 @@ not implemented.
 +++ sys/dev/sdmmc/if_aicwf.c
 @@ -0,0 +1,2232 @@
 +/*-
-+ * Copyright (c) 2026 Anton and oxtorg contributors
++ * Copyright (c) 2026 Anton and EmberBSD contributors
 + * All rights reserved.
 + *
 + * Redistribution and use in source and binary forms, with or without

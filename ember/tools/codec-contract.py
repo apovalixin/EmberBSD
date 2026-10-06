@@ -119,7 +119,7 @@ int main(void) {
     return 0;
 }
 """
-    with tempfile.TemporaryDirectory(prefix="oxtorg-codec-contract-") as work:
+    with tempfile.TemporaryDirectory(prefix="ember-codec-contract-") as work:
         src, binary = Path(work) / "contract.c", Path(work) / "contract"
         src.write_text(program)
         subprocess.run([os.environ.get("CC", "cc"), "-O2", "-Wall", "-Werror",
