@@ -1,11 +1,65 @@
 # EmberBSD
 
+**Unix for intelligent devices.**
+
 EmberBSD is an independent fork of [NetBSD](https://github.com/NetBSD/src),
 based on version 11, for single-board computers and embedded systems.
 It adds hardware support for Raspberry Pi 5 and related boards, for
 the Allwinner A733 and for the ESP32-S31, a 32-bit RISC-V chip with
 16 MB of memory: device drivers, kernel fixes, device trees, and tools
 for building the kernel and UEFI firmware.
+
+## Purpose and getting started
+
+This is the central EmberBSD project. It owns the operating system, device
+drivers, board adaptations, boot and firmware integration, system builds
+and OS validation. Application dependencies, examples and developer tools
+are maintained in the related repositories below.
+
+- For a board or OS build, start with
+  [hardware support and build instructions](README.ember.md).
+- For an application, start with
+  [EmberBSD-Examples](https://github.com/neonix20b/EmberBSD-Examples) and its
+  documented dependencies in [EmberBSD-Ports](https://github.com/neonix20b/EmberBSD-Ports).
+- For an AI coding assistant, connect the developer skills described below.
+
+## EmberBSD ecosystem
+
+| Repository | Purpose | Current scope |
+| --- | --- | --- |
+| [EmberBSD](https://github.com/apovalixin/EmberBSD) | Central OS project: kernel, drivers, boards, boot, firmware and system validation | Source tree and board-specific evidence; see the support tables |
+| [EmberBSD-Ports](https://github.com/neonix20b/EmberBSD-Ports) | Third-party build recipes, portability patches and native package profiles | pkgsrc recipes and experimental probes, each with its own validation limits |
+| [EmberBSD-Examples](https://github.com/neonix20b/EmberBSD-Examples) | Standalone applications and reproducible demonstrations | Local AI, robotics and desktop scenarios with requirements and checks |
+| [EmberBSD-Runtime](https://github.com/neonix20b/EmberBSD-Runtime) | Application execution, lifecycle, permissions and shared device operations | Design stage; no released runtime implementation |
+| [EmberBSD-SDK](https://github.com/neonix20b/EmberBSD-SDK) | Application interfaces, package contracts, developer tools and compatibility checks | Design stage; no stable application API or released SDK tools |
+| [Ember-Agent-Skills](https://github.com/neonix20b/Ember-Agent-Skills) | Instructions for EmberBSD users and AI coding assistants | Installable Codex skills for applications, ports and tested contributions |
+
+Runtime will execute applications on the device; SDK will define their
+interfaces and development tools. Examples demonstrate usable scenarios;
+Ports owns adaptations to third-party software. Agent-Skills helps developers
+use these projects and contribute fixes. A repository's intended purpose is
+not a claim that all of its planned features are implemented.
+
+## Connect developer skills
+
+With a Codex CLI that supports plugins (commands checked with 0.160.1):
+
+```sh
+codex plugin marketplace add neonix20b/Ember-Agent-Skills --ref main
+codex plugin list --marketplace ember-agent-skills --available --json
+codex plugin add emberbsd-development@ember-agent-skills
+```
+
+Start a new conversation in your project and ask:
+
+> Use $emberbsd-repository-guide to find the EmberBSD interfaces and examples
+> for my application, test the result, and document its requirements.
+
+See the [skills installation and update guide](https://github.com/neonix20b/Ember-Agent-Skills#install-in-codex)
+for expected results, updates and other assistant environments. The plugin
+provides developer instructions; it does not install software on a board.
+Reusable fixes and ports are contributed through focused PRs after relevant
+testing, following the accepting project's rules.
 
 ## What this fork adds to NetBSD 11
 
