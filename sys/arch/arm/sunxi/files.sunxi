@@ -78,6 +78,16 @@ device	sun50ih6ccu: sunxi_ccu
 attach	sun50ih6ccu at fdt with sunxi_h6_ccu
 file	arch/arm/sunxi/sun50i_h6_ccu.c		sunxi_h6_ccu
 
+# CCU (A100, A133)
+device	sun50ia100ccu: sunxi_ccu
+attach	sun50ia100ccu at fdt with sunxi_a100_ccu
+file	arch/arm/sunxi/sun50i_a100_ccu.c	sunxi_a100_ccu
+
+# CCU (A100, A133 always-on domain)
+device	sun50ia100rccu: sunxi_ccu
+attach	sun50ia100rccu at fdt with sunxi_a100_r_ccu
+file	arch/arm/sunxi/sun50i_a100_r_ccu.c	sunxi_a100_r_ccu
+
 # CCU (A733)
 device	sun60ia733ccu: sunxi_ccu
 attach	sun60ia733ccu at fdt with sunxi_a733_ccu
@@ -165,6 +175,7 @@ file	arch/arm/sunxi/sun8i_v3s_gpio.c		sunxi_gpio & soc_sun8i_v3s
 file	arch/arm/sunxi/sun9i_a80_gpio.c		sunxi_gpio & soc_sun9i_a80
 file	arch/arm/sunxi/sun50i_a64_gpio.c	sunxi_gpio & soc_sun50i_a64
 file	arch/arm/sunxi/sun50i_h6_gpio.c		sunxi_gpio & soc_sun50i_h6
+file	arch/arm/sunxi/sun50i_a100_gpio.c	sunxi_gpio & soc_sun50i_a100
 
 # PWM
 device	sunxipwm: pwm
@@ -443,3 +454,4 @@ defflag	opt_soc.h			SOC_SUN50I: SOC_SUNXI
 defflag	opt_soc.h			SOC_SUN50I_A64: SOC_SUN50I
 defflag	opt_soc.h			SOC_SUN50I_H5: SOC_SUN50I, SOC_SUN8I_H3
 defflag	opt_soc.h			SOC_SUN50I_H6: SOC_SUN50I
+defflag	opt_soc.h			SOC_SUN50I_A100: SOC_SUN50I

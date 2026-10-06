@@ -334,6 +334,10 @@ static const struct device_compatible_entry compat_data[] = {
 	  .data = &sun50i_h6_mmc_config },
 	{ .compat = "allwinner,sun50i-h6-emmc",
 	  .data = &sun50i_h6_emmc_config },
+	{ .compat = "allwinner,sun50i-a100-mmc",
+	  .data = &sun50i_h6_mmc_config },
+	{ .compat = "allwinner,sun50i-a100-emmc",
+	  .data = &sun50i_h6_emmc_config },
 
 	DEVICE_COMPAT_EOL
 };

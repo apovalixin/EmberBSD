@@ -143,6 +143,12 @@ static const struct device_compatible_entry compat_data[] = {
 	{ .compat = "allwinner,sun50i-h6-r-pinctrl",
 	  .data = &sun50i_h6_r_padconf },
 #endif
+#ifdef SOC_SUN50I_A100
+	{ .compat = "allwinner,sun50i-a100-pinctrl",
+	  .data = &sun50i_a100_padconf },
+	{ .compat = "allwinner,sun50i-a100-r-pinctrl",
+	  .data = &sun50i_a100_r_padconf },
+#endif
 	DEVICE_COMPAT_EOL
 };
 

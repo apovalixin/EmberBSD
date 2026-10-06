@@ -23,6 +23,7 @@ options 	SOC_RK3588
 options 	SOC_SUN50I_A64
 options 	SOC_SUN50I_H5
 options 	SOC_SUN50I_H6
+options 	SOC_SUN50I_A100
 options 	SOC_TEGRA210
 options 	MULTIPROCESSOR
 
@@ -238,6 +239,8 @@ sun50ia64ccu*	at fdt? pass 2		# Allwinner A64 CCU
 sun50ia64rccu*	at fdt? pass 2		# Allwinner A64 CCU (PRCM)
 sun50ih6ccu*	at fdt? pass 2		# Allwinner H6 CCU
 sun50ih6rccu*	at fdt? pass 2		# Allwinner H6 CCU (PRCM)
+sun50ia100ccu*	at fdt? pass 2		# Allwinner A100/A133 CCU
+sun50ia100rccu*	at fdt? pass 2		# Allwinner A100/A133 CCU (always-on)
 sun60ia733ccu*	at fdt? pass 2		# Allwinner A733 CCU
 sun60ia733rccu*	at fdt? pass 2		# Allwinner A733 CCU (always-on)
 sun60icpupll*	at fdt? pass 2		# Allwinner A733 processor clocks
