@@ -157,6 +157,10 @@ on every board in the hardware catalog.
   device-identity, fence-validation, bounded capset-query, context creation/retirement,
   console-recovery and partial-page memfd
   fixes; their individual build/runtime boundaries are documented separately.
+  [Resource-lifetime fixes](sys/external/bsd/drm2/virtio/resource-lifetime.md)
+  retain shared buffers across duplicate handles and failed host responses.
+  Native contracts and object builds pass; full kernel/runtime acceptance
+  remains pending.
   See the [VirtGPU implementation](sys/external/bsd/drm2/virtio/README.md),
   [DRM identity checks](ember/boot/drm-native-identity.md) and
   [graphics probes](https://github.com/neonix20b/EmberBSD-Examples/tree/main/desktop/wayland-utm).

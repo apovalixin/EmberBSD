@@ -57,8 +57,14 @@ concurrent transitions, allocation/queue/response errors, retained references,
 timeout/late cookies, reset overlap and arithmetic limits. Host checks pass,
 including ASan/UBSan. Existing context, capset and VirtGPU contracts also pass.
 
-Native affected-object compilation and contract checks remain pending for
-this change. Structure changes require a later complete matched kernel
+On 2026-10-07, NetBSD 11/AArch64 checks of source `737c8429f087` passed
+all eight resource, six context, five capset and nine existing VirtGPU
+groups with GCC 16.2. Fresh GEM, KMS, object, queue and ioctl objects also
+compiled with base GCC 12.5 and the kernel's `-Werror` flags. A fixture
+warning found by native GCC was repaired without weakening these flags.
+No kernel link, installation or boot was performed for this change.
+
+Structure changes require a later complete matched kernel
 rebuild; do not link a partially updated object directory. The generic DRM
 core inserts its internal IDR entry before its open callback; this driver
 change does not repair or prove safe arbitrary guessed-handle races against
