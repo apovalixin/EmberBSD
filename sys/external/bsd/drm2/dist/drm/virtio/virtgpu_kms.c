@@ -57,6 +57,46 @@ static void virtio_gpu_config_changed_work_func(struct work_struct *work)
 		      events_clear, &events_clear);
 }
 
+/* A separate thread drains completions; it must never wait on itself. */
+static void virtio_gpu_reset_work(struct work_struct *work)
+{
+	struct virtio_gpu_device *vgdev = container_of(work,
+	    struct virtio_gpu_device, reset_work);
+
+	flush_work(&vgdev->ctrlq.dequeue_work);
+	flush_work(&vgdev->cursorq.dequeue_work);
+	flush_work(&vgdev->config_changed_work);
+	vgdev->vdev->config->del_vqs(vgdev->vdev);
+	flush_work(&vgdev->obj_free_work);
+}
+
+void virtio_gpu_stop(struct virtio_gpu_device *vgdev, int error)
+{
+	vgdev->vqs_ready = false;
+	vgdev->submit_error = error;
+	vgdev->vdev->config->reset(vgdev->vdev);
+	virtio_gpu_fail_fences(vgdev, error);
+	wake_up_all(&vgdev->ctrlq.ack_queue);
+	wake_up_all(&vgdev->cursorq.ack_queue);
+	wake_up_all(&vgdev->resp_wq);
+	queue_work(vgdev->cleanup_wq, &vgdev->reset_work);
+}
+
+static void virtio_gpu_destroy_sync(struct virtio_gpu_device *vgdev)
+{
+	virtgpu_wait_destroy(&vgdev->ctrlq.ack_queue);
+	virtgpu_wait_destroy(&vgdev->cursorq.ack_queue);
+	virtgpu_wait_destroy(&vgdev->resp_wq);
+	spin_lock_destroy(&vgdev->ctrlq.qlock);
+	spin_lock_destroy(&vgdev->cursorq.qlock);
+	spin_lock_destroy(&vgdev->display_info_lock);
+	spin_lock_destroy(&vgdev->fence_drv.lock);
+	spin_lock_destroy(&vgdev->obj_free_lock);
+	ida_destroy(&vgdev->resource_ida);
+	ida_destroy(&vgdev->ctx_id_ida);
+	linux_mutex_destroy(&vgdev->submit_lock);
+}
+
 static int virtio_gpu_context_create(struct virtio_gpu_device *vgdev,
 				      uint32_t nlen, const char *name)
 {
@@ -158,6 +198,13 @@ int virtio_gpu_init(struct drm_device *dev, struct virtio_device *vdev)
 		  virtio_gpu_array_put_free_work);
 	INIT_LIST_HEAD(&vgdev->obj_free_list);
 	spin_lock_init(&vgdev->obj_free_lock);
+	INIT_WORK(&vgdev->reset_work, virtio_gpu_reset_work);
+	vgdev->dequeue_wq = alloc_ordered_workqueue("virtgpuack", 0);
+	vgdev->cleanup_wq = alloc_ordered_workqueue("virtgpuclr", 0);
+	if (!vgdev->dequeue_wq || !vgdev->cleanup_wq) {
+		ret = -ENOMEM;
+		goto err_vqs;
+	}
 
 #ifdef __LITTLE_ENDIAN
 	if (virtio_has_feature(vgdev->vdev, VIRTIO_GPU_F_VIRGL))
@@ -226,7 +273,11 @@ err_scanouts:
 err_vbufs:
 	vgdev->vdev->config->del_vqs(vgdev->vdev);
 err_vqs:
-	linux_mutex_destroy(&vgdev->submit_lock);
+	if (vgdev->cleanup_wq)
+		destroy_workqueue(vgdev->cleanup_wq);
+	if (vgdev->dequeue_wq)
+		destroy_workqueue(vgdev->dequeue_wq);
+	virtio_gpu_destroy_sync(vgdev);
 	dev->dev_private = NULL;
 	kfree(vgdev);
 	return ret;
@@ -252,6 +303,7 @@ void virtio_gpu_deinit(struct drm_device *dev)
 	wake_up_all(&vgdev->ctrlq.ack_queue);
 	wake_up_all(&vgdev->cursorq.ack_queue);
 	wake_up_all(&vgdev->resp_wq);
+	flush_work(&vgdev->reset_work);
 	flush_work(&vgdev->ctrlq.dequeue_work);
 	flush_work(&vgdev->cursorq.dequeue_work);
 	flush_work(&vgdev->config_changed_work);
@@ -262,7 +314,9 @@ void virtio_gpu_deinit(struct drm_device *dev)
 	virtio_gpu_free_vbufs(vgdev);
 	virtio_gpu_cleanup_cap_cache(vgdev);
 	kfree(vgdev->capsets);
-	linux_mutex_destroy(&vgdev->submit_lock);
+	destroy_workqueue(vgdev->cleanup_wq);
+	destroy_workqueue(vgdev->dequeue_wq);
+	virtio_gpu_destroy_sync(vgdev);
 	dev->dev_private = NULL;
 	kfree(vgdev);
 }

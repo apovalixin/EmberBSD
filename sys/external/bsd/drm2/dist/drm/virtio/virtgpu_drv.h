@@ -186,6 +186,9 @@ struct virtio_gpu_device {
 	struct virtio_gpu_queue ctrlq;
 	struct virtio_gpu_queue cursorq;
 	struct mutex submit_lock;
+	struct workqueue_struct *dequeue_wq;
+	struct workqueue_struct *cleanup_wq;
+	struct work_struct reset_work;
 	int submit_error;
 
 	struct kmem_cache *vbufs;
@@ -232,6 +235,7 @@ void virtio_gpu_cancel_vbuf(void *);
 void virtio_gpu_release_object(struct virtio_gpu_object *);
 void virtio_gpu_queue_unref(struct virtio_gpu_device *, struct virtio_gpu_object *);
 void virtio_gpu_fail_fences(struct virtio_gpu_device *, int);
+void virtio_gpu_stop(struct virtio_gpu_device *, int);
 void virtio_gpu_fence_fail(struct virtio_gpu_fence *, int);
 
 /* virtio_kms.c */

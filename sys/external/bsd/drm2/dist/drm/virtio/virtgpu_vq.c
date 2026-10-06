@@ -92,7 +92,7 @@ void virtio_gpu_ctrl_ack(struct netbsd_virtqueue *vq)
 	struct drm_device *dev = vq->vdev->priv;
 	struct virtio_gpu_device *vgdev = dev->dev_private;
 
-	schedule_work(&vgdev->ctrlq.dequeue_work);
+	queue_work(vgdev->dequeue_wq, &vgdev->ctrlq.dequeue_work);
 }
 
 void virtio_gpu_cursor_ack(struct netbsd_virtqueue *vq)
@@ -100,7 +100,7 @@ void virtio_gpu_cursor_ack(struct netbsd_virtqueue *vq)
 	struct drm_device *dev = vq->vdev->priv;
 	struct virtio_gpu_device *vgdev = dev->dev_private;
 
-	schedule_work(&vgdev->cursorq.dequeue_work);
+	queue_work(vgdev->dequeue_wq, &vgdev->cursorq.dequeue_work);
 }
 
 int virtio_gpu_alloc_vbufs(struct virtio_gpu_device *vgdev)
@@ -292,12 +292,7 @@ void virtio_gpu_dequeue_ctrl_func(struct work_struct *work)
 			    entry->resp_received, le32_to_cpu(resp->type));
 			if (entry->fence)
 				virtio_gpu_fence_fail(entry->fence, error);
-			if (entry->release) {
-				vgdev->vqs_ready = false;
-				vgdev->vdev->config->reset(vgdev->vdev);
-				virtio_gpu_fail_fences(vgdev, error);
-				wake_up_all(&vgdev->cursorq.ack_queue);
-			}
+			virtio_gpu_stop(vgdev, error);
 		} else {
 			/* Complete DMA visibility before exposing the GPU fence. */
 			if (entry->objs &&
@@ -410,7 +405,7 @@ virtio_gpu_queue_fenced_ctrl_buffer(struct virtio_gpu_device *vgdev,
 		if (fence)
 			virtio_gpu_fence_fail(fence, ret);
 		if (vbuf->release)
-			vgdev->vdev->config->reset(vgdev->vdev);
+			virtio_gpu_stop(vgdev, ret);
 		virtio_gpu_cancel_vbuf(vbuf);
 	}
 	return ret;
@@ -436,11 +431,7 @@ virtio_gpu_queue_sync(struct virtio_gpu_device *vgdev,
 	vbuf->wait = wait;
 	ret = virtio_gpu_queue_fenced_ctrl_buffer(vgdev, vbuf, hdr, fence);
 	if (!ret && !wait_event_timeout(wait->queue, wait->done, 5 * HZ)) {
-		vgdev->vqs_ready = false;
-		vgdev->vdev->config->reset(vgdev->vdev);
-		virtio_gpu_fail_fences(vgdev, -ETIMEDOUT);
-		wake_up_all(&vgdev->ctrlq.ack_queue);
-		wake_up_all(&vgdev->cursorq.ack_queue);
+		virtio_gpu_stop(vgdev, -ETIMEDOUT);
 		ret = -ETIMEDOUT;
 	}
 	if (!ret)
@@ -567,7 +558,7 @@ void virtio_gpu_queue_unref(struct virtio_gpu_device *vgdev,
 
 	cmd = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd));
 	if (IS_ERR(cmd)) {
-		vgdev->vdev->config->reset(vgdev->vdev);
+		virtio_gpu_stop(vgdev, PTR_ERR(cmd));
 		virtio_gpu_release_object(bo);
 		return;
 	}
