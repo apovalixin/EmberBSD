@@ -282,11 +282,15 @@ on every board in the hardware catalog.
   Ports owns the [current Mesa 26.2.4 source adaptation](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/wayland-utm),
   with native DSO-lifetime/numeric regressions under GCC 16.2 and
   common-toolchain staging rules. A [common graphics source profile](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/common-graphics)
-  supplies canonical MesaLib 26.2.4/libdrm 2.4.134nb1 recipes with checked
+  supplies canonical MesaLib 26.2.4nb1/libdrm 2.4.134nb1 recipes with checked
   pkgsrc/Qt dependency selection. Its complete core-only libdrm payload
   cross-builds with GCC16 on macOS, matches the 26-entry PLIST and passes
-  upstream hash, skip-list and symbol checks in AArch64 UTM. Package
-  registration, complete Mesa/LLVM builds and consumer migration remain pending.
+  upstream hash, skip-list and symbol checks in AArch64 UTM. A
+  [temporary Mesa26 cross diagnostic](https://github.com/neonix20b/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/README.md#temporary-headless-mesa-diagnostic)
+  also passes software GLES shader/pixel checks and 30 upstream target test runs
+  on Orange Pi Zero 3W (A733). It excludes LLVM, X11/Wayland and installed
+  packages. The full Mesa/LLVM profile, package registration, consumer
+  migration and guest accelerated rendering remain pending.
   A Ports
   [host-side VirGL 1.3.0 adaptation](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/utm-virgl-host)
   preserves the upstream IOV-size correction and prevents resource publication
