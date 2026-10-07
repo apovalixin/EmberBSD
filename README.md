@@ -128,6 +128,20 @@ on every board in the hardware catalog.
   verify message content, selection and damaged structures, plus known marker
   geometry after image transformations. Ports owns the [source profiles and checks](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/robotics-tools);
   camera hardware and real-world pose accuracy are unverified.
+- **Signals and inertial measurements:** liquid-dsp 1.8.3, FFTW 3.3.11,
+  VOLK 3.3.0 and Fusion 1.3.3 supply filtering, resampling, spectra, vector
+  kernels and orientation estimation. Nineteen installed AArch64 VM cases
+  verify synthetic signal/IMU results and execute generic/NEON VOLK kernels.
+  Ports owns the [source profiles and instructions](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/dsp),
+  the FFTW integration fix and preserved pkgsrc adaptations. Physical SDR/IMU,
+  measured SIMD speedups and real-time device operation remain unverified.
+- **Software radio applications:** GNU Radio 3.10.12.0 supplies native C++
+  flowgraphs using the same FFTW and VOLK. Ports owns the [headless recipe and three installed VM contracts](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/gnuradio).
+  Examples owns a [noisy BPSK channel demonstration](https://github.com/neonix20b/EmberBSD-Examples/tree/main/robotics/gnuradio-channel)
+  that recovers 2,048 bits without error, restarts reproducibly and measures
+  BER 0.516113 when carrier correction is removed. This verifies bounded
+  software processing with known carrier and timing parameters; physical SDR,
+  real-time deadlines, GUI and Python bindings remain unverified.
 - **Numerical estimation and behavior logic:** Ceres 2.2.0 uses the common
   Eigen 5.0.1 for nonlinear fitting; BehaviorTree.CPP 4.9.0 coordinates
   asynchronous actions. Nine installed AArch64 VM cases verify numerical
