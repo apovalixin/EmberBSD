@@ -162,6 +162,9 @@ on every board in the hardware catalog.
   [Asynchronous submission](sys/external/bsd/drm2/virtio/submit-ownership.md)
   reports immediate queue errors and publishes fence descriptors only after
   acceptance, with balanced cleanup on failure.
+  [Completion ordering and reset](sys/external/bsd/drm2/virtio/completion-lifetime.md)
+  prevent a later reply from prematurely signaling an older command and
+  drain accepted requests before publishing terminal reset results.
   Native contracts and object builds pass; full kernel/runtime acceptance
   remains pending.
   See the [VirtGPU implementation](sys/external/bsd/drm2/virtio/README.md),

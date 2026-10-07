@@ -85,7 +85,19 @@ IRQ/DMA behavior, full modeset deinit, or live hardware operation. Existing
 resource/context/capset fixtures retain their separate modeled fence seams;
 the new fixture exercises the actual fence implementation.
 
-Host GREEN passes all sixteen groups with and without ASan/UBSan. The same
-fixture exposes premature timeline/reset publication in the unchanged
-baseline. Native objects and guest contracts require a separate committed
-export gate; this document does not claim that gate has run.
+Host GREEN passes all sixteen groups with and without ASan/UBSan; the same
+fixture fails fourteen groups against the unchanged baseline. On 2026-10-07,
+production revision `8ff0fac41ed03f6f7d38bc7dd611a97f113b555d` passed these
+sixteen and the 53 submit, eight resource, six context and five capset groups
+on NetBSD 11/AArch64 with GCC 16.2. The earlier VirtGPU fixture then failed
+compilation on a misleading-indentation diagnostic. Revision
+`af32f4b343c4c2049865ba95eba2ed90db7a89df` reformatted only modeled helpers,
+preserving `-Werror`, assertions and production code. Its nine affected groups
+passed; the other 88 unchanged groups were not rerun.
+
+All twelve configured VirtGPU objects using the changed header were rebuilt
+fresh with base GCC 12.5 and the existing `-Werror` flags. They passed in
+2.18 seconds, with 67,012 KiB peak RSS and no swaps. No full kernel was linked,
+installed or booted; the partial object directory is not a kernel artifact.
+These 97 contract groups and object builds do not establish live reset,
+IRQ safety, backing DMA correctness or GPU acceleration.
