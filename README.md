@@ -396,7 +396,11 @@ on every board in the hardware catalog.
   matched board modules and DTBs on Apple Silicon macOS. The
   [Ports cross GCC16 recipe](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/development-toolchain/cross)
   also runs GCC16 on that host; cross-built C11 (plain/LTO) and C++20 DSO
-  checks pass on Zero 3W with its installed GCC16 runtime. Full OS builds
+  checks pass on Zero 3W with its installed GCC16 runtime. The
+  [CTF converter](ember/boot/cross-build.md#dwarf5-and-ctf) now preserves
+  GCC/Clang DWARF5 type information in checked AArch64 objects, without
+  forcing DWARF4. Host regressions cover type layouts, string-table bounds
+  and CTF merging; live DTrace is not yet checked. Full OS builds
   with GCC16 and general pkgsrc cross-package builds remain unvalidated.
   C11/C++20 threads, TLS and shared-library
   checks pass. On Zero 3W, current MPFR/MPC/libxml2 and actual pkgsrc wrapper

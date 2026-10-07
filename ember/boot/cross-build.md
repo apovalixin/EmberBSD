@@ -111,3 +111,27 @@ Separately, Ports GCC16 built on macOS and cross-compiled C11 plain/LTO and
 C++20 shared-library probes. They pass on physical Orange Pi Zero 3W with
 its installed GCC16 runtime. That does not establish a GCC16-built kernel,
 a full userland or a cross-packaged Ports dependency closure.
+
+## DWARF5 and CTF
+
+The CTF converter accepts ordinary DWARF5 C compilation units. The libdwarf
+adaptation resolves indexed strings, including the two-byte index form,
+loads and relocates the string-offset table, accepts implicit constants
+and retains a relocation ending exactly at a section boundary. Invalid
+string tables fail explicitly instead of producing unnamed CTF types.
+GCC16 can keep its upstream DWARF5 default; no DWARF4 override is required.
+
+Run the host conversion regression with the GCC16 cross driver and a host
+Clang capable of emitting AArch64 NetBSD ELF:
+
+```sh
+sh ember/tests/ctf-dwarf.sh /absolute/cross/bin/aarch64--netbsd-gcc \
+    /absolute/clang /absolute/output/tools /absolute/new-test-output
+```
+
+It compares actual GCC/Clang CTF types for DWARF4/5 and DWARF32/64, including
+arrays, enums, bitfields and function pointers. It also checks more than
+256 string indices, exact-end relocation, malformed tables and ctfmerge.
+This is host-tool and target-object evidence, not a live DTrace check.
+Split/supplementary DWARF objects and general DWARF5 location-list evaluation
+are not established by these type-conversion checks.
