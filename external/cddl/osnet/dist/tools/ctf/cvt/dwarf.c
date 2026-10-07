@@ -297,6 +297,9 @@ die_sibling(dwarf_t *dw, Dwarf_Die die)
 	else if (rc == DW_DLV_NO_ENTRY)
 		return (NULL);
 
+	if (die == NULL)
+		terminate("failed to read compilation unit: %s\n",
+		    dwarf_errmsg(dw->dw_err));
 	terminate("die %ju: failed to find type sibling: %s\n",
 	    (uintmax_t)die_off(dw, die), dwarf_errmsg(dw->dw_err));
 	/*NOTREACHED*/
@@ -410,10 +413,12 @@ static int
 die_string(dwarf_t *dw, Dwarf_Die die, Dwarf_Half name, char **strp, int req)
 {
 	const char *str = NULL;
+	int ret;
 
-	if (dwarf_attrval_string(die, name, &str, &dw->dw_err) != DW_DLV_OK ||
-	    str == NULL) {
-		if (req) 
+	/* Origin: EmberBSD (AI-assisted), validate DWARF5 strings and constants. */
+	ret = dwarf_attrval_string(die, name, &str, &dw->dw_err);
+	if (ret != DW_DLV_OK || str == NULL) {
+		if (req || ret == DW_DLV_ERROR)
 			terminate("die %ju: failed to get string: %s\n",
 			    (uintmax_t)die_off(dw, die),
 			    dwarf_errmsg(dw->dw_err));
@@ -550,6 +555,7 @@ die_mem_offset(dwarf_t *dw, Dwarf_Die die, Dwarf_Half name,
 	case DW_FORM_data4:
 	case DW_FORM_data8:
 	case DW_FORM_udata:
+	case DW_FORM_implicit_const:
 		/*
 		 * Clang 3.4 generates DW_AT_data_member_location attribute
 		 * with DW_FORM_data* form (constant class). The attribute
@@ -2115,9 +2121,9 @@ dw_read(tdata_t *td, Elf *elf, char *filename __unused)
 		terminate("file contains too many types\n");
 
 	debug(1, "DWARF version: %d\n", vers);
-	if (vers < 2 || vers > 4) {
+	if (vers < 2 || vers > 5) {
 		terminate("file contains incompatible version %d DWARF code "
-		    "(version 2, 3 or 4 required)\n", vers);
+		    "(version 2, 3, 4 or 5 required)\n", vers);
 	}
 
 	if (die_string(&dw, cu, DW_AT_producer, &prod, 0)) {

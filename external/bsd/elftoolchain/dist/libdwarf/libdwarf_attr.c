@@ -103,6 +103,7 @@ _dwarf_attr_init(Dwarf_Debug dbg, Dwarf_Section *ds, uint64_t *offsetp,
     uint64_t form, int indirect, Dwarf_Error *error)
 {
 	struct _Dwarf_Attribute atref;
+	Dwarf_Section *strings;
 	int ret;
 
 	ret = DW_DLE_NONE;
@@ -188,8 +189,22 @@ _dwarf_attr_init(Dwarf_Debug dbg, Dwarf_Section *ds, uint64_t *offsetp,
 		    offsetp);
 		break;
 	case DW_FORM_strp:
+	case DW_FORM_line_strp:
+		if (*offsetp > ds->ds_size ||
+		    (uint64_t)dwarf_size > ds->ds_size - *offsetp) {
+			DWARF_SET_ERROR(dbg, error, DW_DLE_ATTR_FORM_BAD);
+			return (DW_DLE_ATTR_FORM_BAD);
+		}
 		atref.u[0].u64 = dbg->read(ds->ds_data, offsetp, dwarf_size);
-		atref.u[1].s = _dwarf_strtab_get_table(dbg) + atref.u[0].u64;
+		strings = _dwarf_find_section(dbg, form == DW_FORM_strp ?
+		    ".debug_str" : ".debug_line_str");
+		if (strings == NULL || atref.u[0].u64 >= strings->ds_size ||
+		    memchr(strings->ds_data + atref.u[0].u64, '\0',
+		    strings->ds_size - atref.u[0].u64) == NULL) {
+			DWARF_SET_ERROR(dbg, error, DW_DLE_ATTR_FORM_BAD);
+			return (DW_DLE_ATTR_FORM_BAD);
+		}
+		atref.u[1].s = (char *)strings->ds_data + atref.u[0].u64;
 		break;
 	case DW_FORM_ref_sig8:
 		atref.u[0].u64 = 8;
@@ -202,7 +217,7 @@ _dwarf_attr_init(Dwarf_Debug dbg, Dwarf_Section *ds, uint64_t *offsetp,
 		break;
 	case DW_FORM_strx:
 		atref.u[0].u64 = _dwarf_read_uleb128(ds->ds_data, offsetp);
-		/* TODO: .debug_str_offsets */
+		/* Resolved lazily by dwarf_formstring after CU parsing. */
 		break;
 	case DW_FORM_addrx:
 		atref.u[0].u64 = _dwarf_read_uleb128(ds->ds_data, offsetp);
@@ -217,11 +232,6 @@ _dwarf_attr_init(Dwarf_Debug dbg, Dwarf_Section *ds, uint64_t *offsetp,
 		atref.u[1].u8p = _dwarf_read_block(ds->ds_data, offsetp,
 		    atref.u[0].u64);
 		break;
-	case DW_FORM_line_strp:
-		atref.u[0].u64 = dbg->read(ds->ds_data, offsetp, dwarf_size);
-		atref.u[1].s = _dwarf_strtab_get_line_table(dbg) +
-		    atref.u[0].u64;
-		break;
 	case DW_FORM_implicit_const:
 		/* DWARF5 7.5.3 Implicit constant stored in attrdef.
 		   This form has no value encoded in the DIE. */
@@ -229,19 +239,20 @@ _dwarf_attr_init(Dwarf_Debug dbg, Dwarf_Section *ds, uint64_t *offsetp,
 		break;
 	case DW_FORM_strx1:
 		atref.u[0].u64 = dbg->read(ds->ds_data, offsetp, 1);
-		/* TODO: .debug_str_offsets */
+		/* Resolved lazily by dwarf_formstring after CU parsing. */
 		break;
 	case DW_FORM_strx2:
-		atref.u[0].u64 = dbg->read(ds->ds_data, offsetp, 1);
-		/* TODO: .debug_str_offsets */
+		/* Origin: EmberBSD (AI-assisted), strx2 occupies two bytes. */
+		atref.u[0].u64 = dbg->read(ds->ds_data, offsetp, 2);
+		/* Resolved lazily by dwarf_formstring after CU parsing. */
 		break;
 	case DW_FORM_strx3:
 		atref.u[0].u64 = dbg->read(ds->ds_data, offsetp, 3);
-		/* TODO: .debug_str_offsets */
+		/* Resolved lazily by dwarf_formstring after CU parsing. */
 		break;
 	case DW_FORM_strx4:
 		atref.u[0].u64 = dbg->read(ds->ds_data, offsetp, 4);
-		/* TODO: .debug_str_offsets */
+		/* Resolved lazily by dwarf_formstring after CU parsing. */
 		break;
 	case DW_FORM_addrx1:
 		atref.u[0].u64 = dbg->read(ds->ds_data, offsetp, 1);

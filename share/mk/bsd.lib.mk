@@ -226,8 +226,9 @@ FFLAGS+=	${FOPTS}
 .if defined(CTFCONVERT)
 .if defined(CFLAGS) && !empty(CFLAGS:M*-g*)
 CTFFLAGS+=	-g
-# Origin: EmberBSD (AI-assisted), keep DWARF readable by ctfconvert.
-CFLAGS+=	-gdwarf-4
+.if defined(HAVE_GCC)
+#CFLAGS+=	-gdwarf-2
+.endif
 .endif
 .endif
 

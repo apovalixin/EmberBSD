@@ -7,8 +7,7 @@ MKPIE=no
 .include <bsd.klinks.mk>
 
 .if ${MKCTF:Uno} == "yes"
-CFLAGS+=	-gdwarf-4
-# Origin: EmberBSD (AI-assisted), keep DWARF readable by ctfconvert.
+CFLAGS+=	-g
 # Only need symbols for ctf, strip them after converting to CTF
 CTFFLAGS=	-L VERSION
 CTFMFLAGS=	-t -L VERSION

@@ -42,6 +42,8 @@ static const char *debug_name[] = {
 	".eh_frame",
 	".debug_macinfo",
 	".debug_str",
+	/* Origin: EmberBSD (AI-assisted), load and relocate DWARF5 strings. */
+	".debug_str_offsets",
 	".debug_line_str",
 	".debug_loc",
 	".debug_pubtypes",
@@ -78,7 +80,7 @@ _dwarf_elf_apply_rel_reloc(Dwarf_Debug dbg, void *buf, uint64_t bufsize,
 			continue; /* Unknown or non-absolute relocation. */
 
 		offset = rel.r_offset;
-		if (offset + size >= bufsize)
+		if (offset > bufsize || (uint64_t)size > bufsize - offset)
 			continue;
 
 		if (endian == ELFDATA2MSB)
@@ -119,7 +121,7 @@ _dwarf_elf_apply_rela_reloc(Dwarf_Debug dbg, void *buf, uint64_t bufsize,
 		size = _dwarf_get_reloc_size(dbg, type);
 		if (size == 0)
 			continue; /* Unknown or non-absolute relocation. */
-		if (offset + size >= bufsize)
+		if (offset > bufsize || (uint64_t)size > bufsize - offset)
 			continue;
 
 		if (endian == ELFDATA2MSB)
