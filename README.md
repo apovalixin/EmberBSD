@@ -281,8 +281,11 @@ on every board in the hardware catalog.
   Its [classic backing ledger](https://github.com/neonix20b/EmberBSD-Ports/blob/main/probes/utm-virgl-host/BACKING.md)
   retains guest mappings through renderer detach and all cleanup paths,
   including deferred UNREF, with causal ownership and sanitizer checks.
+  An opt-in [classic lifecycle barrier](https://github.com/neonix20b/EmberBSD-Ports/blob/main/probes/utm-virgl-host/LIFECYCLE.md)
+  orders CPU producer shutdown and all-resource detach before mapping release;
+  source tests cover fault/reset, blocked display and command handoff.
   Focused macOS/arm64 source and sanitizer checks pass; full host builds,
-  remaining bounds, async completion/reset and error propagation are pending.
+  native lifetime qualification, remaining bounds and error propagation are pending.
   VirGL stays disabled; GPU rendering, reliable console recovery and Vulkan
   Compute are not yet established.
 - **Physical GPU and NPU porting targets:** CIX P1 is the first selected
