@@ -233,9 +233,11 @@ on every board in the hardware catalog.
   with native DSO-lifetime/numeric regressions under GCC 16.2 and
   common-toolchain staging rules;
   its complete build and consumer migration remain pending. A Ports
-  [host-side VirGL 1.3.0 backport](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/utm-virgl-host)
-  preserves the upstream IOV-size correction and passes focused macOS/arm64
-  arithmetic checks. Complete host bounds and error propagation remain pending.
+  [host-side VirGL 1.3.0 adaptation](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/utm-virgl-host)
+  preserves the upstream IOV-size correction and prevents resource publication
+  after reported CREATE failures, with cleanup of owned partial allocations.
+  Focused macOS/arm64 source and sanitizer checks pass; full host builds,
+  remaining bounds, async completion/reset and error propagation are pending.
   VirGL stays disabled; GPU rendering, reliable console recovery and Vulkan
   Compute are not yet established.
 - **Physical GPU and NPU porting targets:** CIX P1 is the first selected
