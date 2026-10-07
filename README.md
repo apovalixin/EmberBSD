@@ -295,7 +295,7 @@ on every board in the hardware catalog.
   also prevents failed waits from becoming successful fence callbacks;
   causal renderer-to-QEMU source checks pass in all three modes.
   A [full private renderer build](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/utm-virgl-host/host)
-  with current libepoxy 1.5.10 passes direct texture readback, native fences
+  with current libepoxy 1.5.10 passes texture readback, decoded framebuffer clears, native fences
   and three cleanup/reinit cycles on Apple M3/ANGLE Metal. It also fixes a
   reproduced absent-context cleanup error and rejects truncated command payloads
   with EINVAL; full native decoder checks preserve valid-command behavior.
