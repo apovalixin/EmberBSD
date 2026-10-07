@@ -174,7 +174,9 @@ on every board in the hardware catalog.
   [Whole-context EXEC ownership](sys/external/bsd/drm2/virtio/exec-ownership.md)
   covers every attached buffer even when an application supplies incomplete
   hints, and retains each pending operation through retries and overlapping
-  completion. Native contracts and object builds pass; transfers, CPU access,
+  completion. A [classic fence limit](sys/external/bsd/drm2/virtio/classic-fence-range.md)
+  stops the device safely before sequence numbers can wrap or become ambiguous.
+  Native contracts and object builds pass; transfers, CPU access,
   full kernel/runtime acceptance and live DMA qualification remain pending.
   See the [VirtGPU implementation](sys/external/bsd/drm2/virtio/README.md),
   [DRM identity checks](ember/boot/drm-native-identity.md) and

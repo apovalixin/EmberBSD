@@ -101,7 +101,9 @@ with EBUSY.
 Classic wire fence IDs are bounded to `1..INT32_MAX`. The next allocation
 seals the device and uses normal reset retirement without wrapping IDs.
 The [range and exhaustion contract](classic-fence-range.md) passes 25 new
-host groups and 179 affected prior groups; native checks remain pending.
+and 179 prior groups on the host and NetBSD/AArch64 with GCC 16.2. Fourteen
+fresh objects compile with base GCC 12.5 and normal `-Werror`; full kernel
+and live reset qualification remain pending.
 
 ## Classic capset queries
 

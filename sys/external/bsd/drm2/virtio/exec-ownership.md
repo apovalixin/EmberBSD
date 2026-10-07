@@ -128,5 +128,5 @@ booted; the partial object directory is not a matched kernel artifact.
 Transfers, WAIT status, console/cursor CPU copies, packet/cap enforcement,
 and live loaded-map/host qualification remain separate.
 [Classic wire-fence exhaustion](classic-fence-range.md) now has a separate
-source/host contract preserving this ledger and rejection ownership.
+native software/object contract preserving this ledger and rejection ownership.
 This stage does not enable acceleration or certify arbitrary bus_dma backends.

@@ -85,7 +85,17 @@ claims native interrupt concurrency or live DMA behavior.
 Both pass host checks with ASan/UBSan. Against unchanged source revision
 `725ba7dcca1d83da0b25f072a185115e3610ed45`, the same harnesses compile and fail
 14 of 18 and six of seven groups respectively; the other cases are controls.
-All 179 affected existing contract groups also pass on the host. Native object
-compilation and contract execution for this change remain pending, as do a
-matched kernel, live exhaustion/reset and graphics qualification. Transfers,
-WAIT status and CPU-copy ownership remain separate work.
+All 179 affected existing contract groups also pass on the host.
+
+On 2026-10-07, the same 25 new and 179 prior groups passed on NetBSD 11/AArch64
+with GCC 16.2. Configuration and dependencies were regenerated; fourteen fresh
+driver objects built with base GCC 12.5 and normal `-Werror` in 2.48 seconds,
+with 67,088 KiB peak RSS and no swaps. The native guard returned 0.
+Source commit: `fb3f08b3e4295de7852c9bdc52b25171673c4367`.
+Committed export SHA256:
+`c6e269f86d6fc760bb520e6fc970dc9856179f225678459630f59097663f411c`.
+Native contract/object log SHA256:
+`ffb98a5115d1bdcc2c635a7548dfc6bf130c89b22d7de6af56434a66ff26e62a`.
+No kernel was linked, installed or booted. A matched kernel, live exhaustion/
+reset and graphics qualification remain pending. Transfers, WAIT status and
+CPU-copy ownership remain separate work.
