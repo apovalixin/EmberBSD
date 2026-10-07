@@ -423,11 +423,14 @@ on every board in the hardware catalog.
   passes focused native plain/LTO checks; the full suite remains unaccepted.
   Remaining repairs and a coherent Qt/LLVM runtime rebuild are required before
   adopting it as the default compiler in new images. The [common build-tools profile](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/common-build-tools)
-  prepares Python 3.14.8, Meson 1.12.1 and matching LLVM/Clang/LLD 23.1.2
+  supplies [Python 3.14.8](https://github.com/neonix20b/EmberBSD-Ports/blob/main/profiles/common-build-tools/python.md)
+  with Mac cross packaging and installed AArch64 VM acceptance: C/C++ embedding,
+  extension loading and 21 selected upstream suites, including TLS and SQLite.
+  It also prepares Meson 1.12.1 and matching LLVM/Clang/LLD 23.1.2
   with upstream lit. Portability patches, generated-header declarations and
   explicit interpreter/LLVM selection have source checks. Focused native
   macro/selection and GCC16 metadata checks pass; they do not establish an
-  installed LLVM23 compiler. Complete packages, ELF/JIT behavior and the
+  installed LLVM23 compiler. The remaining packages, ELF/JIT behavior and the
   Mesa26/TinyGo consumers remain pending. See the [LLVM family contract](https://github.com/neonix20b/EmberBSD-Ports/blob/main/profiles/common-build-tools/llvm-family.md).
   Ports also owns the [Mac cross-package workflow](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/common-build-tools/cross):
   pkgconf 3.0.7, GNU M4 1.4.21, Libtool 2.6.2 and
