@@ -12,7 +12,8 @@ int sun50i_a133_fdt_fixup(void *);
 static void
 fixture(void *fdt, int size, const char *compat)
 {
-	int soc, pio, mmc, twi, gic, uart, touch;
+	int soc, pio, mmc, twi, gic, uart, touch, rpio;
+	fdt32_t gpio[7];
 
 	assert(fdt_create_empty_tree(fdt, size) == 0);
 	assert(fdt_setprop_string(fdt, 0, "compatible", compat) == 0);
@@ -30,6 +31,11 @@ fixture(void *fdt, int size, const char *compat)
 	assert(pio >= 0);
 	assert(fdt_setprop_string(fdt, pio, "compatible",
 	    "allwinner,sun50i-pinctrl") == 0);
+	assert(fdt_setprop_u32(fdt, pio, "phandle", 99) == 0);
+	soc = fdt_path_offset(fdt, "/soc@03000000");
+	rpio = fdt_add_subnode(fdt, soc, "pinctrl@07022000");
+	assert(rpio >= 0);
+	assert(fdt_setprop_u32(fdt, rpio, "phandle", 104) == 0);
 	soc = fdt_path_offset(fdt, "/soc@03000000");
 	mmc = fdt_add_subnode(fdt, soc, "sdmmc@04022000");
 	assert(mmc >= 0);
@@ -53,6 +59,13 @@ fixture(void *fdt, int size, const char *compat)
 	assert(touch >= 0);
 	assert(fdt_setprop_string(fdt, touch, "compatible", "goodix,gt9xx") == 0);
 	assert(fdt_setprop_u32(fdt, touch, "reg", 0x5d) == 0);
+	memset(gpio, 0, sizeof(gpio));
+	gpio[0] = cpu_to_fdt32(99); gpio[1] = cpu_to_fdt32(7);
+	gpio[2] = cpu_to_fdt32(14);
+	assert(fdt_setprop(fdt, touch, "goodix,rst-gpio", gpio, sizeof(gpio)) == 0);
+	gpio[0] = cpu_to_fdt32(104); gpio[1] = cpu_to_fdt32(11);
+	gpio[2] = cpu_to_fdt32(10);
+	assert(fdt_setprop(fdt, touch, "goodix,irq-gpio", gpio, sizeof(gpio)) == 0);
 }
 
 int
@@ -103,6 +116,8 @@ main(void)
 	    "/soc@03000000/twi@0x05002c00/goodix_ts@5d");
 	cells = fdt_getprop(fdt, provider, "reg", &len);
 	assert(cells != NULL && len == 4 && fdt32_to_cpu(*cells) == 0x5d);
+	assert(fdt_getprop(fdt, provider, "ember,ys-m33-reset", &len) != NULL &&
+	    len == 0);
 	mmc = fdt_path_offset(fdt, "/soc@03000000/sdmmc@04022000");
 	assert(fdt_node_check_compatible(fdt, mmc,
 	    "allwinner,sun50i-a100-emmc") == 0);

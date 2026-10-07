@@ -37,6 +37,7 @@
 #define MMC SOC "/sdmmc@04022000"
 #define CCU SOC "/clock-controller@03001000"
 #define PINS PIO "/ember-mmc2-pins"
+#define TOUCH SOC "/twi@0x05002c00/goodix_ts@5d"
 
 int sun50i_a133_fdt_fixup(void *);
 
@@ -106,6 +107,39 @@ a133_clock(void *fdt, const char *name, uint32_t rate, uint32_t *phandle)
 	cell = cpu_to_fdt32(value); \
 	A133_SET(path, name, &cell, sizeof(cell)); \
 } while (0)
+
+static int
+a133_touch_reset(void *fdt)
+{
+	const fdt32_t *gpio;
+	uint32_t pio, rpio;
+	int node, len, error;
+
+	node = fdt_path_offset(fdt, TOUCH);
+	if (node < 0)
+		return 0;
+	error = fdt_delprop(fdt, node, "ember,ys-m33-reset");
+	if (error != 0 && error != -FDT_ERR_NOTFOUND)
+		return error;
+	node = fdt_path_offset(fdt, SOC "/pinctrl@07022000");
+	if (node < 0)
+		return 0;
+	rpio = fdt_get_phandle(fdt, node);
+	node = fdt_path_offset(fdt, PIO);
+	pio = fdt_get_phandle(fdt, node);
+	if (pio == 0 || rpio == 0)
+		return 0;
+	node = fdt_path_offset(fdt, TOUCH);
+	gpio = fdt_getprop(fdt, node, "goodix,rst-gpio", &len);
+	if (gpio == NULL || len != 28 || fdt32_to_cpu(gpio[0]) != pio ||
+	    fdt32_to_cpu(gpio[1]) != 7 || fdt32_to_cpu(gpio[2]) != 14)
+		return 0;
+	gpio = fdt_getprop(fdt, node, "goodix,irq-gpio", &len);
+	if (gpio == NULL || len != 28 || fdt32_to_cpu(gpio[0]) != rpio ||
+	    fdt32_to_cpu(gpio[1]) != 11 || fdt32_to_cpu(gpio[2]) != 10)
+		return 0;
+	return fdt_setprop(fdt, node, "ember,ys-m33-reset", NULL, 0);
+}
 
 /* Preserve the YS-M33 panel-108 scanout initialized by the vendor loader. */
 static int
@@ -302,5 +336,8 @@ sun50i_a133_fdt_fixup(void *fdt)
 				    "interrupt-parent", gic);
 		}
 	}
+	error = a133_touch_reset(fdt);
+	if (error != 0)
+		return error;
 	return a133_framebuffer(fdt);
 }
