@@ -66,7 +66,8 @@ if [ "$mode" = cross ]; then
         -O "$out/obj" -T "$out/tools" -D "$out/dest" \
         -V "KERNOBJDIR=$out/obj/kernels" -V MKCROSSGDB=no
     if [ -n "${EMBER_EXTERNAL_TOOLCHAIN:-}" ]; then
-        set -- "$@" -V "EXTERNAL_TOOLCHAIN=$EMBER_EXTERNAL_TOOLCHAIN"
+        set -- "$@" -V "EXTERNAL_TOOLCHAIN=$EMBER_EXTERNAL_TOOLCHAIN" \
+            -V TOOLCHAIN_MISSING=yes
     fi
     (cd "$src"; MAKECONF=/dev/null sh ./build.sh "$@" tools "kernel=$config") \
         >> "$out/build.log" 2>&1

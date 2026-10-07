@@ -134,6 +134,7 @@ done
 TEST_HOST=NetBSD EMBER_EXTERNAL_TOOLCHAIN=/cross/gcc16 \
     sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
 grep -q 'EXTERNAL_TOOLCHAIN=/cross/gcc16' "$TEST_LOG"
+grep -q 'TOOLCHAIN_MISSING=yes' "$TEST_LOG"
 ! grep -q native-make "$TEST_LOG"
 export TEST_OUT="$work/native"
 : > "$TEST_LOG"

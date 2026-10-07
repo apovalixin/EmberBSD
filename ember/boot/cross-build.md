@@ -53,6 +53,9 @@ To use a separately prepared GNU cross toolchain, provide its absolute
 prefix. It must supply `bin/aarch64--netbsd-gcc`, `cpp`, `c++` and the matching
 prefixed binutils commands expected by `EXTERNAL_TOOLCHAIN` in `share/mk`.
 Use a fresh output directory when changing toolchains.
+The wrapper sets `TOOLCHAIN_MISSING=yes` for this path to omit the in-tree
+bootstrap compiler and its host math libraries. Other required host tools
+are still built from the selected source revision.
 
 ```sh
 EMBER_BUILD_MODE=cross EMBER_EXTERNAL_TOOLCHAIN=/absolute/cross-prefix \
