@@ -22,6 +22,11 @@ admission and returns ENODEV. Normal asynchronous submission does not wait
 for its own GPU completion. Pre-emission rejection unlocks BO reservations
 and never publishes a zero-sequence fence.
 
+[Classic wire-ID exhaustion](classic-fence-range.md) is fatal rather than
+capacity pressure. It seals admission before releasing the submit mutex and
+uses this same joined reset/retirement path. The last valid ID can still retry
+transport pressure without allocating another ID.
+
 ## Ownership and teardown
 
 A successful response runs its callback and existing transfer completion

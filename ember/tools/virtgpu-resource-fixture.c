@@ -203,6 +203,11 @@ struct idr {
 struct work_struct {
 	int unused;
 };
+struct virtio_gpu_fence_driver {
+	unsigned int limit, pending;
+	int stop_error; bool stopped; struct mutex lock;
+	uint64_t sync_seq; struct list_head fences;
+};
 struct virtio_gpu_device {
 	wait_queue_head_t resp_wq;
 	struct {
@@ -218,7 +223,7 @@ struct virtio_gpu_device {
 	struct work_struct reset_work, config_changed_work, obj_free_work;
 	struct mutex submit_lock;
 	atomic_t submitters;
-	struct { unsigned int limit; int stop_error; bool stopped; struct mutex lock; } fence_drv;
+	struct virtio_gpu_fence_driver fence_drv;
 	struct ida ctx_id_ida, resource_ida;
 	bool has_virgl_3d;
 	atomic_int submit_error;
@@ -256,10 +261,12 @@ struct drm_gem_open {
 	uint32_t handle;
 };
 struct dma_fence {
+	uint64_t seqno;
 	atomic_int refs;
 };
 struct virtio_gpu_fence {
 	struct dma_fence f;
+	struct list_head node;
 	bool unref;
 	unsigned int prior_ids;
 };
@@ -566,8 +573,10 @@ static struct virtio_gpu_fence *
 virtio_gpu_fence_alloc(struct virtio_gpu_device *d)
 {
 	struct virtio_gpu_fence *f = test_alloc(sizeof(*f));
-	if (f)
+	if (f) {
 		atomic_init(&f->f.refs, 1);
+		INIT_LIST_HEAD(&f->node);
+	}
 	return f;
 }
 static void
@@ -596,8 +605,10 @@ virtgpu_console_stop(struct virtio_gpu_device *d)
 static void
 virtio_gpu_fence_stop(struct virtio_gpu_device *d, int error)
 {
-	d->fence_drv.stopped = true;
-	d->fence_drv.stop_error = error;
+	if (!d->fence_drv.stopped) {
+		d->fence_drv.stopped = true;
+		d->fence_drv.stop_error = error;
+	}
 }
 static void
 virtio_gpu_fail_capsets(struct virtio_gpu_device *d, int error)
@@ -831,6 +842,13 @@ static void virtio_gpu_complete_transfer(struct virtio_gpu_device *d,
 #endif
 /* Fence publication itself is exercised by the completion contract. */
 static void virtio_gpu_fence_complete(struct virtio_gpu_fence *f, int error) {
+#ifdef FENCE_BACKING_CONTRACT
+	if (!list_empty(&f->node)) {
+		list_del_init(&f->node);
+		assert(gpu.fence_drv.pending); gpu.fence_drv.pending--;
+		dma_fence_put(&f->f);
+	}
+#endif
 #ifdef BACKING_CONTRACT
 	assert(rw_pre >= rw_post && rw_pre - rw_post <= 1);
 	if (f->unref && !error) assert(ids_freed == f->prior_ids + 1);
@@ -866,7 +884,9 @@ enum response_mode {
 static enum response_mode mode;
 static uint32_t fault_type;
 static int submission_error;
+#ifndef FENCE_BACKING_CONTRACT
 static uint64_t next_fence;
+#endif
 static struct virtio_gpu_vbuffer *pending;
 static void
 host_accept(struct virtio_gpu_ctrl_hdr *c)

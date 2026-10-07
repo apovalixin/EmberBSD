@@ -112,7 +112,8 @@ virtio_gpu_fence_space(struct virtio_gpu_device *vgdev)
 	bool space;
 
 	spin_lock(&drv->lock);
-	space = drv->stopped || (drv->limit && drv->pending < drv->limit);
+	space = drv->stopped || drv->sync_seq >= VIRTGPU_CLASSIC_FENCE_MAX ||
+	    (drv->limit && drv->pending < drv->limit);
 	spin_unlock(&drv->lock);
 	return space;
 }
@@ -142,7 +143,12 @@ int virtio_gpu_fence_emit(struct virtio_gpu_device *vgdev,
 	spin_lock_irqsave(&drv->lock, irq_flags);
 	if (drv->stopped)
 		ret = -ENODEV;
-	else if (!drv->limit || drv->pending >= drv->limit)
+	else if (drv->sync_seq >= VIRTGPU_CLASSIC_FENCE_MAX) {
+		/* Seal atomically; normal reset drains without allocating more IDs. */
+		drv->stopped = true;
+		drv->stop_error = -EOVERFLOW;
+		ret = -EOVERFLOW;
+	} else if (!drv->limit || drv->pending >= drv->limit)
 		ret = -ENOSPC;
 	else if (fence->f.seqno != 0)
 		ret = -EINVAL;

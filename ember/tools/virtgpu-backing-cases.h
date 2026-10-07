@@ -3,6 +3,10 @@
 static void backing_init(void) {
 	init();
 	backing_vq.num_free = 32;
+#ifdef FENCE_BACKING_CONTRACT
+	gpu.fence_drv.limit=32;
+	INIT_LIST_HEAD(&gpu.fence_drv.fences);
+#endif
 	gpu.ctrlq.vq = &backing_vq;
 	ops.del_vqs = backing_del_vqs;
 	pressure_rejects = pressure_waits = joined = terminal = fixture_ticks = 0;
@@ -201,7 +205,13 @@ static void backing_case(unsigned which) {
 	} else abort();
 	fini();
 }
+#ifdef FENCE_BACKING_CONTRACT
+#include "virtgpu-fence-backing-cases.h"
+#endif
 int main(void) {
+#ifdef FENCE_BACKING_CONTRACT
+	return fence_backing_main();
+#endif
 	static const char *const names[] = {
 	    "lease survives early successful ATTACH/token POST",
 	    "all four ATTACH metadata allocation failures precede PRE",

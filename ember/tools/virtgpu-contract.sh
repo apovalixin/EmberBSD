@@ -52,10 +52,11 @@ struct virtio_gpu_vbuffer {
 struct virtio_gpu_device {
     struct { struct netbsd_virtqueue *vq; struct mutex qlock; int ack_queue; } ctrlq;
     struct mutex submit_lock; int submitters;
-    bool vqs_ready; int submit_error;
+    bool vqs_ready, dma_stopped; int submit_error;
 };
 #define jiffies 0
 /* These legacy queue cases contain no eligible BO. */
+static void virtio_gpu_dma_stop(struct virtio_gpu_device *d) { d->dma_stopped = true; }
 static int virtio_gpu_dma_prepare(struct virtio_gpu_vbuffer *b) { (void)b; return 0; }
 static void virtio_gpu_dma_post(struct virtio_gpu_vbuffer *b) { (void)b; }
 static bool virtio_gpu_submit_begin(struct virtio_gpu_device *d) {

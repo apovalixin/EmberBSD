@@ -39,15 +39,26 @@ static void backing_callback(struct virtio_gpu_device *d,
 }
 #define jiffies fixture_ticks
 #define DRM_ERROR(...) do { if (0) fprintf(stderr, __VA_ARGS__); } while (0)
+#ifdef FENCE_BACKING_CONTRACT
+#define spin_lock_irqsave(m,f) do { (f)=0; spin_lock(m); } while (0)
+#define spin_unlock_irqrestore(m,f) do { (void)(f); spin_unlock(m); } while (0)
+#define trace_dma_fence_emit(f) ((void)(f))
+#include "backing-fence-production.h"
+#else
 static bool virtio_gpu_fence_space(struct virtio_gpu_device *d) { return true; }
+#endif
 
 static int virtio_gpu_fence_emit(struct virtio_gpu_device *d,
     struct virtio_gpu_ctrl_hdr *h, struct virtio_gpu_fence *f) {
 	f->unref = h->type == VIRTIO_GPU_CMD_RESOURCE_UNREF;
 	f->prior_ids = ids_freed;
+#ifdef FENCE_BACKING_CONTRACT
+	return backing_actual_fence_emit(d,h,f);
+#else
 	h->flags = VIRTIO_GPU_FLAG_FENCE;
 	h->fence_id = ++next_fence;
 	return 0;
+#endif
 }
 static void virtio_gpu_array_add_fence(struct virtio_gpu_object_array *a,
     struct dma_fence *f) { }

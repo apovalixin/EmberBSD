@@ -1,5 +1,6 @@
 /* Origin: EmberBSD; AI-assisted production completion/reset cases. */
 /* SPDX-License-Identifier: BSD-2-Clause */
+static void (*sealed_unlock_hook)(void);
 static unsigned int native_resets, cleanup_queued, drains, joins, transfers;
 static unsigned int wait_mode, wait_count, stop_on_unlock, stop_in_transport;
 static struct virtio_gpu_vbuffer *cookies[16], *used[16];
@@ -19,6 +20,9 @@ owned(void)
 static void
 completion_unlock(struct mutex *m)
 {
+	if(m==&device.submit_lock && sealed_unlock_hook) {
+		void (*hook)(void)=sealed_unlock_hook; sealed_unlock_hook=NULL; hook();
+	}
 	if(m==&device.submit_lock && stop_on_unlock) {
 		stop_on_unlock=0;
 #ifdef COMPLETION_FOUNDATION
@@ -50,7 +54,13 @@ static void flush_work(struct work_struct *w) {
 		assert(!owned() && list_empty(&device.fence_drv.fences));
 	}
 }
-static void native_reset(struct virtio_device *d) { native_resets++; }
+static void native_reset(struct virtio_device *d) {
+#ifdef FENCE_CONTRACT
+	assert(!device.submit_lock.held && !device.dma_lock.held && !device.fence_drv.lock.held);
+	assert(!resv[0].locked && !resv[1].locked);
+#endif
+	native_resets++;
+}
 static void native_del_vqs(struct virtio_device *d) {
 	assert(native_resets && joins>=2);
 	for(unsigned i=0;i<16;i++) {
@@ -108,6 +118,9 @@ completion_wait(long ticks)
 		unsigned spent=wait_mode==4?3*HZ:HZ;
 		fixture_ticks+=spent;
 		respond(0,0);
+#ifdef FENCE_CONTRACT
+		queue_error=0;
+#endif
 		return ticks-spent;
 	}
 	if(wait_mode==3) {
@@ -306,9 +319,16 @@ completion_case(unsigned which)
 	finish_all();
 }
 
+#ifdef FENCE_CONTRACT
+#include "virtgpu-fence-exhaustion-cases.h"
+#endif
+
 int
 main(void)
 {
+#ifdef FENCE_CONTRACT
+	return exhaustion_contract_main();
+#endif
 	unsigned failed=0, count=sizeof(completion_names)/sizeof(completion_names[0]);
 	for(unsigned i=0;i<count;i++) {
 		pid_t pid=fork(); int status;

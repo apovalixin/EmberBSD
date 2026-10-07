@@ -409,7 +409,7 @@ virtio_gpu_queue_fenced_ctrl_buffer(struct virtio_gpu_device *vgdev,
 	struct linux_virtio_sg resp = { vbuf->resp_buf, vbuf->resp_size, NULL };
 	struct linux_virtio_sg *sgs[3];
 	unsigned int out = 1, before, started;
-	bool registered, admission_timeout = false;
+	bool registered, admission_timeout = false, exhausted = false;
 	bool resv_locked = fence && vbuf->objs;
 	long remaining;
 	int ret;
@@ -443,8 +443,10 @@ virtio_gpu_queue_fenced_ctrl_buffer(struct virtio_gpu_device *vgdev,
 			goto out_unlock;
 		}
 		ret = virtio_gpu_fence_emit(vgdev, hdr, fence);
-		if (ret)
+		if (ret) {
+			exhausted = ret == -EOVERFLOW;
 			goto out_unlock;
+		}
 		vbuf->fence = fence;
 		dma_fence_get(&fence->f);
 	}
@@ -474,6 +476,11 @@ virtio_gpu_queue_fenced_ctrl_buffer(struct virtio_gpu_device *vgdev,
 		}
 	}
 out_unlock:
+	if (exhausted) {
+		/* Block already admitted producers before releasing submit_lock. */
+		virtio_gpu_dma_stop(vgdev);
+		vgdev->vqs_ready = false;
+	}
 	/* A successful queue call may already have freed vbuf. */
 	mutex_unlock(&vgdev->submit_lock);
 out_reject:
@@ -482,7 +489,7 @@ out_reject:
 		DRM_ERROR("control submission failed: %d\n", ret);
 		if (resv_locked)
 			virtio_gpu_array_unlock_resv(vbuf->objs);
-		if (admission_timeout || vbuf->release)
+		if (exhausted || admission_timeout || vbuf->release)
 			virtio_gpu_stop(vgdev, ret);
 		vbuf->error = ret;
 		virtio_gpu_cancel_vbuf(vbuf);

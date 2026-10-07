@@ -102,6 +102,9 @@ struct virtio_gpu_object {
 #define gem_to_virtio_gpu_obj(gobj) \
 	container_of((gobj), struct virtio_gpu_object, base.base)
 
+/* Global classic timeline: native 32-bit comparisons retain arbitrary old fences. */
+#define VIRTGPU_CLASSIC_FENCE_MAX INT32_MAX
+
 #define VIRTGPU_EXEC_MAX_OBJECTS 65536U
 #define VIRTGPU_EXEC_BUDGET (16U * 1024U * 1024U)
 

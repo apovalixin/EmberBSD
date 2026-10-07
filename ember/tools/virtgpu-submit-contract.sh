@@ -32,6 +32,7 @@ typedef uint64_t __u64, __le64;
 C
 layout="$work/submit-layout.h"
 : > "$layout"
+sed -n '/^#define VIRTGPU_CLASSIC_FENCE_MAX /p' "$hdr" >> "$layout"
 if grep -q '^#define VIRTGPU_EXEC_MAX_OBJECTS' "$hdr"; then
     printf '#define EXEC_FOUNDATION 1\n' >> "$layout"
     sed -n '/^#define VIRTGPU_EXEC_/p; /^struct virtgpu_exec_member {/,/^};/p; /^struct virtio_gpu_attachment {/,/^};/p' "$hdr" >> "$layout"
@@ -62,6 +63,7 @@ extract dma_resv_add_excl_fence "$base/linux/linux_dma_resv.c" 'static void' >> 
 extract dma_resv_get_excl "$base/linux/linux_dma_resv.c" 'static struct dma_fence * __attribute__((unused))' >> "$native"
 extract dma_resv_get_list "$base/linux/linux_dma_resv.c" 'static struct dma_resv_list * __attribute__((unused))' >> "$native"
 prod="$work/submit-production.h"
+: > "$prod"
 
 if [ "${COMPLETION_CONTRACT:-0}" = 1 ]; then
     extract virtio_gpu_reset_work "$base/dist/drm/virtio/virtgpu_kms.c" 'static void' > "$work/completion-production.h"
@@ -71,7 +73,10 @@ if [ "${COMPLETION_CONTRACT:-0}" = 1 ]; then
     extract virtio_gpu_queue_cursor "$vq" 'static void' >> "$work/completion-production.h"
 fi
 extract fd_abort "$src/sys/kern/kern_descrip.c" 'static void' > "$work/submit-fd-abort.h"
-extract dma_fence_get_status "$base/linux/linux_dma_fence.c" 'static int' > "$prod"
+if [ "${FENCE_CONTRACT:-0}" = 1 ]; then
+    extract __dma_fence_is_later "$base/linux/linux_dma_fence.c" 'static bool' >> "$prod"
+fi
+extract dma_fence_get_status "$base/linux/linux_dma_fence.c" 'static int' >> "$prod"
 for name in dma_fence_array_done1 dma_fence_array_done; do
     extract "$name" "$base/linux/linux_dma_fence_array.c" 'static void' >> "$prod"
 done

@@ -67,7 +67,8 @@ typedef struct mutex kmutex_t;
 typedef struct { struct mutex lock; int cv; } wait_queue_head_t;
 #define DRM_WAKEUP_ALL(cv,lock) ((void)(cv),(void)(lock))
 static void (*lock_hook)(struct mutex *);
-static void mutex_lock(struct mutex *m) { assert(!m->held); m->held=1; if(lock_hook) lock_hook(m); }
+static void (*before_lock_hook)(struct mutex *);
+static void mutex_lock(struct mutex *m) { if(before_lock_hook) before_lock_hook(m); assert(!m->held); m->held=1; if(lock_hook) lock_hook(m); }
 static void mutex_unlock(struct mutex *m) {
 	assert(m->held); m->held=0;
 #ifdef COMPLETION_CONTRACT
@@ -106,7 +107,7 @@ struct dma_fence {
 	spinlock_t *lock;
 };
 struct dma_fence_cb { int unused; };
-struct dma_fence_ops { int unused; };
+struct dma_fence_ops { bool use_64bit_seqno; };
 static const struct dma_fence_ops virtio_fence_ops;
 struct ww_class { uint64_t wwc_ticket; };
 struct ww_acquire_ctx { struct ww_class *wwx_class; void *wwx_owner; uint64_t wwx_ticket; unsigned wwx_acquired; bool wwx_acquire_done; };
@@ -317,8 +318,8 @@ static void virtio_gpu_dma_finish(struct virtio_gpu_vbuffer *b, int error) {
 	if (b->objs && b->objs->exec) virtgpu_exec_finish(b);
 #endif
 }
+static void virtio_gpu_dma_stop(struct virtio_gpu_device *d) { d->dma_stopped=true; }
 #ifdef COMPLETION_CONTRACT
-static void virtio_gpu_dma_stop(struct virtio_gpu_device *d) { }
 static void virtio_gpu_dma_reset(struct virtio_gpu_device *d) { }
 #else
 static void virtio_gpu_complete_transfer(struct virtio_gpu_device *d, struct virtio_gpu_vbuffer *b) { }

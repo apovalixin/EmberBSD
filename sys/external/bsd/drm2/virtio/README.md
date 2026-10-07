@@ -98,6 +98,11 @@ does not qualify the remaining transfer/CPU-copy paths or live graphics.
 Normal live detach is rejected
 with EBUSY.
 
+Classic wire fence IDs are bounded to `1..INT32_MAX`. The next allocation
+seals the device and uses normal reset retirement without wrapping IDs.
+The [range and exhaustion contract](classic-fence-range.md) passes 25 new
+host groups and 179 affected prior groups; native checks remain pending.
+
 ## Classic capset queries
 
 Discovery and GET_CAPS use the existing fenced synchronous control path.

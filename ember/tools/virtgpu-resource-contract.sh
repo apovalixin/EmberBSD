@@ -32,7 +32,7 @@ typedef uint64_t __u64, __le64;
 C
 sed -n '/^struct virtio_gpu_wait {/,/^};/p' "$vq" > "$work/resource-layout.h"
 sed -n '/^enum virtgpu_dma_lease /,/^};/p' "$hdr" >> "$work/resource-layout.h"
-sed -n '/^#define VIRTGPU_EXEC_/p; /^struct virtgpu_exec_member {/,/^};/p' "$hdr" >> "$work/resource-layout.h"
+sed -n '/^#define VIRTGPU_CLASSIC_FENCE_MAX /p; /^#define VIRTGPU_EXEC_/p; /^struct virtgpu_exec_member {/,/^};/p' "$hdr" >> "$work/resource-layout.h"
 for name in virtio_gpu_vbuffer virtio_gpu_attachment virtio_gpu_fpriv \
     virtio_gpu_object_params virtio_gpu_object virtio_gpu_object_array; do
     sed -n "/^struct $name {/,/^};/p" "$hdr" >> "$work/resource-layout.h"
@@ -95,6 +95,12 @@ done
 extract drm_gem_release "$drm/drm_gem.c" 'static void' >> "$prod"
 extract drm_gem_prime_fd_to_handle "$drm/drm_prime.c" 'static int' >> "$prod"
 extract virtio_gpu_resource_create_ioctl "$drm/virtio/virtgpu_ioctl.c" 'static int' >> "$prod"
+if [ "${FENCE_BACKING_CONTRACT:-0}" = 1 ]; then
+    extract virtio_gpu_fence_space "$drm/virtio/virtgpu_fence.c" 'static bool' > "$work/backing-fence-production.h"
+    printf '#define virtio_gpu_fence_emit backing_actual_fence_emit\n' >> "$work/backing-fence-production.h"
+    extract virtio_gpu_fence_emit "$drm/virtio/virtgpu_fence.c" 'static int' >> "$work/backing-fence-production.h"
+    printf '#undef virtio_gpu_fence_emit\n' >> "$work/backing-fence-production.h"
+fi
 if [ "${BACKING_CONTRACT:-0}" = 1 ]; then
     extract virtio_gpu_submit_begin "$drm/virtio/virtgpu_fence.c" 'static bool' > "$work/backing-queue-production.h"
     extract virtio_gpu_submit_done "$vq" 'static void' >> "$work/backing-queue-production.h"
