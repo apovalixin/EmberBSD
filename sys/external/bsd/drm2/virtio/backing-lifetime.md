@@ -102,9 +102,15 @@ queue and fence locks; callbacks precede wait completion only after POST.
 Final release precedes successful UNREF fence readiness. Reset terminal
 publication requires all remaining registered leases closed.
 
-Host checks and ASan/UBSan pass. The pre-C2 baseline fails causal checks for
-missing bidirectional phases and premature retirement; the new token-helper
-case is explicitly skipped there. Native compilation/contract review of
-this C2 change, matched kernel build, boot and live backing checks remain
-separate gates. No installed kernel or system runtime changes follow from
-this host contract.
+Host checks and ASan/UBSan pass. The pre-C2 baseline has 22 causal failures,
+one passing legacy control and one explicit skip of the new token helper.
+The same 24 backing groups and 108 affected prior groups pass with GCC 16.2
+on NetBSD 11/AArch64. Configuration and dependencies were regenerated;
+fourteen fresh driver objects compile with base GCC 12.5 and normal `-Werror`
+in 2.39 seconds, with 66,932 KiB peak RSS and no swaps.
+
+The source export is commit `6195a6fb070382cb89800614da468f1bdc9ae012`,
+SHA256 `de4862560b10d6d87709ff595c7ab073054c8a0eb41c2189633a4c09e3afdcf1`.
+Native log SHA256: `34df215c654339a1efbb5006e23321279715d42aea32c2008b1b9e5949925c81`.
+Matched kernel build, boot and live backing checks remain separate gates.
+No installed kernel or system runtime changed in this check.

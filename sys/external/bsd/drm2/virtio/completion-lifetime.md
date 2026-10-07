@@ -34,7 +34,8 @@ fence publication remains closed until cleanup recovers all request cookies.
 
 Cleanup joins accepted producers, then both dequeue workers. Native
 `del_vqs` joins interrupt callbacks and cancels outstanding cookies. Only
-then does cleanup close eligible backing leases, publish terminal results,\nand drain console, configuration,
+then does cleanup close eligible backing leases, publish terminal results,
+and drain console, configuration,
 and delayed-object workers. Console/config waiters can therefore observe
 terminal fences before cleanup waits for their exit. No submit/spin lock is
 held over these joins, and completion never takes the submit mutex.

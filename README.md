@@ -168,6 +168,9 @@ on every board in the hardware catalog.
   [Owned DMA backing checks](sys/external/bsd/drm2/virtio/dma-eligibility.md)
   reject unsuitable ARM64 maps before a future 3D context can use them,
   including resources shared through PRIME or duplicate handles.
+  [Backing lifetime and retirement](sys/external/bsd/drm2/virtio/backing-lifetime.md)
+  keep eligible memory pinned beyond individual request completion, until
+  fenced resource retirement or completed reset makes release safe.
   Native contracts and object builds pass; full kernel/runtime acceptance
   and synchronization of all context-reachable backing remain pending.
   See the [VirtGPU implementation](sys/external/bsd/drm2/virtio/README.md),
@@ -183,8 +186,11 @@ on every board in the hardware catalog.
   direction: Mali-G720 through Panthor/[Mesa PanVK](https://docs.mesa3d.org/drivers/panfrost.html),
   and Zhouyi v3/X2 through the [Compass driver/runtime sources](https://github.com/Arm-China/Compass_NPU_Driver).
   The [Compass Ports probe](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/compass-umd)
-  fixes descriptor ownership during initialization and cleanup; 13 isolated
-  production-method contracts pass on NetBSD/AArch64 with GCC 16.2.
+  fixes descriptor ownership during initialization and cleanup, and rejects
+  out-of-range partition/cluster queries while preserving legacy NPU counts.
+  On NetBSD/AArch64 with GCC 16.2, 13 descriptor cases and 58 core-count
+  cases pass against isolated production methods; a full runtime build and
+  NPU execution remain unverified.
   A733 PowerVR/Vivante integration is a separate investigation. These are
   porting targets, not available EmberBSD acceleration. Board bring-up,
   driver/DMA integration, compatible runtime and real model execution must
