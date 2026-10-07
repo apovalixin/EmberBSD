@@ -40,6 +40,47 @@ old-value returns and adjacent-byte canaries. CAS4 must ignore high32;
 CAS8 must compare them. The unchanged baseline must fail the ten narrow
 variants; the repaired source must pass all twenty variants.
 
+## Check a complete shared libc
+
+The optional DSO mode uses the same matrix and raw argument seam without
+compiling or linking renamed production objects:
+
+```sh
+sh ember/tools/aarch64-cas-contract.sh --dso /absolute/libc.so.12.224 \
+    "$PWD" /absolute/new-output-directory
+```
+
+The provider must be an absolute regular file, not a symbolic link. The
+fixture resolves all twenty original `__aarch64_cas*` names from that
+explicit `RTLD_NOW | RTLD_LOCAL` handle. Before executing the matrix, it
+checks each `dladdr` provider's device/inode against the selected file and
+prints a binding receipt. Missing symbols, dependency-provided symbols,
+wrong file identity and invalid provider paths fail with exit status 2;
+functional failures retain status 1. There is no default-provider fallback.
+The output includes the provider hash, ELF metadata, disassembly, fixture
+symbols, link map, execution log and status.
+
+A complete candidate libc must be selected at process startup. Prepare
+private `libc.so.12`/`libc.so` links to that file and set `LD_LIBRARY_PATH`
+and `LD_BIND_NOW=1` only for bounded test child processes. Verify their
+loaded libc identity before testing. Do not load a second complete libc
+into a process initialized with the installed one for allocator acceptance.
+Build the fixture under the installed library first, then run its retained
+`contract /absolute/provider` executable in each isolated environment. Use
+the installed regular library file for the separate baseline run.
+
+[`aarch64-libc-receipt.c`](../tools/aarch64-libc-receipt.c) can be built
+with `cc -fPIC -shared` and passed as an absolute `LD_PRELOAD` path.
+Set `EMBER_LIBC_EXPECT` to the regular provider file in the same bounded
+child environment. Its constructor/destructor record loaded object identities
+and reject a wrong or second libc mapping, including a wrong effective malloc
+lookup. The runtime lookup avoids executable PLT addresses; it does not inspect
+individual GOT slots.
+Building it as an executable with `-DEMBER_LIBC_RECEIPT_MAIN` adds a bounded
+allocator/string/stdio smoke. The receipt does not interpose calls or add fork
+hooks; forked children inherit mappings. Snapshots can miss libraries opened
+and closed between them and do not establish complete loader correctness.
+
 ## Evidence and limits
 
 The original production source at `7f47b7c3f935ccba2207fe73b57742ae4b6b9f92`
@@ -57,6 +98,19 @@ ELF symbols, link maps and direct call instructions confirmed that these
 executables used the selected objects. Neither executable replaced libc.
 This is an isolated software contract, not an installed libc update,
 physical-board check or acceptance of the ongoing GCC test suite.
+
+On 2026-10-07 a complete static/PIC/shared libc from `cffffd40` was built
+with the normal libc Makefiles and native GCC 12.5 on Orange Pi Zero 3W.
+Its shared artifact, SHA256
+`5dff821f1a1b42845e642cedd16375b310b78d04fa624bb21472d33b0fc14130`,
+passed all 850 checks through the original twenty DSO exports. The installed
+libc baseline failed 140 checks through those same direct bindings. Startup
+receipts confirmed one selected libc mapping and every helper's device/inode.
+The same private candidate passed a bounded allocator/string/stdio smoke and
+27 existing libc/libpthread ATF cases covering memory, streams, fork, signals,
+TLS/dlopen, locale, time and threads. The installed files were unchanged.
+The build used installed platform headers plus source-local headers; this
+does not establish a complete fresh userland/header release or sustained use.
 
 All existing acquire/release instructions, retry branches and barriers
 remain unchanged. Functional coverage of the five suffixes does not prove
