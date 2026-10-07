@@ -167,6 +167,8 @@ on every board in the hardware catalog.
 - **Current KDE/Qt integration:** KWin 6.7.5 runs a nested Qt Wayland window
   with software rendering and tested keyboard input. Plasma Mobile 6.7.5
   builds and installs with checked library loading and QML components.
+  Common [Qt 6.12 / Frameworks 6.30 source recipes](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit)
+  and export checks are available; native packages remain pending.
   A complete mobile shell workflow, native display and power management
   still need validation. See the [Plasma Mobile port](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/plasma-mobile).
 
@@ -205,6 +207,9 @@ on every board in the hardware catalog.
   now pair finite DMA phases, retain host resources through failed cleanup,
   and reject private framebuffer handles before publication. Kernel copies
   wait for prior operations while retaining the buffer and its reservation.
+  [Classic EXEC framing](sys/external/bsd/drm2/virtio/exec-framing.md) rejects
+  misaligned or truncated packets before DMA or output-fence publication,
+  preserving command bytes and Mesa transfer padding.
   Native contracts and object builds pass. Complete request bounds, arbitrary
   userspace CPU access, full kernel/runtime acceptance and live DMA qualification
   remain pending.

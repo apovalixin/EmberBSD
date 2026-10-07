@@ -88,3 +88,28 @@ boundary case now uses four bytes plus the existing 256-byte overhead, retaining
 its exact transport-boundary target. All affected old contract groups pass with
 normal warnings. Native object/contract checks and VM execution are separate;
 this host source gate does not claim either.
+
+## Native contract and object gate
+
+Source `09e02e899dd8bd2c20a50981fc3f95d4409335ad` passed all 246 affected
+groups on NetBSD 11/AArch64 with GCC 16.2 on 2026-10-07: 28 framing and
+218 existing shared-submit groups. The corrected aligned transport-overflow
+case retains its independent limit check. The unchanged resource-side
+controlled-console cases were not repeated or added to this count.
+
+A fresh `virtgpu_ioctl.o` compiled with base GCC 12.5 and normal `-Werror`
+in 0.88 seconds, with 59,052 KiB maximum RSS and zero swaps. This is the only
+production translation unit changed by framing. The bounded guard returned 0;
+there was no full kernel link, installation or boot. The partial object tree
+is not a matched kernel or evidence of live DMA, host completion or graphics.
+
+The 382-path compressed source export SHA256 is
+`a080e9b3e982683af37419866a2036b78c4144f3eeae3dd90fe5c0d9b4e83ce6`.
+Native log SHA256:
+`3c4ef4a5332a9d03798f148c885d5d1fcd781d8daeef1dfc4e4383991f422f65`.
+Receipt SHA256:
+`9b027fcf8e1851d0f7891bd353f8ef4753662366b594a9e7ae6f5312500f1a72`.
+Object SHA256:
+`9c551bf300e3b5c3ad142cd0ea2c17d036ad900208babf522bc76db572ace82d`.
+Source and the focused test/documentation repair passed independent review.
+VIRGL remains disabled pending the host and runtime obligations above.

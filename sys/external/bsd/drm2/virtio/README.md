@@ -81,12 +81,13 @@ This source gate leaves feature negotiation disabled. The subsequent
 [whole-context EXEC contract](exec-ownership.md) snapshots actual attachments,
 retains independent operation ledgers and bounds dependency/storage ownership.
 The [classic EXEC framing gate](exec-framing.md) rejects misaligned/truncated
-copied packets before PRE, submission or output-fd publication. Its 28 host
-contract groups and focused ASan/UBSan pass; format-aware access and truthful
+copied packets before PRE, submission or output-fd publication. Its 28 new
+and 218 affected prior groups pass natively with GCC 16.2; a fresh ioctl object
+passes base GCC 12.5 with normal `-Werror`. Focused host ASan/UBSan also passes.
+Format-aware access and truthful
 host errors remain [activation obligations](exec-framing.md#host-obligations-before-activation).
 The whole-context EXEC contract's 47 new and 132 prior groups pass natively
-with GCC 16.2;
-fourteen fresh driver objects compile with base GCC 12.5 and normal
+with GCC 16.2; fourteen fresh driver objects compile with base GCC 12.5 and normal
 `-Werror`. Full kernel, live DMA and graphics qualification remain pending.
 
 All synchronous control operations request and validate a GPU fence,
