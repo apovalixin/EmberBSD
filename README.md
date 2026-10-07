@@ -291,6 +291,9 @@ on every board in the hardware catalog.
   [Reported command and fence errors](https://github.com/neonix20b/EmberBSD-Ports/blob/main/probes/utm-virgl-host/COMPLETION.md)
   now enter that barrier before guest completion, with 683 source assertions
   passing in plain, sanitizer and NDEBUG runs.
+  The paired [GL/EGL wait adaptation](https://github.com/neonix20b/EmberBSD-Ports/blob/main/probes/utm-virgl-host/wait-errors.md)
+  also prevents failed waits from becoming successful fence callbacks;
+  causal renderer-to-QEMU source checks pass in all three modes.
   Focused macOS/arm64 source and sanitizer checks pass; full host builds,
   native lifetime qualification, remaining bounds and error propagation are pending.
   VirGL stays disabled; GPU rendering, reliable console recovery and Vulkan
