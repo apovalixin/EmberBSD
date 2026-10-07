@@ -1,3 +1,4 @@
+/* Origin: EmberBSD - adapt verified A133 vendor boot resources. */
 /*-
  * Copyright (c) 2026 Anton and EmberBSD contributors
  * All rights reserved.
@@ -21,6 +22,13 @@
 /* Translate the vendor A133 MMC resources before FDT node offsets are cached. */
 #include <sys/types.h>
 #include <libfdt.h>
+#ifdef _KERNEL
+#include <sys/systm.h>
+#else
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#endif
 
 #include "sun50i_a100_ccu.h"
 
@@ -98,6 +106,75 @@ a133_clock(void *fdt, const char *name, uint32_t rate, uint32_t *phandle)
 	cell = cpu_to_fdt32(value); \
 	A133_SET(path, name, &cell, sizeof(cell)); \
 } while (0)
+
+/* Preserve the YS-M33 panel-108 scanout initialized by the vendor loader. */
+static int
+a133_framebuffer(void *fdt)
+{
+	const char *args, *p;
+	char *end, *last, name[48], path[64];
+	fdt32_t cells[4], cell;
+	uint64_t start, limit, addr, size;
+	unsigned long bytes, base;
+	uint32_t phandle;
+	int chosen, len, node, error, i;
+
+	chosen = fdt_path_offset(fdt, "/chosen");
+	if (chosen < 0)
+		return 0;
+	args = fdt_getprop(fdt, chosen, "bootargs", &len);
+	if (args == NULL || len <= 0 || memchr(args, 0, len) == NULL ||
+	    strstr(args, "LCD/lcd_mipi_param=108;") == NULL)
+		return 0;
+	p = strstr(args, "disp_reserve=");
+	if (p == NULL || (p != args && p[-1] != ' '))
+		return 0;
+	p += sizeof("disp_reserve=") - 1;
+	bytes = strtoul(p, &end, 10);
+	if (bytes != 4096000 || end == p || *end != ',')
+		return 0;
+	base = strtoul(end + 1, &last, 0);
+	if (last == end + 1 || (*last != 0 && *last != ' ') ||
+	    base < 0x40000000 || base > 0x80000000 - bytes)
+		return 0;
+	if (fdt_node_offset_by_compatible(fdt, -1, "simple-framebuffer") >= 0)
+		return 0;
+
+	/* The buffer is unaligned; exclude both partial pages from VM. */
+	start = base & ~(uint64_t)4095;
+	limit = ((uint64_t)base + bytes + 4095) & ~(uint64_t)4095;
+	for (i = 0; i < fdt_num_mem_rsv(fdt); i++) {
+		error = fdt_get_mem_rsv(fdt, i, &addr, &size);
+		if (error != 0)
+			return error;
+		if (addr <= start && size >= limit - addr)
+			break;
+	}
+	if (i == fdt_num_mem_rsv(fdt)) {
+		error = fdt_add_mem_rsv(fdt, start, limit - start);
+		if (error != 0)
+			return error;
+	}
+	snprintf(name, sizeof(name), "framebuffer@%lx", base);
+	snprintf(path, sizeof(path), "/chosen/%s", name);
+	node = a133_node(fdt, "/chosen", name, &phandle);
+	if (node < 0)
+		return node;
+	A133_CELL("/chosen", "#address-cells", 2);
+	A133_CELL("/chosen", "#size-cells", 2);
+	A133_STRING(path, "compatible", "simple-framebuffer");
+	cells[0] = 0;
+	cells[1] = cpu_to_fdt32(base);
+	cells[2] = 0;
+	cells[3] = cpu_to_fdt32(bytes);
+	A133_SET(path, "reg", cells, sizeof(cells));
+	A133_CELL(path, "width", 800);
+	A133_CELL(path, "height", 1280);
+	A133_CELL(path, "stride", 3200);
+	A133_STRING(path, "format", "x8r8g8b8");
+	A133_STRING(path, "status", "okay");
+	return 0;
+}
 
 int
 sun50i_a133_fdt_fixup(void *fdt)
@@ -192,5 +269,5 @@ sun50i_a133_fdt_fixup(void *fdt)
 		A133_SET(SOC "/s_twi@0x07081400", "clocks", cells,
 		    sizeof(cells[0]));
 	}
-	return 0;
+	return a133_framebuffer(fdt);
 }

@@ -11,7 +11,7 @@ int sun50i_a133_fdt_fixup(void *);
 static void
 fixture(void *fdt, int size, const char *compat)
 {
-	int soc, pio, mmc;
+	int soc, pio, mmc, twi;
 
 	assert(fdt_create_empty_tree(fdt, size) == 0);
 	assert(fdt_setprop_string(fdt, 0, "compatible", compat) == 0);
@@ -33,7 +33,7 @@ fixture(void *fdt, int size, const char *compat)
 	assert(fdt_setprop(fdt, mmc, "mmc-hs200-1_8v", NULL, 0) == 0);
 	assert(fdt_setprop(fdt, mmc, "mmc-ddr-1_8v", NULL, 0) == 0);
 	soc = fdt_path_offset(fdt, "/soc@03000000");
-	int twi = fdt_add_subnode(fdt, soc, "s_twi@0x07081400");
+	twi = fdt_add_subnode(fdt, soc, "s_twi@0x07081400");
 	assert(twi >= 0);
 	assert(fdt_setprop_string(fdt, twi, "compatible",
 	    "allwinner,sun50i-twi") == 0);
@@ -44,12 +44,13 @@ main(void)
 {
 	unsigned char *fdt = malloc(16384), *before = malloc(16384);
 	const fdt32_t *cells;
-	int mmc, provider, len;
+	uint64_t addr, size;
+	int mmc, provider, len, twi, chosen, fb;
 
 	assert(fdt != NULL && before != NULL);
 	fixture(fdt, 16384, "allwinner,a133");
 	assert(sun50i_a133_fdt_fixup(fdt) == 0);
-	int twi = fdt_path_offset(fdt, "/soc@03000000/s_twi@0x07081400");
+	twi = fdt_path_offset(fdt, "/soc@03000000/s_twi@0x07081400");
 	assert(fdt_node_check_compatible(fdt, twi,
 	    "allwinner,sun6i-a31-i2c") == 0);
 	cells = fdt_getprop(fdt, twi, "clocks", &len);
@@ -87,6 +88,37 @@ main(void)
 	assert(fdt_node_offset_by_phandle(fdt, fdt32_to_cpu(*cells)) >= 0);
 	assert(sun50i_a133_fdt_fixup(fdt) == 0);
 
+	/* A live vendor scanout must never remain allocatable kernel RAM. */
+	fixture(fdt, 16384, "allwinner,a133");
+	chosen = fdt_add_subnode(fdt, 0, "chosen");
+	assert(chosen >= 0);
+	assert(fdt_setprop_string(fdt, chosen, "bootargs",
+	    "disp_reserve=4096000,0x7bf46100 "
+	    "LCD/lcd_mipi_param=108;screen_type=7;/DCL") == 0);
+	assert(sun50i_a133_fdt_fixup(fdt) == 0);
+	fb = fdt_node_offset_by_compatible(fdt, -1, "simple-framebuffer");
+	assert(fb >= 0);
+	cells = fdt_getprop(fdt, fb, "width", NULL);
+	assert(cells != NULL && fdt32_to_cpu(*cells) == 800);
+	cells = fdt_getprop(fdt, fb, "height", NULL);
+	assert(cells != NULL && fdt32_to_cpu(*cells) == 1280);
+	cells = fdt_getprop(fdt, fb, "reg", &len);
+	assert(cells != NULL && len == 16);
+	assert(fdt32_to_cpu(cells[1]) == 0x7bf46100);
+	assert(fdt_num_mem_rsv(fdt) == 1);
+	assert(fdt_get_mem_rsv(fdt, 0, &addr, &size) == 0);
+	assert(addr <= 0x7bf46100 && addr + size >= 0x7bf46100 + 4096000);
+	assert(sun50i_a133_fdt_fixup(fdt) == 0);
+	assert(fdt_num_mem_rsv(fdt) == 1);
+
+	fixture(fdt, 16384, "allwinner,a133");
+	chosen = fdt_add_subnode(fdt, 0, "chosen");
+	assert(fdt_setprop_string(fdt, chosen, "bootargs",
+	    "disp_reserve=4096000,0xffffff00 LCD/lcd_mipi_param=108;") == 0);
+	assert(sun50i_a133_fdt_fixup(fdt) == 0);
+	assert(fdt_node_offset_by_compatible(fdt, -1,
+	    "simple-framebuffer") == -FDT_ERR_NOTFOUND);
+
 	fixture(fdt, 16384, "allwinner,sun50i-a64");
 	memcpy(before, fdt, 16384);
 	assert(sun50i_a133_fdt_fixup(fdt) == 0);
@@ -101,6 +133,6 @@ main(void)
 	assert(sun50i_a133_fdt_fixup(fdt) == -FDT_ERR_NOTFOUND);
 	free(before);
 	free(fdt);
-	puts("A133 FDT adapter: vendor MMC resources, safe modes, isolation and errors passed");
+	puts("A133 FDT adapter: MMC, I2C, scanout reservation, isolation and errors passed");
 	return 0;
 }
