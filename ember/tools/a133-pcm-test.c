@@ -55,10 +55,97 @@ formats(void)
 	assert(a133_pcm_format(A133_PCM_PLAY, 16000, 1, NULL) == EINVAL);
 }
 
+static void
+ring_geometry(void)
+{
+	static const struct {
+		size_t size, block;
+		unsigned frame;
+	} bad[] = {
+		{ 0, 16, 2 }, { 64, 0, 2 }, { 64, 64, 2 },
+		{ 64, 16, 0 }, { 64, 16, 3 }, { 64, 15, 2 },
+		{ 64, 30, 2 }, { 64, 2, 4 },
+		/* Naive 2 * block overflows, admitting a single block. */
+		{ SIZE_MAX - 1, SIZE_MAX - 1, 2 },
+	};
+	struct a133_pcm_ring r = { 0 }, saved;
+	bool done;
+	size_t i;
+
+	assert(a133_pcm_ring_chunk(&r, 256) == 0);
+	assert(a133_pcm_ring_chunk(NULL, 256) == 0);
+	assert(a133_pcm_ring_init(NULL, 64, 16, 2) == EINVAL);
+	assert(a133_pcm_ring_init(&r, 64, 16, 2) == 0);
+	saved = r;
+	for (i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+		assert(a133_pcm_ring_init(&r, bad[i].size,
+		    bad[i].block, bad[i].frame) == EINVAL);
+		assert(memcmp(&r, &saved, sizeof(r)) == 0);
+	}
+	assert(a133_pcm_ring_advance(NULL, 2, &done) == EINVAL);
+	assert(a133_pcm_ring_advance(&r, 2, NULL) == EINVAL);
+	assert(memcmp(&r, &saved, sizeof(r)) == 0);
+	for (i = 0; i < 3; i++) {
+		static const size_t wrong[] = { 0, 3, 18 };
+		done = true;
+		assert(a133_pcm_ring_advance(&r, wrong[i], &done) == EINVAL);
+		assert(done);
+		assert(memcmp(&r, &saved, sizeof(r)) == 0);
+	}
+	assert(a133_pcm_ring_chunk(&r, 0) == 0);
+	assert(a133_pcm_ring_chunk(&r, 1) == 0);
+	assert(a133_pcm_ring_chunk(&r, 3) == 2);
+	assert(a133_pcm_ring_chunk(&r, SIZE_MAX) == 16);
+	assert(a133_pcm_ring_advance(&r, 14, &done) == 0 && !done);
+	assert(r.offset == 14 && r.remaining == 2);
+	assert(a133_pcm_ring_chunk(&r, 256) == 2);
+	assert(a133_pcm_ring_advance(&r, 2, &done) == 0 && done);
+	assert(r.offset == 16 && r.remaining == 16);
+	assert(a133_pcm_ring_init(&r, 64, 16, 4) == 0);
+	assert(a133_pcm_ring_chunk(&r, 3) == 0);
+	assert(a133_pcm_ring_chunk(&r, 7) == 4);
+
+	/* Even a valid SIZE_MAX-adjacent ring must wrap without addition overflow. */
+	assert(a133_pcm_ring_init(&r, SIZE_MAX - 3, (SIZE_MAX - 3) / 2, 2) == 0);
+	assert(a133_pcm_ring_advance(&r, r.block, &done) == 0 && done);
+	assert(a133_pcm_ring_advance(&r, r.block, &done) == 0 && done);
+	assert(r.offset == 0 && r.remaining == r.block);
+}
+
+static void
+ring_copy(void)
+{
+	uint8_t source[64], dest[194];
+	struct a133_pcm_ring r;
+	struct a133_pcm_format f;
+	size_t i, copied, n, blocks = 0;
+	bool done;
+
+	for (i = 0; i < sizeof(source); i++)
+		source[i] = (uint8_t)i;
+	memset(dest, 0xa5, sizeof(dest));
+	assert(a133_pcm_format(A133_PCM_PLAY, 48000, 2, &f) == 0);
+	assert(a133_pcm_ring_init(&r, 64, 16, f.frame_bytes) == 0);
+	for (copied = 0; copied < 192; copied += n) {
+		n = a133_pcm_ring_chunk(&r, 11);
+		assert(n == 8);
+		memcpy(dest + 1 + copied, source + r.offset, n);
+		assert(a133_pcm_ring_advance(&r, n, &done) == 0);
+		if (done)
+			blocks++;
+	}
+	assert(blocks == 12 && r.offset == 0 && r.remaining == 16);
+	assert(dest[0] == 0xa5 && dest[193] == 0xa5);
+	for (i = 0; i < 192; i++)
+		assert(dest[i + 1] == i % 64);
+}
+
 int
 main(void)
 {
 	formats();
-	puts("A133 PCM formats passed");
+	ring_geometry();
+	ring_copy();
+	puts("A133 PCM formats and ring boundaries passed");
 	return 0;
 }

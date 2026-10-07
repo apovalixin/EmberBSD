@@ -25,8 +25,8 @@ encodings and precision before calling this core. Do not advertise stereo
 capture or 44.1 kHz until their clocking/routing is verified. The format words
 select low 16-bit FIFO samples, TX threshold 64, RX threshold 32 and left ADC
 only. They exclude enable, IRQ, DMA-request and flush bits. The observed 16 kHz
-FIFO rate selector is 3; the manual's conflicting rate table is not substituted
-for the native and factory-Linux register observation.
+FIFO rate selector is 3, matching both FIFO rate tables in the manual and the
+native and factory-Linux register observation.
 
 ## Contracts
 

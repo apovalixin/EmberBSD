@@ -1,6 +1,6 @@
 /* Origin: EmberBSD - validate A133 PCM formats and transfer geometry. */
 /* SPDX-License-Identifier: BSD-2-Clause */
-#include <sys/types.h>
+#include <sys/param.h>
 #include <sys/errno.h>
 
 #include "sun50i_a133_pcm.h"
@@ -30,5 +30,68 @@ a133_pcm_format(unsigned mode, unsigned rate, unsigned channels,
 		f.adc_fifoc = fs | (1U << 24) | (1U << 12) | (32U << 4);
 	}
 	*out = f;
+	return 0;
+}
+
+static bool
+a133_pcm_geometry(size_t size, size_t block, unsigned frame)
+{
+
+	return block != 0 && (frame == 2 || frame == 4) &&
+	    block % frame == 0 && size % block == 0 && size / block >= 2;
+}
+
+static bool
+a133_pcm_ring_valid(const struct a133_pcm_ring *r)
+{
+
+	return r != NULL && a133_pcm_geometry(r->size, r->block,
+	    r->frame_bytes) && r->offset < r->size &&
+	    r->offset % r->frame_bytes == 0 &&
+	    r->remaining == r->block - r->offset % r->block;
+}
+
+int
+a133_pcm_ring_init(struct a133_pcm_ring *r, size_t size, size_t block,
+    unsigned frame)
+{
+	struct a133_pcm_ring fresh = { 0 };
+
+	if (r == NULL || !a133_pcm_geometry(size, block, frame))
+		return EINVAL;
+	fresh.size = size;
+	fresh.block = block;
+	fresh.remaining = block;
+	fresh.frame_bytes = frame;
+	*r = fresh;
+	return 0;
+}
+
+size_t
+a133_pcm_ring_chunk(const struct a133_pcm_ring *r, size_t limit)
+{
+
+	if (!a133_pcm_ring_valid(r))
+		return 0;
+	if (limit > r->remaining)
+		limit = r->remaining;
+	return limit - limit % r->frame_bytes;
+}
+
+int
+a133_pcm_ring_advance(struct a133_pcm_ring *r, size_t bytes, bool *completed)
+{
+
+	if (completed == NULL || !a133_pcm_ring_valid(r) || bytes == 0 ||
+	    bytes > r->remaining || bytes % r->frame_bytes != 0)
+		return EINVAL;
+	/* Valid geometry guarantees bytes <= size - offset, without overflow. */
+	r->offset += bytes;
+	if (r->offset == r->size)
+		r->offset = 0;
+	r->remaining -= bytes;
+	*completed = r->remaining == 0;
+	if (*completed)
+		r->remaining = r->block;
 	return 0;
 }
