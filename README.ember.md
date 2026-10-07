@@ -43,8 +43,9 @@ counters to distinguish this failure from an SDIO transmit-window stall.
 
 ## Building
 
-Build on macOS or another POSIX host through the fork's `build.sh`, or use
-native tools on NetBSD/AArch64. The wrapper selects the appropriate path.
+Cross-compilation on the development host is the preferred path. The wrapper
+uses the fork's `build.sh` by default on macOS and NetBSD alike. Set
+`EMBER_BUILD_MODE=native` explicitly for a required NetBSD/AArch64 fallback.
 Use a full source export of a pinned commit and an existing host Python 3
 for the legacy source contracts; see the [cross-build guide](ember/boot/cross-build.md):
 

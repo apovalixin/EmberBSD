@@ -12,8 +12,14 @@ Keep upstream licences and identifiers. Our own source diffs start with
 exactly one Origin: line; imported changes name the upstream revision.
 
 A build exports a clean commit; do not fix sources only inside the build
-guest. After a change, check the native build and the relevant contracts
-in ember/tools. Do not present a hardware check under QEMU as a check of
+guest. Prefer cross-compilation on the development host. The default kernel
+wrapper
+uses build.sh even on NetBSD; use EMBER_BUILD_MODE=native only for an explicit
+native fallback. Run target executables and hardware acceptance on VMs/boards.
+If a stage still requires native compilation, record the concrete missing
+cross-build support and port it; do not make NetBSD a general host requirement.
+After a change, check the affected cross build and relevant contracts in
+ember/tools. Do not present a hardware check under QEMU as a check of
 the physical board. Read the current NetBSD rules before sending anything
 upstream.
 

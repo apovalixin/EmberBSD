@@ -131,13 +131,13 @@ for failure in tools module cpp dtb contract publish; do
     test ! -e "$TEST_OUT/netbsd-EMBER64"
 done
 : > "$TEST_LOG"
-TEST_HOST=NetBSD EMBER_BUILD_MODE=cross EMBER_EXTERNAL_TOOLCHAIN=/cross/gcc16 \
+TEST_HOST=NetBSD EMBER_EXTERNAL_TOOLCHAIN=/cross/gcc16 \
     sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
 grep -q 'EXTERNAL_TOOLCHAIN=/cross/gcc16' "$TEST_LOG"
 ! grep -q native-make "$TEST_LOG"
 export TEST_OUT="$work/native"
 : > "$TEST_LOG"
-TEST_HOST=NetBSD sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
+TEST_HOST=NetBSD EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
 grep -q native-make "$TEST_LOG"
 ! grep -q build.sh "$TEST_LOG"
 test -s "$TEST_OUT/bcm2712btcom.kmod"

@@ -32,7 +32,7 @@ trap cleanup EXIT
 trap 'exit 1' HUP INT TERM
 # Never expose an earlier candidate or a partially copied result after failure.
 clear_outputs
-mode=${EMBER_BUILD_MODE:-auto}
+mode=${EMBER_BUILD_MODE:-cross}
 if [ "$mode" = auto ]; then
     mode=cross
     if [ "$(uname -s)" = NetBSD ] && [ "$(uname -p)" = aarch64 ]; then

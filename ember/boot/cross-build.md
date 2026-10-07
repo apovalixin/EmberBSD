@@ -23,10 +23,12 @@ NETBSD2_JOBS=6 sh "$src/ember/build-kernel.sh" "$out" EMBER64
 ```
 
 The output must be outside the source tree. Keep one output directory per
-source export, kernel configuration and toolchain. The default `auto` mode
-uses native tools only on AArch64 NetBSD; `EMBER_BUILD_MODE=cross` selects
-`build.sh` there too. `EMBER_BUILD_MODE=native` explicitly selects native
-tools and rejects a host which cannot run that path.
+source export, kernel configuration and toolchain. The default `cross` mode
+uses `build.sh` on every host, including NetBSD.
+Cross-compilation on the development machine is the preferred build path;
+VMs and boards execute acceptance checks. `EMBER_BUILD_MODE=native` selects
+the native fallback explicitly and rejects a host which cannot run it.
+The optional `auto` mode retains the earlier host-based selection.
 
 Cross builds keep host tools under `out/tools`, object files under `out/obj`
 and the kernel configuration's generated headers under `out/obj/kernels`.
