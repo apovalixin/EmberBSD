@@ -1344,13 +1344,14 @@ sunxi_emac_a133_enable(bus_space_tag_t bst)
 	bus_space_write_4(bst, pio, 0xfc, val);
 
 	/*
-	 * PH9 is MDC, PH10 is MDIO, PH13 feeds the PHY its 25 MHz clock.
-	 * PH11 is the active-low reset. MDIO is open-drain and reads as
-	 * 0xffff unless the pin is pulled up.
+	 * PH9 is MDC, PH10 is MDIO and PH11 is the active-low reset.
+	 * PH12/PH13 belong to the vendor TWI3 touch bus; this board does
+	 * not select the EPHY clock output. Preserve those mux fields.
+	 * MDIO is open-drain and needs its pull-up.
 	 */
 	val = bus_space_read_4(bst, pio, 0x100);
-	val &= ~((0x7U << 4) | (0x7U << 8) | (0x7U << 12) | (0x7U << 20));
-	val |= (5U << 4) | (5U << 8) | (1U << 12) | (5U << 20);
+	val &= ~((0x7U << 4) | (0x7U << 8) | (0x7U << 12));
+	val |= (5U << 4) | (5U << 8) | (1U << 12);
 	bus_space_write_4(bst, pio, 0x100, val);
 	val = bus_space_read_4(bst, pio, 0x118);
 	val &= ~(0x3U << 20);
