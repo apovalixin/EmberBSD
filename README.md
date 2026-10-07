@@ -150,6 +150,21 @@ on every board in the hardware catalog.
   translation ATE RMSE across two controlled runs and fixed-scale alignment. This enables
   recorded-data navigation experiments; live cameras, IMU fusion, boards,
   GUI, sustained operation and real-time performance remain unverified.
+- **Further navigation and motion sources:** Ports prepares
+  [GTSAM](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/gtsam),
+  [PCL](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/pcl),
+  [OpenVINS](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/openvins)
+  and [RTAB-Map](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/rtabmap)
+  with common current dependencies. [Ruckig](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/ruckig)
+  and [OSQP](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/osqp)
+  pass host numerical contracts; [OMPL](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/ompl)
+  has a prepared planning profile. Native acceptance of these additions remains pending.
+- **Ethernet SDR development:** the [Ports SDR profile](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/sdr)
+  combines SoapySDR, libiio 1.0.0 with its official compatibility layer,
+  AD9361/Pluto support and current libxml2. Synthetic IQ and loopback RX
+  contracts pass on macOS. The [PlutoSky handoff](https://github.com/neonix20b/EmberBSD-Ports/blob/main/probes/sdr/HARDWARE.md)
+  defines the next native and hardware checks; EmberBSD RX, physical RF
+  performance and per-call stream deadlines remain unverified.
 - **Numerical estimation and behavior logic:** Ceres 2.2.0 uses the common
   Eigen 5.0.1 for nonlinear fitting; BehaviorTree.CPP 4.9.0 coordinates
   asynchronous actions. Nine installed AArch64 VM cases verify numerical
