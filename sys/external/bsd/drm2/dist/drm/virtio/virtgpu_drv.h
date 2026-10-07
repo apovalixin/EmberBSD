@@ -70,6 +70,17 @@ struct virtio_gpu_object_params {
 	uint32_t flags;
 };
 
+enum virtgpu_dma_lease { VIRTGPU_LEASE_NONE, VIRTGPU_LEASE_OPEN,
+	VIRTGPU_LEASE_CLOSING, VIRTGPU_LEASE_CLOSED };
+enum virtgpu_dma_kind { VIRTGPU_DMA_NONE, VIRTGPU_DMA_ATTACH, VIRTGPU_DMA_UNREF };
+enum virtgpu_dma_state { VIRTGPU_DMA_IDLE, VIRTGPU_DMA_PREPARED,
+	VIRTGPU_DMA_FINISHING };
+struct virtgpu_dma_op {
+	struct virtio_gpu_object *bo;
+	enum virtgpu_dma_kind kind;
+	enum virtgpu_dma_state state;
+};
+
 struct virtio_gpu_object {
 	struct drm_gem_shmem_object base;
 	uint32_t hw_res_handle;
@@ -79,6 +90,11 @@ struct virtio_gpu_object {
 	uint32_t mapped;
 	void *dma_vaddr;
 	bool dma_eligible;
+	bool dma_required;
+	enum virtgpu_dma_lease dma_lease;
+	struct list_head dma_registry;
+	unsigned int dma_members, dma_retire_refs;
+	bool release_pending, dma_finalizing;
 	bool dumb;
 	bool created;
 };
@@ -136,6 +152,7 @@ struct virtio_gpu_vbuffer {
 	struct list_head list;
 	struct virtio_gpu_device *vgdev;
 	struct virtio_gpu_object *release;
+	struct virtgpu_dma_op dma_op;
 	struct virtio_gpu_fence *fence;
 	struct virtio_gpu_wait *wait;
 	struct virtio_gpu_drv_capset *capset_info;
@@ -214,6 +231,9 @@ struct virtio_gpu_device {
 	struct work_struct reset_work;
 	int submit_error;
 	atomic_t submitters;
+	spinlock_t dma_lock;
+	struct list_head dma_leases;
+	bool dma_stopped;
 
 	struct kmem_cache *vbufs;
 	bool vqs_ready;
@@ -333,8 +353,6 @@ int virtio_gpu_cmd_create_resource(struct virtio_gpu_device *vgdev,
 				    struct virtio_gpu_object_params *params,
 				    struct virtio_gpu_object_array *objs,
 				    struct virtio_gpu_fence *fence);
-void virtio_gpu_cmd_unref_resource(struct virtio_gpu_device *vgdev,
-				   uint32_t resource_id);
 int virtio_gpu_cmd_transfer_to_host_2d(struct virtio_gpu_device *vgdev,
 					uint64_t offset,
 					uint32_t width, uint32_t height,
@@ -432,6 +450,15 @@ bool virtio_gpu_fence_space(struct virtio_gpu_device *);
 bool virtio_gpu_submit_begin(struct virtio_gpu_device *);
 void virtio_gpu_fence_stop(struct virtio_gpu_device *, int);
 void virtio_gpu_fence_complete(struct virtio_gpu_fence *, int);
+
+/* Single-BO backing lease and operation retirement, separate from GEM refs. */
+void virtio_gpu_dma_stop(struct virtio_gpu_device *);
+int virtio_gpu_dma_prepare(struct virtio_gpu_vbuffer *);
+void virtio_gpu_dma_post(struct virtio_gpu_vbuffer *);
+void virtio_gpu_dma_finish(struct virtio_gpu_vbuffer *, int);
+void virtio_gpu_dma_reset(struct virtio_gpu_device *);
+void virtio_gpu_dma_release(struct virtio_gpu_object *);
+void virtio_gpu_finalize_object(struct virtio_gpu_object *);
 
 /* Native owned-map eligibility; does not enable feature negotiation. */
 int virtio_gpu_dma_eligible(bus_dma_tag_t, bus_dmamap_t, void *, size_t,

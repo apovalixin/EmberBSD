@@ -222,6 +222,21 @@ static void dma_resv_add_excl_fence(struct reservation *r,struct dma_fence *f) {
 static void virtio_gpu_array_put_free_work(struct work_struct *);
 static void schedule_work(struct work_struct *w) { virtio_gpu_array_put_free_work(w); }
 static void virtio_gpu_wait_done(struct virtio_gpu_vbuffer *b,int e) { assert(!b->wait); }
+#ifdef COMPLETION_CONTRACT
+static void virtio_gpu_complete_transfer(struct virtio_gpu_device *, struct virtio_gpu_vbuffer *);
+#endif
+#ifdef DMA_LEASE_SOURCE
+/* These unrelated contracts have no qualified backing operations. */
+static void virtio_gpu_dma_finish(struct virtio_gpu_vbuffer *b, int error) { }
+#ifdef COMPLETION_CONTRACT
+static void virtio_gpu_dma_stop(struct virtio_gpu_device *d) { }
+static void virtio_gpu_dma_reset(struct virtio_gpu_device *d) { }
+#else
+static void virtio_gpu_complete_transfer(struct virtio_gpu_device *d, struct virtio_gpu_vbuffer *b) { }
+#endif
+static int virtio_gpu_dma_prepare(struct virtio_gpu_vbuffer *b) { return 0; }
+static void virtio_gpu_dma_post(struct virtio_gpu_vbuffer *b) { }
+#endif
 static void virtio_gpu_release_object(struct virtio_gpu_object *o) { assert(!o); }
 #ifdef COMPLETION_CONTRACT
 static void virtio_gpu_stop(struct virtio_gpu_device *, int);

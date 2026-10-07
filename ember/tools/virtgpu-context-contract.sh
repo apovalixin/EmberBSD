@@ -27,6 +27,10 @@ typedef uint32_t __u32, __le32;
 typedef uint64_t __u64, __le64;
 C
 sed -n '/^struct virtio_gpu_wait {/,/^};/p' "$vq" > "$work/context-layout.h"
+sed -n '/^enum virtgpu_dma_lease /,/^};/p' "$hdr" >> "$work/context-layout.h"
+if [ -f "$src/sys/external/bsd/drm2/virtio/virtgpu_dma.c" ]; then
+    printf '#define DMA_LEASE_SOURCE 1\n' >> "$work/context-layout.h"
+fi
 for name in virtio_gpu_vbuffer virtio_gpu_attachment virtio_gpu_fpriv; do
     sed -n "/^struct $name {/,/^};/p" "$hdr" >> "$work/context-layout.h"
 done

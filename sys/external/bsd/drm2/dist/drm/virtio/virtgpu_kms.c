@@ -73,6 +73,7 @@ static void virtio_gpu_reset_work(struct work_struct *work)
 	flush_work(&vgdev->ctrlq.dequeue_work);
 	flush_work(&vgdev->cursorq.dequeue_work);
 	vgdev->vdev->config->del_vqs(vgdev->vdev);
+	virtio_gpu_dma_reset(vgdev);
 	virtio_gpu_fail_fences(vgdev, vgdev->fence_drv.stop_error);
 	/* These workers may be waiting for one of the retired fences. */
 	virtgpu_console_drain(vgdev);
@@ -82,6 +83,7 @@ static void virtio_gpu_reset_work(struct work_struct *work)
 
 void virtio_gpu_stop(struct virtio_gpu_device *vgdev, int error)
 {
+	virtio_gpu_dma_stop(vgdev);
 	virtio_gpu_fence_stop(vgdev, error);
 	vgdev->vqs_ready = false;
 	virtgpu_console_stop(vgdev);
@@ -104,6 +106,7 @@ static void virtio_gpu_destroy_sync(struct virtio_gpu_device *vgdev)
 	spin_lock_destroy(&vgdev->display_info_lock);
 	spin_lock_destroy(&vgdev->fence_drv.lock);
 	spin_lock_destroy(&vgdev->obj_free_lock);
+	spin_lock_destroy(&vgdev->dma_lock);
 	ida_destroy(&vgdev->resource_ida);
 	ida_destroy(&vgdev->ctx_id_ida);
 	linux_mutex_destroy(&vgdev->submit_lock);
@@ -244,6 +247,8 @@ int virtio_gpu_init(struct drm_device *dev, struct virtio_device *vdev,
 		  virtio_gpu_array_put_free_work);
 	INIT_LIST_HEAD(&vgdev->obj_free_list);
 	spin_lock_init(&vgdev->obj_free_lock);
+	spin_lock_init(&vgdev->dma_lock);
+	INIT_LIST_HEAD(&vgdev->dma_leases);
 	INIT_WORK(&vgdev->reset_work, virtio_gpu_reset_work);
 	vgdev->dequeue_wq = alloc_ordered_workqueue("virtgpuack", 0);
 	vgdev->cleanup_wq = alloc_ordered_workqueue("virtgpuclr", 0);

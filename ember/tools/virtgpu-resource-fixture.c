@@ -19,6 +19,7 @@
 #define HZ 100
 #define GFP_KERNEL 0
 #define GFP_NOWAIT 0
+#define GFP_ATOMIC 0
 #define TASK_COMM_LEN 16
 #define PAGE_SIZE 4096
 #define PAGE_SHIFT 12
@@ -45,6 +46,9 @@ fixture_warn_on(bool condition)
 #define roundup(n,a) (((n)+(a)-1)&~((a)-1))
 typedef uint32_t u32;
 typedef atomic_int atomic_t;
+#define atomic_read(p) atomic_load(p)
+#define atomic_inc(p) atomic_fetch_add(p,1)
+#define atomic_dec(p) atomic_fetch_sub(p,1)
 #define atomic_set(p,v) atomic_store(p,v)
 #define atomic_dec_and_test(p) (atomic_fetch_sub(p,1)==1)
 struct mutex {
@@ -52,7 +56,8 @@ struct mutex {
 };
 static void test_mutex_lock(struct mutex *);
 #define mutex_lock(m) test_mutex_lock(m)
-#define mutex_unlock(m) assert(pthread_mutex_unlock(&(m)->value)==0)
+static void test_mutex_unlock(struct mutex *);
+#define mutex_unlock(m) test_mutex_unlock(m)
 #define mutex_is_locked(m) true
 #define linux_mutex_init(m) assert(pthread_mutex_init(&(m)->value,NULL)==0)
 #define linux_mutex_destroy(m) assert(pthread_mutex_destroy(&(m)->value)==0)
@@ -64,10 +69,16 @@ typedef struct {
 	pthread_cond_t cv;
 } wait_queue_head_t;
 #define DRM_WAKEUP_ALL(cv,lock) assert(pthread_cond_broadcast(cv)==0)
+#ifdef BACKING_CONTRACT
+static void backing_wait_check(wait_queue_head_t *);
+#define WAIT_CHECK(q) backing_wait_check(q)
+#else
+#define WAIT_CHECK(q) ((void)0)
+#endif
 static unsigned int wait_msec;
 #define wait_event_timeout(q,condition,ticks) ({ \
     wait_queue_head_t *_q=&(q); struct timespec _end; int _err=0; long _ret; \
-    (void)(ticks); timespec_get(&_end,TIME_UTC); _end.tv_sec+=wait_msec/1000; \
+    WAIT_CHECK(_q); (void)(ticks); timespec_get(&_end,TIME_UTC); _end.tv_sec+=wait_msec/1000; \
     _end.tv_nsec+=(wait_msec%1000)*1000000L; \
     if(_end.tv_nsec>=1000000000L){_end.tv_sec++;_end.tv_nsec-=1000000000L;} \
     mutex_lock(&_q->lock); \
@@ -86,6 +97,7 @@ struct list_head {
 	struct list_head *next, *prev;
 };
 #define INIT_LIST_HEAD(h) ((h)->next=(h)->prev=(h))
+#define list_del_init(h) (list_del(h), INIT_LIST_HEAD(h))
 #define list_empty(h) ((h)->next==(h))
 #define container_of(p,t,m) ((t *)((char *)(p)-offsetof(t,m)))
 #define list_for_each_entry(p,h,m) \
@@ -160,8 +172,11 @@ typedef void (*virtio_gpu_resp_cb) (struct virtio_gpu_device *, struct virtio_gp
 #include "resource-layout.h"
 #define gem_to_virtio_gpu_obj(p) container_of(p,struct virtio_gpu_object,base.base)
 struct virtio_device;
+struct netbsd_virtqueue { unsigned int num_free; };
+struct linux_virtio_sg { void *ptr; unsigned int len; void *unused; };
 struct config_ops {
 	void (*reset) (struct virtio_device *);
+	void (*del_vqs) (struct virtio_device *);
 };
 struct virtio_device {
 	struct mutex lock;
@@ -190,15 +205,24 @@ struct virtio_gpu_device {
 	wait_queue_head_t resp_wq;
 	struct {
 		wait_queue_head_t ack_queue;
+		struct mutex qlock;
+		struct netbsd_virtqueue *vq;
+		struct work_struct dequeue_work;
 	}      ctrlq, cursorq;
 	struct virtio_device *vdev;
 	struct drm_device *ddev;
 	atomic_bool vqs_ready;
 	void *vbufs, *cleanup_wq;
-	struct work_struct reset_work;
+	struct work_struct reset_work, config_changed_work, obj_free_work;
+	struct mutex submit_lock;
+	atomic_t submitters;
+	struct { int stop_error; bool stopped; struct mutex lock; } fence_drv;
 	struct ida ctx_id_ida, resource_ida;
 	bool has_virgl_3d;
 	atomic_int submit_error;
+	struct mutex dma_lock;
+	struct list_head dma_leases;
+	bool dma_stopped;
 };
 struct driver {
 	int (*gem_open_object) (struct drm_gem_object *, struct drm_file *);
@@ -232,6 +256,8 @@ struct dma_fence {
 };
 struct virtio_gpu_fence {
 	struct dma_fence f;
+	bool unref;
+	unsigned int prior_ids;
 };
 static struct {
 	char p_comm[16];
@@ -559,6 +585,8 @@ virtgpu_console_stop(struct virtio_gpu_device *d)
 static void
 virtio_gpu_fence_stop(struct virtio_gpu_device *d, int error)
 {
+	d->fence_drv.stopped = true;
+	d->fence_drv.stop_error = error;
 }
 static void
 virtio_gpu_fail_capsets(struct virtio_gpu_device *d, int error)
@@ -597,6 +625,8 @@ virtio_reset(void *native)
 #define BUS_DMA_WAITOK 1
 #define BUS_DMA_WRITE 2
 #define BUS_DMA_READ 4
+#define BUS_DMASYNC_PREREAD 4
+#define BUS_DMASYNC_POSTREAD 8
 #define BUS_DMASYNC_PREWRITE 1
 #define BUS_DMASYNC_POSTWRITE 2
 static int virtio_gpu_gem_object_open(struct drm_gem_object *, struct drm_file *);
@@ -718,14 +748,40 @@ bus_dmamap_load(int tag, bus_dmamap_t m, void *addr, size_t size, void *proc, in
 static void
 bus_dmamap_unload(int tag, bus_dmamap_t m)
 {
+#ifdef DMA_LEASE_SOURCE
+	if (last_bo && last_bo->pages && last_bo->pages->sgl->sg_dmamap == m) {
+		assert(last_bo->dma_lease == VIRTGPU_LEASE_NONE ||
+		    last_bo->dma_lease == VIRTGPU_LEASE_CLOSED);
+		assert(!last_bo->dma_members && !last_bo->dma_retire_refs);
+	}
+#endif
 	assert(m->loaded);
 	m->loaded = false;
 }
 static unsigned int backing_pre, backing_post, eligibility_checks;
+static unsigned int rw_pre, rw_post;
+static void (*sync_hook)(int);
+#ifdef BACKING_CONTRACT
+static void backing_sync_check(void);
+#endif
 static void
 bus_dmamap_sync(int tag, bus_dmamap_t m, size_t start, size_t n, int flags)
 {
-	assert(m->loaded && (flags == BUS_DMASYNC_PREWRITE || flags == BUS_DMASYNC_POSTWRITE));
+	assert(m->loaded);
+#ifdef BACKING_CONTRACT
+	backing_sync_check();
+#endif
+	if (flags == (BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE)) {
+		rw_pre++;
+		if (sync_hook) sync_hook(flags);
+		return;
+	}
+	if (flags == (BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE)) {
+		rw_post++;
+		if (sync_hook) sync_hook(flags);
+		return;
+	}
+	assert(flags == BUS_DMASYNC_PREWRITE || flags == BUS_DMASYNC_POSTWRITE);
 	if (flags == BUS_DMASYNC_PREWRITE)
 		backing_pre++;
 	else
@@ -754,8 +810,21 @@ static int virtio_gpu_object_dma_check(struct virtio_gpu_device *,
     struct drm_gem_object *, bus_dmamap_t, unsigned int);
 #endif
 static void virtio_gpu_stop(struct virtio_gpu_device *, int);
+#ifdef DMA_LEASE_SOURCE
+static void virtio_gpu_finalize_object(struct virtio_gpu_object *);
+static void virtio_gpu_resource_id_put(struct virtio_gpu_device *, uint32_t);
+#endif
+#if defined(DMA_LEASE_SOURCE) || defined(BACKING_CONTRACT)
+static void virtio_gpu_complete_transfer(struct virtio_gpu_device *d,
+    struct virtio_gpu_vbuffer *b) { }
+#endif
 /* Fence publication itself is exercised by the completion contract. */
-static void virtio_gpu_fence_complete(struct virtio_gpu_fence *f, int error) { }
+static void virtio_gpu_fence_complete(struct virtio_gpu_fence *f, int error) {
+#ifdef BACKING_CONTRACT
+	assert(rw_pre >= rw_post && rw_pre - rw_post <= 1);
+	if (f->unref && !error) assert(ids_freed == f->prior_ids + 1);
+#endif
+}
 static void virtio_gpu_cancel_vbuf(void *);
 static void virtio_gpu_release_object(struct virtio_gpu_object *);
 static struct virtio_gpu_object_array *virtio_gpu_array_alloc(u32);
@@ -768,6 +837,17 @@ static int virtio_gpu_queue_fenced_ctrl_buffer(struct virtio_gpu_device *, struc
 #define __NetBSD__ 1
 #endif
 #include "resource-production.h"
+#ifdef BACKING_CONTRACT
+static void backing_unlock(struct mutex *);
+#endif
+static void
+test_mutex_unlock(struct mutex *m)
+{
+	assert(pthread_mutex_unlock(&m->value) == 0);
+#ifdef BACKING_CONTRACT
+	backing_unlock(m);
+#endif
+}
 
 enum response_mode {
 	GOOD, BAD_TYPE, SHORT_REPLY, LONG_REPLY, NO_FENCE, WRONG_FENCE, HOLD, SUBMIT_FAIL
@@ -819,6 +899,9 @@ host_accept(struct virtio_gpu_ctrl_hdr *c)
 		backing_commands++;
 	}
 }
+#ifdef BACKING_CONTRACT
+static void backing_dequeue(struct virtio_gpu_vbuffer *);
+#endif
 static void
 complete(struct virtio_gpu_vbuffer *b, enum response_mode m)
 {
@@ -839,9 +922,12 @@ complete(struct virtio_gpu_vbuffer *b, enum response_mode m)
 	if (m == WRONG_FENCE)
 		r->fence_id++;
 	int error = virtio_gpu_response_error(b);
-	if (error)
-		virtio_gpu_stop(d, error);
-	else {
+#ifndef BACKING_CONTRACT
+	if (error) virtio_gpu_stop(d, error);
+#else
+	(void)d;
+#endif
+	if (!error) {
 		enter();
 
 		if (c->type == VIRTIO_GPU_CMD_CTX_DESTROY) {
@@ -864,12 +950,15 @@ complete(struct virtio_gpu_vbuffer *b, enum response_mode m)
 		}
 		leave();
 	}
-	virtio_gpu_wait_done(b, error);
-	if (b->objs)
-		virtio_gpu_array_put_free_delayed(d, b->objs);
-	dma_fence_put(&b->fence->f);
-	free_vbuf(d, b);
+#ifdef BACKING_CONTRACT
+	backing_dequeue(b);
+#else
+	virtio_gpu_finish_vbuf(b, error);
+#endif
 }
+#ifdef BACKING_CONTRACT
+#include "virtgpu-backing-queue.h"
+#else
 static int
 virtio_gpu_queue_fenced_ctrl_buffer(struct virtio_gpu_device *d, struct virtio_gpu_vbuffer *b, struct virtio_gpu_ctrl_hdr *c, struct virtio_gpu_fence *f)
 {
@@ -879,10 +968,15 @@ virtio_gpu_queue_fenced_ctrl_buffer(struct virtio_gpu_device *d, struct virtio_g
 	atomic_fetch_add(&f->f.refs, 1);
 	if (b->objs)
 		virtio_gpu_array_unlock_resv(b->objs);
+#ifdef DMA_LEASE_SOURCE
+	int dma_ret = d->vqs_ready ? virtio_gpu_dma_prepare(b) : -ENODEV;
+#else
+	int dma_ret = 0;
+#endif
 	enter();
 	c->fence_id = ++next_fence;
 	enum response_mode m = c->type == fault_type ? mode : GOOD;
-	int error = !d->vqs_ready ? -ENODEV : m == SUBMIT_FAIL ? submission_error : 0;
+	int error = dma_ret ? dma_ret : !d->vqs_ready ? -ENODEV : m == SUBMIT_FAIL ? submission_error : 0;
 
 	if (!error) {
 
@@ -914,7 +1008,8 @@ virtio_gpu_queue_fenced_ctrl_buffer(struct virtio_gpu_device *d, struct virtio_g
 		complete(b, m);
 	return 0;
 }
-static struct config_ops ops = {linux_virtio_reset};
+#endif
+static struct config_ops ops = {.reset = linux_virtio_reset};
 static void
 wait_init(wait_queue_head_t *q)
 {
@@ -934,6 +1029,12 @@ init(void)
 	memset(&gpu, 0, sizeof(gpu));
 	memset(&transport, 0, sizeof(transport));
 	memset(&dev, 0, sizeof(dev));
+	linux_mutex_init(&gpu.fence_drv.lock);
+	linux_mutex_init(&gpu.submit_lock);
+	linux_mutex_init(&gpu.ctrlq.qlock);
+	linux_mutex_init(&gpu.cursorq.qlock);
+	linux_mutex_init(&gpu.dma_lock);
+	INIT_LIST_HEAD(&gpu.dma_leases);
 	gpu.vdev = &transport;
 	gpu.ddev = &dev;
 	gpu.vqs_ready = true;
@@ -959,8 +1060,9 @@ init(void)
 	allocation_fail_at = handle_error = vma_error = prime_error = reservation_error = dma_error = 0;
 	resource_id_error = 0;
 	eligibility_error = 0;
-	backing_pre = backing_post = eligibility_checks = 0;
+	backing_pre = backing_post = eligibility_checks = rw_pre = rw_post = 0;
 	last_bo = NULL;
+	sync_hook = NULL;
 	atomic_store(&allocation_calls, 0);
 	dma_nents = 2;
 	long_segment = high_id = reset_hold = reset_entered = reset_release = false;
@@ -976,6 +1078,16 @@ init(void)
 static void
 fini(void)
 {
+#ifdef DMA_LEASE_SOURCE
+	if (!gpu.vqs_ready)
+		virtio_gpu_dma_reset(&gpu);
+	assert(list_empty(&gpu.dma_leases));
+#endif
+	linux_mutex_destroy(&gpu.fence_drv.lock);
+	linux_mutex_destroy(&gpu.submit_lock);
+	linux_mutex_destroy(&gpu.ctrlq.qlock);
+	linux_mutex_destroy(&gpu.cursorq.qlock);
+	linux_mutex_destroy(&gpu.dma_lock);
 	assert(!pending && !atomic_load(&allocations) && !pins && !maps && !vmaps);
 
 	for (unsigned int i = 0; i < 16; i++) {
@@ -1282,7 +1394,7 @@ reset_overlap_tests(void)
 		wait_pending();
 		assert(pthread_create(&resetter, NULL, stopper, NULL) == 0);
 		enter();
-		await(reset_entered && reset_entries >= 2);
+		await(reset_entered && reset_entries >= (i == 4 ? 1u : 2u));
 		assert(!gpu.vqs_ready && !resets && !ids_freed && !bos_freed && host_resource[0]);
 		if (i == 4)
 			assert(pins == 1 && maps == 1 && vmaps == 1 && host_backing[0]);
@@ -1292,7 +1404,7 @@ reset_overlap_tests(void)
 		assert(pthread_join(resetter, NULL) == 0 && pthread_join(worker, NULL) == 0);
 		assert(resets == 1 && op.ret == (i == 1 ? 0 : -ENODEV));
 		if (i >= 2)
-			assert(!op.bo && ids_freed == 1);
+			assert(!op.bo && ids_freed == (i == 4 ? 0u : 1u));
 		finish_pending(true);
 		file_fini(&f);
 		if (existing)
@@ -1408,9 +1520,13 @@ backing_tests(void)
 		if (m == HOLD)
 			wait_msec = 40;
 		assert(virtio_gpu_object_create(&gpu, &p, &bo, NULL) == (m == SUBMIT_FAIL ? -ENOMEM : m == HOLD ? -ETIMEDOUT : -EIO));
-		assert(!bo && ids_freed == 1);
+		assert(!bo);
 		if (m == HOLD)
 			finish_pending(false);
+#ifdef DMA_LEASE_SOURCE
+		if (!gpu.vqs_ready) virtio_gpu_dma_reset(&gpu);
+#endif
+		assert(ids_freed == 1);
 		fini();
 	}
 	init();
@@ -1488,7 +1604,7 @@ boundary_tests(void)
 	puts("PASS resource ID/count/request arithmetic, exact releases and disabled VIRGL");
 }
 int
-#ifdef DMA_ELIGIBILITY_CONTRACT
+#if defined(DMA_ELIGIBILITY_CONTRACT) || defined(BACKING_CONTRACT)
 resource_contract_main(void)
 #else
 main(void)
@@ -1507,4 +1623,8 @@ main(void)
 
 #ifdef DMA_ELIGIBILITY_CONTRACT
 #include "virtgpu-dma-integration-cases.h"
+#endif
+
+#ifdef BACKING_CONTRACT
+#include "virtgpu-backing-cases.h"
 #endif

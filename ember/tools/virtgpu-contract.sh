@@ -7,12 +7,19 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/virtgpu-contract.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 extract() {
     awk -v name="$1" -v prefix="$3" '
-        $0 ~ "^((static )?(void|int) )?" name "\\(" && $0 !~ /;[[:space:]]*$/ {
-            if (prefix != "") print prefix;
-            copying = 1;
+        $0 ~ "^((static )?(void|int) )?" name "\\(" {
+            copying = 1; body = 0; text = "";
         }
-        copying { print }
-        copying && /^}/ { exit }
+        copying {
+            text = text $0 "\n";
+            if (!body && /;[[:space:]]*$/) { copying = 0; next }
+            if (/^{/) body = 1;
+            if (/^}/) {
+                if (prefix != "") print prefix;
+                printf "%s", text; found = 1; exit;
+            }
+        }
+        END { if (!found) exit 1 }
     ' "$2"
 }
 vq="$src/sys/external/bsd/drm2/dist/drm/virtio/virtgpu_vq.c"
@@ -48,6 +55,9 @@ struct virtio_gpu_device {
     bool vqs_ready; int submit_error;
 };
 #define jiffies 0
+/* These legacy queue cases contain no eligible BO. */
+static int virtio_gpu_dma_prepare(struct virtio_gpu_vbuffer *b) { (void)b; return 0; }
+static void virtio_gpu_dma_post(struct virtio_gpu_vbuffer *b) { (void)b; }
 static bool virtio_gpu_submit_begin(struct virtio_gpu_device *d) {
     if (!d->vqs_ready)
         return false;
@@ -209,6 +219,8 @@ struct virtio_gpu_device { bool vqs_ready; void *vbufs; };
 struct virtio_gpu_object {
     struct { struct drm_gem_object base; } base;
     bool created; unsigned int hw_res_handle; bool mapped, pinned;
+    bool dma_required, dma_finalizing, release_pending;
+    unsigned int dma_members, dma_retire_refs, dma_lease;
 };
 struct dma_fence { int refs; };
 struct virtio_gpu_fence { struct dma_fence f; };
@@ -220,11 +232,29 @@ struct virtio_gpu_vbuffer {
     struct virtio_gpu_fence *fence;
     void *objs, *data_buf, *resp_buf;
     int resp_size, error; char *buf; char payload[64];
+    void (*resp_cb)(struct virtio_gpu_device *, struct virtio_gpu_vbuffer *);
+    struct { struct virtio_gpu_object *bo; int kind; } dma_op;
 };
 static struct virtio_gpu_vbuffer *pending;
 static bool host_access;
 static int frees, map_frees, id_frees, cookie_frees, resets;
 static int allocation_error, submission_error, fence_error, fence_frees;
+#define KASSERT(c) assert(c)
+#define VIRTGPU_DMA_UNREF 2
+#define VIRTGPU_LEASE_NONE 0
+#define VIRTGPU_LEASE_CLOSED 3
+static void virtio_gpu_finalize_object(struct virtio_gpu_object *);
+/* Legacy-only objects have no DMA lease; the backing contract tests arbitration. */
+static void virtio_gpu_dma_release(struct virtio_gpu_object *bo) {
+    assert(!bo->dma_required);
+    bo->dma_finalizing = bo->release_pending = true;
+    virtio_gpu_finalize_object(bo);
+}
+static void virtio_gpu_dma_finish(struct virtio_gpu_vbuffer *b, int error) {
+    (void)error; assert(!b->dma_op.bo);
+}
+static void virtio_gpu_complete_transfer(struct virtio_gpu_device *d,
+    struct virtio_gpu_vbuffer *b) { (void)d; (void)b; }
 static void virtio_gpu_release_object(struct virtio_gpu_object *);
 static void virtio_gpu_queue_unref(struct virtio_gpu_device *, struct virtio_gpu_object *);
 static void virtio_gpu_cancel_vbuf(void *);
@@ -293,6 +323,7 @@ static void kmem_cache_free(void *pool, struct virtio_gpu_vbuffer *b) {
 }
 C
 obj="$src/sys/external/bsd/drm2/dist/drm/virtio/virtgpu_object.c"
+extract virtio_gpu_finalize_object "$obj" '' >> "$work/lifetime.c"
 extract virtio_gpu_release_object "$obj" '' >> "$work/lifetime.c"
 extract virtio_gpu_free_object "$obj" '' >> "$work/lifetime.c"
 extract free_vbuf "$vq" '' >> "$work/lifetime.c"

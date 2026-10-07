@@ -44,7 +44,7 @@ An ACKed CREATE still owns its host ID even if backing was never submitted.
 Its existing UNREF/reset retirement releases the ID. After PRE, all errors
 retain the published map/pin until that retirement; they never use the early
 local unwind. `sg_free_table` owns DMA-map destruction only after the map is
-published in the SG table. Eligibility becomes true only after successful
+published in the SG table. Qualified backing now follows the separate [lease contract](backing-lifetime.md).\nIts request metadata allocation also precedes PRE. Eligibility becomes true only after successful
 backing ATTACH and is cleared by detach. No supported API reloads this
 backing; future reload support needs an explicit generation contract.
 

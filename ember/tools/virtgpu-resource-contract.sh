@@ -31,6 +31,7 @@ typedef uint32_t __u32, __le32;
 typedef uint64_t __u64, __le64;
 C
 sed -n '/^struct virtio_gpu_wait {/,/^};/p' "$vq" > "$work/resource-layout.h"
+sed -n '/^enum virtgpu_dma_lease /,/^};/p' "$hdr" >> "$work/resource-layout.h"
 for name in virtio_gpu_vbuffer virtio_gpu_attachment virtio_gpu_fpriv \
     virtio_gpu_object_params virtio_gpu_object virtio_gpu_object_array; do
     sed -n "/^struct $name {/,/^};/p" "$hdr" >> "$work/resource-layout.h"
@@ -40,8 +41,14 @@ sed -n '/^struct drm_virtgpu_resource_create {/,/^};/p' \
 if grep -q '^virtio_gpu_object_dma_check(' "$obj"; then
     printf '#define DMA_ELIGIBILITY_SOURCE 1\n' >> "$work/resource-layout.h"
 fi
+if [ -f "$src/sys/external/bsd/drm2/virtio/virtgpu_dma.c" ]; then
+    printf '#define DMA_LEASE_SOURCE 1\n' >> "$work/resource-layout.h"
+fi
 prod="$work/resource-production.h"
 extract linux_virtio_reset "$src/sys/external/bsd/drm2/linux/linux_virtio.c" 'static void' > "$prod"
+if [ -f "$src/sys/external/bsd/drm2/virtio/virtgpu_dma.c" ]; then
+    sed '/^#include /d' "$src/sys/external/bsd/drm2/virtio/virtgpu_dma.c" >> "$prod"
+fi
 extract virtio_gpu_stop "$kms" 'static void' >> "$prod"
 for name in virtio_gpu_wait_put virtio_gpu_wait_done; do extract "$name" "$vq" 'static void' >> "$prod"; done
 extract virtio_gpu_get_vbuf "$vq" 'static struct virtio_gpu_vbuffer *' >> "$prod"
@@ -58,6 +65,9 @@ for name in virtio_gpu_array_free virtio_gpu_array_add_obj virtio_gpu_array_unlo
     virtio_gpu_array_put_free; do extract "$name" "$gem" 'static void' >> "$prod"; done
 extract virtio_gpu_array_lock_resv "$gem" 'static int' >> "$prod"
 extract virtio_gpu_resource_id_get "$obj" 'static int' >> "$prod"
+if grep -q 'void virtio_gpu_finalize_object(' "$obj"; then
+    extract virtio_gpu_finalize_object "$obj" 'static void' >> "$prod"
+fi
 for name in virtio_gpu_resource_id_put virtio_gpu_release_object virtio_gpu_free_object; do extract "$name" "$obj" 'static void' >> "$prod"; done
 if grep -q '^virtio_gpu_object_dma_check(' "$obj"; then
     extract virtio_gpu_object_owned "$obj" 'static bool' >> "$prod"
@@ -82,6 +92,15 @@ done
 extract drm_gem_release "$drm/drm_gem.c" 'static void' >> "$prod"
 extract drm_gem_prime_fd_to_handle "$drm/drm_prime.c" 'static int' >> "$prod"
 extract virtio_gpu_resource_create_ioctl "$drm/virtio/virtgpu_ioctl.c" 'static int' >> "$prod"
+if [ "${BACKING_CONTRACT:-0}" = 1 ]; then
+    extract virtio_gpu_submit_begin "$drm/virtio/virtgpu_fence.c" 'static bool' > "$work/backing-queue-production.h"
+    extract virtio_gpu_submit_done "$vq" 'static void' >> "$work/backing-queue-production.h"
+    extract virtio_gpu_queue_remaining "$vq" 'static long' >> "$work/backing-queue-production.h"
+    extract virtio_gpu_queue_fenced_ctrl_buffer "$vq" 'static int' >> "$work/backing-queue-production.h"
+    extract virtio_gpu_reset_work "$kms" 'static void' >> "$work/backing-queue-production.h"
+    extract reclaim_vbufs "$vq" 'static void' >> "$work/backing-queue-production.h"
+    extract virtio_gpu_dequeue_ctrl_func "$vq" 'static void' >> "$work/backing-queue-production.h"
+fi
 ${CC:-cc} -std=gnu11 -Wall -Wextra -Werror -Wno-unused-parameter -pthread \
     ${RESOURCE_TEST_CFLAGS:-} -I"$work" -I"$src/sys/external/bsd/drm2/include" \
     -I"$src/sys/external/bsd/drm2/virtio" \

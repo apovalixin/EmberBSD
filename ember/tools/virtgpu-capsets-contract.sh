@@ -28,6 +28,10 @@ typedef uint64_t __u64, __le64;
 C
 # Retain the production protocol, result/cache layouts and pending value.
 sed -n '/^#define VIRTGPU_CAP_PENDING /p' "$hdr" > "$work/capsets-layout.h"
+sed -n '/^enum virtgpu_dma_lease /,/^};/p' "$hdr" >> "$work/capsets-layout.h"
+if [ -f "$src/sys/external/bsd/drm2/virtio/virtgpu_dma.c" ]; then
+    printf '#define DMA_LEASE_SOURCE 1\n' >> "$work/capsets-layout.h"
+fi
 for name in virtio_gpu_capset_result virtio_gpu_drv_capset virtio_gpu_drv_cap_cache; do
     sed -n "/^struct $name {/,/^};/p" "$hdr" >> "$work/capsets-layout.h"
 done

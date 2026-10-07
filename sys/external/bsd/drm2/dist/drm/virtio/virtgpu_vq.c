@@ -209,6 +209,9 @@ static void free_vbuf(struct virtio_gpu_device *vgdev,
 	kmem_cache_free(vgdev->vbufs, vbuf);
 }
 
+static void virtio_gpu_complete_transfer(struct virtio_gpu_device *,
+    struct virtio_gpu_vbuffer *);
+
 /* The cookie owns its fence reference until all local cleanup is complete. */
 static void
 virtio_gpu_finish_vbuf(struct virtio_gpu_vbuffer *vbuf, int error)
@@ -216,6 +219,12 @@ virtio_gpu_finish_vbuf(struct virtio_gpu_vbuffer *vbuf, int error)
 	struct virtio_gpu_device *vgdev = vbuf->vgdev;
 	struct virtio_gpu_fence *fence = vbuf->fence;
 
+	virtio_gpu_dma_finish(vbuf, error);
+	if (!error) {
+		virtio_gpu_complete_transfer(vgdev, vbuf);
+		if (vbuf->resp_cb)
+			vbuf->resp_cb(vgdev, vbuf);
+	}
 	virtio_gpu_wait_done(vbuf, error);
 	if (vbuf->objs)
 		virtio_gpu_array_put_free_delayed(vgdev, vbuf->objs);
@@ -331,11 +340,6 @@ void virtio_gpu_dequeue_ctrl_func(struct work_struct *work)
 			DRM_ERROR("invalid GPU response (%u bytes, type 0x%x)\n",
 			    entry->resp_received, le32_to_cpu(resp->type));
 			virtio_gpu_stop(vgdev, error);
-		} else {
-			/* Complete DMA visibility before exposing the GPU fence. */
-			virtio_gpu_complete_transfer(vgdev, entry);
-			if (entry->resp_cb)
-				entry->resp_cb(vgdev, entry);
 		}
 		entry->error = error;
 	}
@@ -449,6 +453,9 @@ virtio_gpu_queue_fenced_ctrl_buffer(struct virtio_gpu_device *vgdev,
 		}
 	}
 	for (;;) {
+		ret = virtio_gpu_dma_prepare(vbuf);
+		if (ret)
+			break;
 		spin_lock(&vgdev->ctrlq.qlock);
 		before = vq->num_free;
 		ret = vgdev->vqs_ready ? virtqueue_add_sgs(vq, sgs, out,
@@ -456,6 +463,8 @@ virtio_gpu_queue_fenced_ctrl_buffer(struct virtio_gpu_device *vgdev,
 		spin_unlock(&vgdev->ctrlq.qlock);
 		if (ret != -ENOSPC)
 			break;
+		/* End only this unsubmitted attempt before pressure waiting. */
+		virtio_gpu_dma_post(vbuf);
 		remaining = virtio_gpu_queue_remaining(started);
 		if (!remaining || !wait_event_timeout(vgdev->ctrlq.ack_queue,
 		    !vgdev->vqs_ready || vq->num_free != before, remaining)) {
@@ -638,25 +647,6 @@ int virtio_gpu_cmd_create_resource(struct virtio_gpu_device *vgdev,
 	return ret;
 }
 
-void virtio_gpu_cmd_unref_resource(struct virtio_gpu_device *vgdev,
-				   uint32_t resource_id)
-{
-	struct virtio_gpu_resource_unref *cmd_p;
-	struct virtio_gpu_vbuffer *vbuf;
-
-	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
-	if (IS_ERR(cmd_p)) {
-		vgdev->submit_error = PTR_ERR(cmd_p);
-		return;
-	}
-	memset(cmd_p, 0, sizeof(*cmd_p));
-
-	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_RESOURCE_UNREF);
-	cmd_p->resource_id = cpu_to_le32(resource_id);
-
-	virtio_gpu_queue_ctrl_buffer(vgdev, vbuf);
-}
-
 void virtio_gpu_queue_unref(struct virtio_gpu_device *vgdev,
     struct virtio_gpu_object *bo)
 {
@@ -673,6 +663,10 @@ void virtio_gpu_queue_unref(struct virtio_gpu_device *vgdev,
 	cmd->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_RESOURCE_UNREF);
 	cmd->resource_id = cpu_to_le32(bo->hw_res_handle);
 	vbuf->release = bo;
+	if (bo->dma_required) {
+		vbuf->dma_op.bo = bo;
+		vbuf->dma_op.kind = VIRTGPU_DMA_UNREF;
+	}
 	fence = virtio_gpu_fence_alloc(vgdev);
 	if (!fence) {
 		virtio_gpu_stop(vgdev, -ENOMEM);
@@ -681,26 +675,6 @@ void virtio_gpu_queue_unref(struct virtio_gpu_device *vgdev,
 	}
 	virtio_gpu_queue_fenced_ctrl_buffer(vgdev, vbuf, &cmd->hdr, fence);
 	dma_fence_put(&fence->f);
-}
-
-static void virtio_gpu_cmd_resource_inval_backing(struct virtio_gpu_device *vgdev,
-						  uint32_t resource_id,
-						  struct virtio_gpu_fence *fence)
-{
-	struct virtio_gpu_resource_detach_backing *cmd_p;
-	struct virtio_gpu_vbuffer *vbuf;
-
-	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
-	if (IS_ERR(cmd_p)) {
-		vgdev->submit_error = PTR_ERR(cmd_p);
-		return;
-	}
-	memset(cmd_p, 0, sizeof(*cmd_p));
-
-	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_RESOURCE_DETACH_BACKING);
-	cmd_p->resource_id = cpu_to_le32(resource_id);
-
-	virtio_gpu_queue_fenced_ctrl_buffer(vgdev, vbuf, &cmd_p->hdr, fence);
 }
 
 int virtio_gpu_cmd_set_scanout(struct virtio_gpu_device *vgdev,
@@ -814,7 +788,7 @@ int virtio_gpu_cmd_transfer_to_host_2d(struct virtio_gpu_device *vgdev,
 
 static int
 virtio_gpu_cmd_resource_attach_backing(struct virtio_gpu_device *vgdev,
-				       uint32_t resource_id,
+				       struct virtio_gpu_object *bo,
 				       struct virtio_gpu_mem_entry *ents,
 				       uint32_t nents,
 				       struct virtio_gpu_fence *fence)
@@ -831,11 +805,21 @@ virtio_gpu_cmd_resource_attach_backing(struct virtio_gpu_device *vgdev,
 	memset(cmd_p, 0, sizeof(*cmd_p));
 
 	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING);
-	cmd_p->resource_id = cpu_to_le32(resource_id);
+	cmd_p->resource_id = cpu_to_le32(bo->hw_res_handle);
 	cmd_p->nr_entries = cpu_to_le32(nents);
 
 	vbuf->data_buf = ents;
 	vbuf->data_size = sizeof(*ents) * nents;
+	if (bo->dma_required) {
+		vbuf->objs = virtio_gpu_array_alloc(1);
+		if (!vbuf->objs) {
+			virtio_gpu_cancel_vbuf(vbuf);
+			return -ENOMEM;
+		}
+		virtio_gpu_array_add_obj(vbuf->objs, &bo->base.base);
+		vbuf->dma_op.bo = bo;
+		vbuf->dma_op.kind = VIRTGPU_DMA_ATTACH;
+	}
 
 	return virtio_gpu_queue_sync(vgdev, vbuf, NULL, NULL);
 }
@@ -1519,10 +1503,12 @@ int virtio_gpu_object_attach(struct virtio_gpu_device *vgdev,
 	sgt->sgl->sg_dmamap = map;
 	obj->pages = sgt;
 	obj->mapped = nents;
-	bus_dmamap_sync(vgdev->vdev->dmat, map, 0, obj->base.base.size,
-	    BUS_DMASYNC_PREWRITE);
+	obj->dma_required = required;
+	if (!required)
+		bus_dmamap_sync(vgdev->vdev->dmat, map, 0, obj->base.base.size,
+		    BUS_DMASYNC_PREWRITE);
 	ret = virtio_gpu_cmd_resource_attach_backing(vgdev,
-	    obj->hw_res_handle, ents, nents, NULL);
+	    obj, ents, nents, NULL);
 	if (!ret)
 		obj->dma_eligible = required;
 	/* After PRE, all errors retain backing for acknowledged UNREF/reset. */
@@ -1548,9 +1534,9 @@ void virtio_gpu_object_detach(struct virtio_gpu_device *vgdev,
 	/* Only after host unref acknowledgement, or a device reset. */
 	obj->dma_eligible = false;
 	if (obj->pages) {
-		bus_dmamap_sync(vgdev->vdev->dmat, obj->pages->sgl->sg_dmamap,
-		    0, obj->base.base.size,
-		    BUS_DMASYNC_POSTWRITE);
+		if (!obj->dma_required)
+			bus_dmamap_sync(vgdev->vdev->dmat, obj->pages->sgl->sg_dmamap,
+			    0, obj->base.base.size, BUS_DMASYNC_POSTWRITE);
 		bus_dmamap_unload(vgdev->vdev->dmat, obj->pages->sgl->sg_dmamap);
 		drm_gem_shmem_vunmap(&obj->base.base, obj->dma_vaddr);
 		obj->dma_vaddr = NULL;

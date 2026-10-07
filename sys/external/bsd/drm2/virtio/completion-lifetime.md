@@ -34,7 +34,7 @@ fence publication remains closed until cleanup recovers all request cookies.
 
 Cleanup joins accepted producers, then both dequeue workers. Native
 `del_vqs` joins interrupt callbacks and cancels outstanding cookies. Only
-then does cleanup publish terminal results and drain console, configuration,
+then does cleanup close eligible backing leases, publish terminal results,\nand drain console, configuration,
 and delayed-object workers. Console/config waiters can therefore observe
 terminal fences before cleanup waits for their exit. No submit/spin lock is
 held over these joins, and completion never takes the submit mutex.
@@ -52,6 +52,10 @@ This relies on the existing no-live-detach contract (`EBUSY`): external DRM
 callers cannot race final device destruction. It is not a generic device
 lifetime implementation. The driver remains stopped after fatal reset;
 this foundation does not restart queues or recover a renderer context.
+
+The [eligible backing lease](backing-lifetime.md) extends central finish with
+token POST and extends reset drain with lease POST before terminal fences.
+Its scope is ATTACH/UNREF; other DMA ownership remains unverified.
 
 ## Reproduction and evidence limits
 

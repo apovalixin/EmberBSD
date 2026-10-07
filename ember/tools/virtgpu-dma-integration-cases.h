@@ -45,25 +45,41 @@ admission_case(unsigned int which)
 			if (m == HOLD)
 				wait_msec = 40;
 			assert(virtio_gpu_object_create(&gpu, &p, &bo, NULL) < 0);
+#ifdef DMA_LEASE_SOURCE
+			assert(!bo && !backing_pre && !backing_post);
+			if (m == HOLD) finish_pending(false);
+			if (!gpu.vqs_ready) virtio_gpu_dma_reset(&gpu);
+			assert(rw_pre >= 2 && rw_pre == rw_post);
+			assert(ids_freed == 1 && (unrefs == 1 || resets));
+#else
 			assert(!bo && backing_pre == 1 && backing_post == 1);
 			assert(ids_freed == 1 && (unrefs == 1 || resets));
 			if (m == HOLD)
 				finish_pending(false);
+#endif
 			fini();
 		}
 		return;
 	}
 	if (which == 10) {
-		fail_next(9); /* Command allocation after PRE, before queueing ATTACH. */
+		fail_next(9); /* C2 moves command allocation before the first PRE. */
 		set_fault(VIRTIO_GPU_CMD_RESOURCE_UNREF, HOLD);
 		assert(virtio_gpu_object_create(&gpu, &p, &bo, NULL) == -ENOMEM);
+#ifdef DMA_LEASE_SOURCE
+		assert(!bo && pending && !rw_pre && !rw_post && !backing_pre && !backing_post);
+#else
 		assert(!bo && pending && backing_pre == 1 && !backing_post);
+#endif
 		assert(pins == 1 && maps == 1 && vmaps == 1 && !ids_freed);
 #ifdef DMA_ELIGIBILITY_SOURCE
 		assert(last_bo && !last_bo->dma_eligible);
 #endif
 		finish_pending(false);
+#ifdef DMA_LEASE_SOURCE
+		assert(!backing_post && !rw_post && ids_freed == 1);
+#else
 		assert(backing_post == 1 && ids_freed == 1);
+#endif
 		fini();
 		return;
 	}
@@ -145,7 +161,7 @@ main(void)
 	    "same-device PRIME new handle cannot bypass admission",
 	    "owned wrapper checks core, pager, pin and vmap identity",
 	    "unqualified retained backing cannot enter a context",
-	    "after-PRE command allocation retains map until UNREF"};
+	    "command allocation retains map until UNREF without unmatched POST"};
 	unsigned int failed = 0, count = sizeof(names) / sizeof(names[0]);
 
 	for (unsigned int i = 0; i < count; i++) {

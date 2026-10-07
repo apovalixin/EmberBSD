@@ -62,6 +62,9 @@ UNREF allocation/submission or invalid response resets the device before
 local backing release. Disabling submissions alone never permits release. The
 [owned ARM64 backing gate](dma-eligibility.md) checks loaded maps before PRE
 when 3D admission is required; early local failures perform no POST.
+For accepted backing, the [lease and retirement contract](backing-lifetime.md)
+adds distinct bidirectional persistent and ATTACH/UNREF phases. Its host
+contracts preserve backing through cookie drain and reset retirement.
 This source gate leaves feature negotiation disabled.
 
 All synchronous control operations request and validate a GPU fence,
@@ -81,10 +84,10 @@ Native system work executes on one ordered worker. Control/cursor ACKs
 therefore use a separate completion workqueue, and fatal cleanup has its
 own workqueue. Reset seals admission and stops transport DMA before cleanup
 joins producers and dequeue workers, then cancels outstanding cookies.
-Terminal fences publish only after that drain, before console/config/object
+Qualified backing leases close after that drain. Terminal fences publish\nonly after lease retirement, before console/config/object
 worker joins. The bounded per-cookie timeline and teardown contract is
 documented in [completion lifetime](completion-lifetime.md). This foundation
-does not establish correct backing DMA. Normal live detach is rejected
+does not establish context-wide backing DMA. Normal live detach is rejected
 with EBUSY.
 
 ## Classic capset queries

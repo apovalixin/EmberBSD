@@ -32,6 +32,10 @@ typedef uint64_t __u64, __le64;
 C
 layout="$work/submit-layout.h"
 : > "$layout"
+sed -n '/^enum virtgpu_dma_lease /,/^};/p' "$hdr" >> "$layout"
+if [ -f "$src/sys/external/bsd/drm2/virtio/virtgpu_dma.c" ]; then
+    printf '#define DMA_LEASE_SOURCE 1\n' >> "$layout"
+fi
 for name in virtio_gpu_fence_driver virtio_gpu_fence virtio_gpu_vbuffer virtio_gpu_fpriv virtio_gpu_object_array; do
     sed -n "/^struct $name {/,/^};/p" "$hdr" >> "$layout"
 done

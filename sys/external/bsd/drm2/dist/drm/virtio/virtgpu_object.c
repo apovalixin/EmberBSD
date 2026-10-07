@@ -51,14 +51,23 @@ static void virtio_gpu_resource_id_put(struct virtio_gpu_device *vgdev,
 	ida_free(&vgdev->resource_ida, id - 1);
 }
 
-void virtio_gpu_release_object(struct virtio_gpu_object *bo)
+void virtio_gpu_finalize_object(struct virtio_gpu_object *bo)
 {
 	struct drm_gem_object *obj = &bo->base.base;
 	struct virtio_gpu_device *vgdev = obj->dev->dev_private;
 
+	KASSERT(bo->dma_finalizing && bo->release_pending);
+	KASSERT(!bo->dma_members && !bo->dma_retire_refs);
+	KASSERT(bo->dma_lease == VIRTGPU_LEASE_NONE ||
+	    bo->dma_lease == VIRTGPU_LEASE_CLOSED);
 	virtio_gpu_object_detach(vgdev, bo);
 	virtio_gpu_resource_id_put(vgdev, bo->hw_res_handle);
 	drm_gem_shmem_free_object(obj);
+}
+
+void virtio_gpu_release_object(struct virtio_gpu_object *bo)
+{
+	virtio_gpu_dma_release(bo);
 }
 
 static void virtio_gpu_free_object(struct drm_gem_object *obj)
