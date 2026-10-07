@@ -72,7 +72,7 @@ application stacks, adaptations and runnable checks. Small installations
 can keep only the components they need. Upstream components retain their
 own licenses and authorship.
 
-Status updated **2026-10-07**; linked component documents record their own
+Status updated **2026-10-08**; linked component documents record their own
 validation dates. Application tests on an AArch64 VM do not establish support
 on every board in the hardware catalog.
 
@@ -108,6 +108,15 @@ on every board in the hardware catalog.
   [build and test instructions](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/ai-engines).
   These source probes support application development; microphone capture,
   real-world audio quality and GPU/NPU execution remain unverified.
+- **Google AI Edge model execution:** LiteRT 2.2.0 provides a shared C/C++
+  CPU runtime for `.tflite` applications; LiteRT-LM 0.18.0 adds SentencePiece
+  language-model execution. Ports owns the [cross-build profile, adaptations and instructions](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/litert).
+  Installed C/C++ consumers, numerical/error contracts and real TinyLlama-1.1B
+  text generation pass on a physical A733 board with NetBSD 11. Explicit
+  metadata preparation preserves the model's weights and tokenizer; a
+  disk-backed cache keeps the tested workflow within the board's 4 GiB RAM.
+  These are source builds, with [recorded model and validation limits](https://github.com/neonix20b/EmberBSD-Ports/blob/main/probes/litert/VALIDATION.md);
+  packaged delivery, GPU/NPU and multimodal workflows remain unverified.
 - **Vision, geometry and positioning:** OpenCV 5.0.0, Eigen 5.0.1 and gpsd
   3.27.5 build and pass installed-consumer tests on AArch64. Checks include
   image processing, features and camera-pose recovery, numerical solvers,
