@@ -4,8 +4,8 @@
 The driver retains each explicit 3D transfer until its request phase has ended
 and reports its exact acceptance error. WAIT observes tracked request errors
 and completion, including work hidden by reservation replacement. These source
-and host software contracts leave VIRGL disabled. Native checks for this change,
-a matched kernel and live DMA/graphics qualification remain pending.
+and native software contracts leave VIRGL disabled. A matched kernel and live
+DMA/graphics qualification remain pending.
 
 ## Admission and one operation ledger
 
@@ -98,6 +98,14 @@ replacement/getters, fence status and publication. It uses the prior EXEC fixtur
 `SUBMIT_SOURCE_ROOT` selects an immutable baseline. Current host checks pass 59
 new groups, 204 affected prior groups and focused ASan/UBSan. The baseline compiled
 and exposed the lost errno, missing FROM PRE, unpaired error POST and WAIT errors.
+
+The same 59 new and 204 prior groups pass natively on NetBSD 11/AArch64 with
+GCC 16.2. A clean export of `089544e22b2b02b5d51806392a7263d1fc0be8f5`
+regenerated EMBERGPU configuration/dependencies and compiled fourteen fresh
+driver objects with base GCC 12.5 and normal `-Werror`: 2.64 seconds, peak RSS
+67068 KiB and zero swaps. The guarded run completed with status 0. It did not
+link a kernel, install files or boot the changed driver; these objects must not
+be linked with unrelated objects from the partial build directory.
 
 Allocators, low-level locks, transport, scheduling, fence waiting and bus sync are
 controlled seams. The old generic WAIT seam provides completed readiness, exposing

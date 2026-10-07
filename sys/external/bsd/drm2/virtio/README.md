@@ -25,7 +25,9 @@ unsupported 3D requests fail through their existing feature checks.
 The retained 3D code passes native contracts and object compilation for
 [asynchronous EXECBUFFER errors and private fence descriptors](submit-ownership.md).
 The [explicit 3D transfer and WAIT contract](transfer-wait.md) adds directional
-request phases and exact tracked errors, with host software checks. Legacy 2D
+request phases and exact tracked errors. Its 59 new and 204 prior contract groups
+pass on NetBSD/AArch64 with GCC 16.2; fourteen fresh driver objects compile with
+base GCC 12.5 and normal `-Werror`. Legacy 2D
 DMA/CPU ownership and complete 3D request bounds remain required before VIRGL
 can be enabled and tested.
 
@@ -96,7 +98,7 @@ Qualified backing leases close after that drain. Terminal fences publish
 only after lease retirement, before console/config/object
 worker joins. The bounded per-cookie timeline and teardown contract is
 documented in [completion lifetime](completion-lifetime.md). This foundation
-does not qualify the remaining transfer/CPU-copy paths or live graphics.
+does not qualify the remaining legacy 2D/CPU-copy paths or live graphics.
 Normal live detach is rejected
 with EBUSY.
 

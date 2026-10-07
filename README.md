@@ -176,8 +176,12 @@ on every board in the hardware catalog.
   hints, and retains each pending operation through retries and overlapping
   completion. A [classic fence limit](sys/external/bsd/drm2/virtio/classic-fence-range.md)
   stops the device safely before sequence numbers can wrap or become ambiguous.
-  Native contracts and object builds pass; transfers, CPU access,
-  full kernel/runtime acceptance and live DMA qualification remain pending.
+  [Explicit transfers and WAIT](sys/external/bsd/drm2/virtio/transfer-wait.md)
+  retain per-buffer operations through completion and report their exact errors,
+  even when a later reservation replaces the visible fence.
+  Native contracts and object builds pass; legacy 2D/CPU ownership, complete
+  request bounds, full kernel/runtime acceptance and live DMA qualification
+  remain pending.
   See the [VirtGPU implementation](sys/external/bsd/drm2/virtio/README.md),
   [DRM identity checks](ember/boot/drm-native-identity.md) and
   [graphics probes](https://github.com/neonix20b/EmberBSD-Examples/tree/main/desktop/wayland-utm).
