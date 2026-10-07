@@ -297,8 +297,9 @@ on every board in the hardware catalog.
   A [full private renderer build](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/utm-virgl-host/host)
   with current libepoxy 1.5.10 passes direct texture readback, native fences
   and three cleanup/reinit cycles on Apple M3/ANGLE Metal. It also fixes a
-  reproduced absent-context cleanup error. This is host renderer acceptance;
-  full QEMU integration, native reset/display qualification and guest Mesa
+  reproduced absent-context cleanup error. The [full paired QEMU recipe](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/utm-virgl-host/qemu)
+  builds and passes an isolated 2D guest boot on ANGLE Metal, including libdrm
+  and 32 GEM/PRIME lifetimes. Native reset/display qualification and guest Mesa
   remain pending. Guest VirGL stays disabled; an accelerated EmberBSD session,
   reliable console recovery and Vulkan Compute are not yet established.
 - **Physical GPU and NPU porting targets:** CIX P1 is the first selected
