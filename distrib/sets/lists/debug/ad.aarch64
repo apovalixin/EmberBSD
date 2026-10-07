@@ -1,4 +1,5 @@
 # $NetBSD: ad.aarch64,v 1.43 2025/06/24 16:23:38 christos Exp $
+# Origin: EmberBSD; include the AArch64 binary128 test debug companion.
 #
 ./usr/lib/eabi/libc_vfp_g.a					comp-sys-debug	compat,debuglib,softfloat
 ./usr/lib/libtsan_g.a						comp-c-debuglib	debuglib,arch64,cxx,gcccmds,gcc=12
@@ -7,3 +8,4 @@
 ./usr/libdata/debug/usr/libexec/ld.elf_so-oabi.debug		comp-obsolete		obsolete
 ./usr/libdata/debug/usr/sbin/ofctl.debug			comp-util-debug		debug
 ./usr/libdata/debug/usr/sbin/tpctl.debug			comp-sysutil-debug	debug
+./usr/libdata/debug/usr/tests/lib/libc/gen/t_comparetf2.debug	tests-lib-debug		debug,atf,!softfloat

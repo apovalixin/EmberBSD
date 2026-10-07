@@ -112,6 +112,16 @@ libc link, installed-library bindings and affected compiler regressions
 require their own results. These tests do not establish arithmetic,
 conversion, complete LTO or full compiler-suite correctness.
 
+## Release-set coverage
+
+The native test and its optional debug companion are included in the
+AArch64 release lists. Their selectors match the test Makefile: ATF enabled,
+hard-float AArch64, and debug symbols enabled for the companion only.
+They are not duplicated into AArch32 compatibility test directories.
+Run `sh ember/tools/aarch64-binary128-sets-contract.sh "$PWD" /absolute/new-output`
+on NetBSD to exercise the real set-list generator across seven configurations.
+This check covers packaging selection; it does not execute the floating-point test.
+
 ## Native candidate validation
 
 On 2026-10-07, GCC 12.5 and GCC 16.2 on NetBSD 11/AArch64 in UTM built the

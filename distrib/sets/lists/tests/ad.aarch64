@@ -1,0 +1,2 @@
+# Origin: EmberBSD; package the native AArch64 binary128 comparison test.
+./usr/tests/lib/libc/gen/t_comparetf2		tests-lib-tests		atf,!softfloat
