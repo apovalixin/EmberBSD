@@ -430,9 +430,13 @@ on every board in the hardware catalog.
   installed LLVM23 compiler. Complete packages, ELF/JIT behavior and the
   Mesa26/TinyGo consumers remain pending. See the [LLVM family contract](https://github.com/neonix20b/EmberBSD-Ports/blob/main/profiles/common-build-tools/llvm-family.md).
   Ports also owns the [Mac cross-package workflow](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/common-build-tools/cross):
-  pkgconf 3.0.7, GNU M4 1.4.21 and Libtool 2.6.2 pass normal package checks
+  pkgconf 3.0.7, GNU M4 1.4.21, Libtool 2.6.2 and
+  [Binutils 2.47nb1](https://github.com/neonix20b/EmberBSD-Ports/blob/main/profiles/common-build-tools/binutils.md) pass normal package checks
   and installed AArch64 VM consumers with GCC16. Regression checks cover
   target ELF metadata, package replacement and extraction rollback on the host.
+  The Binutils port also fixes mixed DWARF32/64 source lookup and passes
+  installed GNU CTF and C++ DSO checks with explicit GNU tool selection.
+  Migrating GCC16's hardcoded bootstrap as/ld defaults remains pending.
   [Developer skills](#connect-developer-skills) help
   AI coding assistants find the owning project, test changes and prepare
   contributions. A general validated installation image is not yet released.
