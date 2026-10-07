@@ -1,4 +1,5 @@
 # $NetBSD: Makefile.inc,v 1.54 2025/04/06 23:03:05 rillig Exp $
+# Origin: EmberBSD; AI-assisted source-local AArch64 binary128 FENV opt-in.
 
 COMPILER_RT_DIR=	${NETBSDSRCDIR}/sys/external/bsd/compiler_rt
 COMPILER_RT_SRCDIR=	${COMPILER_RT_DIR}/dist
@@ -137,6 +138,9 @@ GENERIC_SRCS+= \
 GENERIC_SRCS+= \
 	comparetf2.c
 LINTFLAGS.comparetf2.c += -X 132
+.if ${MKSOFTFLOAT:Uno} == "no"
+CPPFLAGS.comparetf2.c+= -DCOMPILER_RT_NETBSD_AARCH64_FENV
+.endif
 .endif
 
 GENERIC_SRCS+= \

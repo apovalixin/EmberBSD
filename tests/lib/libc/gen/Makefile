@@ -1,4 +1,5 @@
 # $NetBSD: Makefile,v 1.60.2.1 2025/10/01 17:41:14 martin Exp $
+# Origin: EmberBSD; AI-assisted scoped AArch64 binary128 comparison tests.
 
 NOMAN=		# defined
 
@@ -72,5 +73,12 @@ LDADD.t_nice+=		-lpthread
 DPADD.t_nice+=		${LIBPTHREAD}
 LDADD.t_syslog+=	-lpthread
 DPADD.t_syslog+=	${LIBPTHREAD}
+
+.if ${MACHINE_CPU} == "aarch64" && ${MKSOFTFLOAT:Uno} == "no"
+TESTS_C+= t_comparetf2
+SRCS.t_comparetf2= t_comparetf2.c t_comparetf2_abi.S
+LDADD.t_comparetf2+= -lm
+DPADD.t_comparetf2+= ${LIBM}
+.endif
 
 .include <bsd.test.mk>
