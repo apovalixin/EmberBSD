@@ -1,0 +1,102 @@
+# Build AArch64 kernels on another host
+
+EmberBSD does not require a NetBSD build host. The kernel wrapper uses the
+fork's standard `build.sh` on macOS and other foreign hosts. That script
+builds host executables which generate AArch64 NetBSD output. A native
+AArch64 NetBSD build remains available.
+
+## Build from pinned sources
+
+Export a clean commit of the **full source tree**. A kernel-only export
+without `tools`, `share/mk` and their source dependencies is insufficient.
+Use a host C/C++ compiler and the host Python 3 for the existing source
+contracts. On macOS, install the Xcode command-line tools first. Do not use
+the target's `/usr/pkg/etc/mk.conf` as the host OS build configuration.
+
+```sh
+revision=FULL_COMMIT_ID
+src=/absolute/source
+out=/absolute/build-output
+mkdir "$src"
+git archive "$revision" | tar -xf - -C "$src"
+NETBSD2_JOBS=6 sh "$src/ember/build-kernel.sh" "$out" EMBER64
+```
+
+The output must be outside the source tree. Keep one output directory per
+source export, kernel configuration and toolchain. The default `auto` mode
+uses native tools only on AArch64 NetBSD; `EMBER_BUILD_MODE=cross` selects
+`build.sh` there too. `EMBER_BUILD_MODE=native` explicitly selects native
+tools and rejects a host which cannot run that path.
+
+Cross builds keep host tools under `out/tools`, object files under `out/obj`
+and the kernel configuration's generated headers under `out/obj/kernels`.
+The four board modules use the same make wrapper, target settings and kernel
+headers. DTBs use the target preprocessor and the source-built host `nbdtc`.
+`build.sh -u` reuses tools and object files for repeated builds. A failed build
+returns nonzero and does not leave the previous candidate at the deliverable
+paths. Build logs remain in the output directory.
+
+`NETBSD2_JOBS` selects concurrency. `NETBSD2_PYTHON` can select an existing
+host Python executable; there is no fixed Python 3.13 requirement. These
+legacy Python source contracts have not yet been replaced.
+
+## Compiler selection
+
+The fork's in-tree bootstrap compiler is currently GCC 12.5. Building it as
+a host tool does not install it on the target or prove the GCC 16.2 transition.
+The current native development package is GCC 16.2.0nb1 from
+[EmberBSD-Ports](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/development-toolchain).
+
+To use a separately prepared GNU cross toolchain, provide its absolute
+prefix. It must supply `bin/aarch64--netbsd-gcc`, `cpp`, `c++` and the matching
+prefixed binutils commands expected by `EXTERNAL_TOOLCHAIN` in `share/mk`.
+Use a fresh output directory when changing toolchains.
+
+```sh
+EMBER_BUILD_MODE=cross EMBER_EXTERNAL_TOOLCHAIN=/absolute/cross-prefix \
+    NETBSD2_JOBS=6 sh "$src/ember/build-kernel.sh" /absolute/new-output EMBER64
+```
+
+This parameter selects tools; it does not fetch or build a GCC16 cross
+compiler. The [Ports cross recipe](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/development-toolchain/cross)
+provides the host compiler and preserves its current source adaptations.
+
+## Acceptance is separate from host selection
+
+The wrapper retains the native six-contract suite. On a foreign host it
+runs the two portable contracts and explicitly records the remaining native
+contracts as pending. Copy the same pinned source export to an EmberBSD
+machine and run all six there before deploying the artifacts:
+
+```sh
+NETBSD2_PYTHON=/path/to/python3 sh ember/tools/kernel-contracts.sh /absolute/source all
+```
+
+Those four additional tests compile against NetBSD Bluetooth/audio headers
+and execute their probes. Their runtime requirement is not a build-host
+restriction. Passing them does not prove that a new kernel boots, that a
+module attaches, or that physical Bluetooth/audio works.
+
+Run the shell orchestration regression on any host:
+
+```sh
+sh ember/tests/build-kernel.sh
+```
+
+It checks foreign/native command routing, target tool expansion, module
+header selection, contract dispatch and failure propagation. Its fixtures
+are not a kernel build. For underlying build options see [BUILDING](../../BUILDING)
+and the [NetBSD cross-build guide](https://www.netbsd.org/docs/guide/en/chap-build.html).
+
+## Verified scope
+
+On Apple Silicon macOS, the wrapper built the in-tree host tools, full
+`EMBER64`, four board modules and all three DTBs. The two portable contracts
+passed on that host; the full six-contract suite passed in AArch64 NetBSD
+UTM. The kernel build used the in-tree GCC12.5 bootstrap. It has not been
+booted on a board as part of this cross-build check.
+
+Separately, Ports GCC16 built on macOS and cross-compiled C11 plain/LTO and
+C++20 shared-library probes. They pass on physical Orange Pi Zero 3W with
+its installed GCC16 runtime. That does not establish a GCC16-built kernel,
+a full userland or a cross-packaged Ports dependency closure.

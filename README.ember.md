@@ -43,8 +43,10 @@ counters to distinguish this failure from an SDIO transmit-window stall.
 
 ## Building
 
-The native build environment is NetBSD 11/aarch64 with gcc, config, dtc,
-and Python 3.13 from pkgsrc. From a clean checkout of a pinned commit:
+Build on macOS or another POSIX host through the fork's `build.sh`, or use
+native tools on NetBSD/AArch64. The wrapper selects the appropriate path.
+Use a full source export of a pinned commit and an existing host Python 3
+for the legacy source contracts; see the [cross-build guide](ember/boot/cross-build.md):
 
 ```sh
 sh ember/build-kernel.sh /absolute/output EMBER64
@@ -52,8 +54,9 @@ sh ember/build-kernel.sh /absolute/output EMBER64
 
 The build produces an ELF kernel, a native kernel image, device trees for
 Zero 2 W, Orange Pi Zero 4 and Zero 3W, and Ethernet, Bluetooth UART, and WM8960
-modules, plus the optional Pi 5 power-button fallback module. Validate new
-builds on the build environment before deployment. The
+modules, plus the optional Pi 5 power-button fallback module. Foreign-host
+builds run portable contracts and report native contracts as pending; run
+the full suite on EmberBSD before deployment. The
 [headless base update](ember/boot/aarch64-base-update.md) builds the fork's
 kernel, required board modules and base userland together. Its Pi 5 hardware
 receipt is separate from validation of a complete general release image.

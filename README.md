@@ -359,6 +359,12 @@ on every board in the hardware catalog.
   Orange Pi Zero 3W. New [development sessions](https://github.com/neonix20b/EmberBSD-Ports/blob/main/profiles/common-build-tools/development-defaults.md)
   and ordinary pkgsrc builds on Zero 3W select the repaired GCC16 nb1 package;
   the base compiler remains explicit bootstrap/recovery support.
+  The [cross-build wrapper](ember/boot/cross-build.md) builds an AArch64 kernel,
+  matched board modules and DTBs on Apple Silicon macOS. The
+  [Ports cross GCC16 recipe](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/development-toolchain/cross)
+  also runs GCC16 on that host; cross-built C11 (plain/LTO) and C++20 DSO
+  checks pass on Zero 3W with its installed GCC16 runtime. Full OS builds
+  with GCC16 and general pkgsrc cross-package builds remain unvalidated.
   C11/C++20 threads, TLS and shared-library
   checks pass. On Zero 3W, current MPFR/MPC/libxml2 and actual pkgsrc wrapper
   compilation, package installation and loaded-runtime checks also pass;
