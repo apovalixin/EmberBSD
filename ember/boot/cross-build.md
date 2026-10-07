@@ -55,7 +55,9 @@ prefixed binutils commands expected by `EXTERNAL_TOOLCHAIN` in `share/mk`.
 Use a fresh output directory when changing toolchains.
 The wrapper sets `TOOLCHAIN_MISSING=yes` for this path to omit the in-tree
 bootstrap compiler and its host math libraries. Other required host tools
-are still built from the selected source revision.
+are still built from the selected source revision. In particular, host
+Binutils supplies BFD for `dbsym` and `mdsetimage`; an external compiler
+prefix alone does not provide those libraries.
 
 ```sh
 EMBER_BUILD_MODE=cross EMBER_EXTERNAL_TOOLCHAIN=/absolute/cross-prefix \
@@ -87,6 +89,10 @@ Run the shell orchestration regression on any host:
 ```sh
 sh ember/tests/build-kernel.sh
 ```
+
+After host tools have produced a make wrapper, check its actual dependency
+selection with `sh ember/tests/external-toolchain-tools.sh
+/absolute/output/tools/bin/nbmake-evbarm /absolute/source`.
 
 It checks foreign/native command routing, target tool expansion, module
 header selection, contract dispatch and failure propagation. Its fixtures
