@@ -591,6 +591,13 @@ struct dma_resv_list { unsigned shared_count; struct dma_fence **shared; };
 #define dma_resv_get_list(r) ((struct dma_resv_list *)NULL)
 static int virtio_gpu_exec_dependency(struct virtio_gpu_device *d, struct dma_fence *f,
     u64 key, unsigned int start, bool implicit) { assert(!"unrelated EXEC path"); return -EINVAL; }
+#ifdef TRANSFER_FOUNDATION
+/* This fixture has no EXEC/transfer dependency consumer; those run in submit. */
+static int virtio_gpu_dependency_status(struct dma_fence *f)
+{ assert(!"unrelated dependency status"); return -EINVAL; }
+static int virtio_gpu_wait_dependency(struct dma_fence *f, unsigned int start)
+{ assert(!"unrelated dependency wait"); return -EINVAL; }
+#endif
 static void virtio_gpu_array_put_free(struct virtio_gpu_object_array *);
 
 static void

@@ -31,7 +31,9 @@ transport pressure without allocating another ID.
 
 A successful response runs its callback and existing transfer completion
 step before retiring cookie storage and marking its exact fence ready.
-The current transfer step is preserved, not certified as DMA-correct here.
+The legacy 2D transfer step is preserved, not certified as DMA-correct here.
+[Explicit 3D transfers](transfer-wait.md) now POST through common DMA finish,
+including errors and cancellation; the opcode-based helper handles only 2D.
 A local queue rejection disposes its cookie before publishing its result.
 Malformed or failed responses stop/reset the transport before uncertain
 storage is released. Stop seals fence admission before reset; terminal

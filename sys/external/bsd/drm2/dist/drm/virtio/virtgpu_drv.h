@@ -92,8 +92,8 @@ struct virtio_gpu_object {
 	bool dma_eligible;
 	bool dma_required;
 	enum virtgpu_dma_lease dma_lease;
-	struct list_head dma_registry, exec_members;
-	unsigned int exec_pending;
+	struct list_head dma_registry, operation_members;
+	unsigned int operation_pending;
 	unsigned int dma_members, dma_retire_refs;
 	bool release_pending, dma_finalizing;
 	bool dumb;
@@ -108,8 +108,11 @@ struct virtio_gpu_object {
 #define VIRTGPU_EXEC_MAX_OBJECTS 65536U
 #define VIRTGPU_EXEC_BUDGET (16U * 1024U * 1024U)
 
+enum virtgpu_operation_kind { VIRTGPU_OPERATION_NONE, VIRTGPU_OPERATION_EXEC,
+	VIRTGPU_OPERATION_TO_HOST, VIRTGPU_OPERATION_FROM_HOST };
+
 /* A ledger member survives all descriptor-pressure token attempts. */
-struct virtgpu_exec_member {
+struct virtgpu_operation_member {
 	struct list_head node;
 	struct virtio_gpu_object *bo;
 	struct dma_fence *fence;
@@ -118,9 +121,10 @@ struct virtgpu_exec_member {
 struct virtio_gpu_object_array {
 	struct virtio_gpu_device *budget_dev;
 	size_t budget_bytes;
-	struct virtgpu_exec_member *members;
-	struct dma_fence *exec_fence;
-	bool exec, registered, prepared;
+	struct virtgpu_operation_member *members;
+	struct dma_fence *operation_fence;
+	enum virtgpu_operation_kind operation;
+	bool registered, prepared;
 
 	struct ww_acquire_ctx ticket;
 	struct list_head next;
@@ -309,9 +313,18 @@ struct virtio_gpu_fpriv {
 	struct list_head attachments;
 };
 
+struct dma_fence **virtio_gpu_dependency_alloc(struct virtio_gpu_device *, bool, size_t *);
+int virtio_gpu_dependency_status(struct dma_fence *);
+int virtio_gpu_wait_dependency(struct dma_fence *, unsigned int);
+int virtio_gpu_object_dependencies(struct virtio_gpu_device *, struct drm_gem_object *,
+    struct dma_fence **, unsigned int, u64, unsigned int, bool, bool, bool);
+int virtio_gpu_transfer_member(struct virtio_gpu_device *, struct virtio_gpu_fpriv *,
+    struct drm_gem_object *);
 int virtio_gpu_exec_charge(struct virtio_gpu_device *, size_t);
 void virtio_gpu_exec_uncharge(struct virtio_gpu_device *, size_t);
 int virtio_gpu_context_key(struct virtio_gpu_device *, u64 *);
+struct virtio_gpu_object_array *virtio_gpu_operation_array_alloc(
+    struct virtio_gpu_device *, u32, enum virtgpu_operation_kind);
 struct virtio_gpu_object_array *virtio_gpu_exec_array_alloc(struct virtio_gpu_device *, u32);
 int virtio_gpu_exec_snapshot(struct virtio_gpu_device *, struct virtio_gpu_fpriv *,
     struct virtio_gpu_object_array *, struct virtio_gpu_object_array *);
@@ -441,13 +454,13 @@ int virtio_gpu_cmd_submit(struct virtio_gpu_device *vgdev,
 			   uint32_t ctx_id,
 			   struct virtio_gpu_object_array *objs,
 			   struct virtio_gpu_fence *fence);
-void virtio_gpu_cmd_transfer_from_host_3d(struct virtio_gpu_device *vgdev,
+int virtio_gpu_cmd_transfer_from_host_3d(struct virtio_gpu_device *vgdev,
 					  uint32_t ctx_id,
 					  uint64_t offset, uint32_t level,
 					  struct drm_virtgpu_3d_box *box,
 					  struct virtio_gpu_object_array *objs,
 					  struct virtio_gpu_fence *fence);
-void virtio_gpu_cmd_transfer_to_host_3d(struct virtio_gpu_device *vgdev,
+int virtio_gpu_cmd_transfer_to_host_3d(struct virtio_gpu_device *vgdev,
 					uint32_t ctx_id,
 					uint64_t offset, uint32_t level,
 					struct drm_virtgpu_3d_box *box,

@@ -126,7 +126,7 @@ struct submit_config_ops {
 	void (*reset)(struct virtio_device *);
 	void (*del_vqs)(struct virtio_device *);
 };
-struct virtio_device { size_t max_request; struct submit_config_ops *config; };
+struct virtio_device { void *dmat; size_t max_request; struct submit_config_ops *config; };
 struct netbsd_virtqueue { unsigned int num_free; };
 struct linux_virtio_sg { void *addr; size_t size; void *map; };
 struct virtio_gpu_device {
@@ -161,13 +161,18 @@ struct dma_resv_write_ticket { int unused; };
 #define dma_resv_write_commit(r,t) ((void)(r), (void)(t))
 #define atomic_store_relaxed(p,v) (*(p)=(v))
 #define atomic64_inc_return(p) (++*(p))
-struct drm_gem_object { unsigned refs; struct reservation *resv; };
+struct drm_gem_object { size_t size; unsigned refs; struct reservation *resv; };
 
 static int alloc_calls, fail_alloc, live, copy_calls, fail_copy, lookup_calls, fail_lookup;
 static int lock_error, fd_error, queue_error, queue_calls, accepted, wait_calls;
 static int input_fd, output_fd=7, input_wait=1, sync_fail, early_mode, pressure;
 static int installs, closes, aborts, reservations, close_on_exec, stops;
 static int files_allocated, sync_created;
+#ifdef TRANSFER_CONTRACT
+static long (*transfer_wait_hook)(struct dma_fence *, long);
+static struct mutex *transfer_attachment;
+static int transfer_last_flags, transfer_zero_releases;
+#endif
 static struct dma_fence *input;
 static struct virtio_gpu_vbuffer *pending;
 static struct virtio_gpu_device device;
@@ -184,11 +189,14 @@ static struct reservation resv[2];
 static struct drm_gem_object bos[2];
 #ifdef EXEC_FOUNDATION
 struct virtio_gpu_object {
+	struct { struct drm_gem_object base; } base;
+	struct { struct { void *sg_dmamap; } *sgl; } *pages;
+	u32 hw_res_handle;
 	enum virtgpu_dma_lease dma_lease;
 	bool release_pending;
 	unsigned int dma_members, dma_retire_refs, exec_pending;
 	struct list_head exec_members;
-	int pre, post;
+	int pre, post, pre_read, pre_write, post_read, post_write;
 };
 static struct virtio_gpu_object backing[2];
 static struct virtio_gpu_object *gem_to_virtio_gpu_obj(struct drm_gem_object *o) {
@@ -206,12 +214,12 @@ static void drm_gem_object_get(struct drm_gem_object *o) { o->refs++; }
 #define BUS_DMASYNC_POSTWRITE 8
 static void virtgpu_dma_sync(struct virtio_gpu_device *d, struct virtio_gpu_object *b, int ops) {
 	assert(!d->dma_lock.held);
-	if (ops == 3) { b->pre++;
+	if (ops & 3) { b->pre++; b->pre_read+=!!(ops&1); b->pre_write+=!!(ops&2);
 #if defined(EXEC_CONTRACT) && defined(EXEC_FOUNDATION)
 		if(stop_pre && --stop_pre==0) { d->dma_stopped=true; d->vqs_ready=false; }
 #endif
 	}
-	else { assert(ops == 12 && b->pre > b->post); b->post++; }
+	else { assert((ops & 12) && b->pre > b->post); b->post++; b->post_read+=!!(ops&4); b->post_write+=!!(ops&8); }
 #if defined(EXEC_CONTRACT) && defined(EXEC_FOUNDATION)
 	if(dma_sync_hook) dma_sync_hook(ops);
 #endif
@@ -230,7 +238,16 @@ static void *test_alloc(size_t n) {
 static void test_free(void *p) { if (p) { assert(live>0); live--; free(p); } }
 #define kmalloc(n,f) test_alloc(n)
 #define kzalloc(n,f) test_alloc(n)
+#ifdef TRANSFER_CONTRACT
+static void *transfer_alloc(size_t n,int flags) {
+	assert(!transfer_attachment || !transfer_attachment->held);
+	transfer_last_flags=flags;
+	return test_alloc(n);
+}
+#define kvmalloc(n,f) transfer_alloc(n,f)
+#else
 #define kvmalloc(n,f) test_alloc(n)
+#endif
 #define kvmalloc_array(n,s,f) test_alloc((n)*(s))
 #define kfree(p) test_free(p)
 #define kvfree(p) test_free(p)
@@ -253,6 +270,9 @@ static void dma_fence_remove_callback(struct dma_fence *f,struct dma_fence_cb *c
 static void irq_work_queue(struct irq_work *w) { assert(w->fn); }
 static long __attribute__((unused)) dma_fence_wait_timeout(struct dma_fence *f,bool intr,long ticks) {
 	assert(intr); wait_calls++;
+#ifdef TRANSFER_CONTRACT
+	if(transfer_wait_hook) return transfer_wait_hook(f,ticks);
+#endif
 #if defined(EXEC_CONTRACT) && defined(EXEC_FOUNDATION)
 	if (advanced) {
 		assert(!device.dma_lock.held && !device.fence_drv.lock.held && !device.submit_lock.held);
@@ -276,10 +296,25 @@ static int copy_from_user(void *d,const void *s,size_t n) {
 	return 0;
 }
 static struct drm_gem_object *drm_gem_object_lookup(struct drm_file *f,uint32_t h) {
+#ifdef TRANSFER_CONTRACT
+	assert(!transfer_attachment || !transfer_attachment->held);
+#endif
 	if (++lookup_calls==fail_lookup) return NULL;
 	assert(h>=1 && h<=2); bos[h-1].refs++; return &bos[h-1];
 }
-static void drm_gem_object_put_unlocked(struct drm_gem_object *o) { assert(o->refs>1); o->refs--; }
+static void drm_gem_object_put_unlocked(struct drm_gem_object *o) {
+#ifdef TRANSFER_CONTRACT
+	assert(o->refs); o->refs--;
+	if(!o->refs) {
+		struct virtio_gpu_object *bo=gem_to_virtio_gpu_obj(o);
+		assert(bo->pre==bo->post && !bo->exec_pending && !bo->dma_members);
+		transfer_zero_releases++;
+	}
+#else
+	assert(o->refs>1); o->refs--;
+#endif
+}
+
 static unsigned int ww_calls, ww_slow_calls, ww_deadlock_at;
 static int ww_slow_error;
 static int dma_resv_lock_interruptible(struct reservation *r,struct ww_acquire_ctx *ctx) {
@@ -308,31 +343,31 @@ static void schedule_work(struct work_struct *w) {
 	virtio_gpu_array_put_free_work(w);
 }
 static void virtio_gpu_wait_done(struct virtio_gpu_vbuffer *b,int e) { assert(!b->wait); }
-#ifdef COMPLETION_CONTRACT
+#if defined(COMPLETION_CONTRACT) || defined(TRANSFER_CONTRACT)
 static void virtio_gpu_complete_transfer(struct virtio_gpu_device *, struct virtio_gpu_vbuffer *);
 #endif
 #ifdef DMA_LEASE_SOURCE
 /* These unrelated contracts have no qualified backing operations. */
 static void virtio_gpu_dma_finish(struct virtio_gpu_vbuffer *b, int error) {
 #ifdef EXEC_FOUNDATION
-	if (b->objs && b->objs->exec) virtgpu_exec_finish(b);
+	if (b->objs && b->objs->operation) virtgpu_exec_finish(b);
 #endif
 }
 static void virtio_gpu_dma_stop(struct virtio_gpu_device *d) { d->dma_stopped=true; }
 #ifdef COMPLETION_CONTRACT
 static void virtio_gpu_dma_reset(struct virtio_gpu_device *d) { }
-#else
+#elif !defined(TRANSFER_CONTRACT)
 static void virtio_gpu_complete_transfer(struct virtio_gpu_device *d, struct virtio_gpu_vbuffer *b) { }
 #endif
 static int virtio_gpu_dma_prepare(struct virtio_gpu_vbuffer *b) {
 #ifdef EXEC_FOUNDATION
-	if (b->objs && b->objs->exec) return virtgpu_exec_prepare(b);
+	if (b->objs && b->objs->operation) return virtgpu_exec_prepare(b);
 #endif
 	return 0;
 }
 static void virtio_gpu_dma_post(struct virtio_gpu_vbuffer *b) {
 #ifdef EXEC_FOUNDATION
-	if (b->objs && b->objs->exec) virtgpu_exec_post(b);
+	if (b->objs && b->objs->operation) virtgpu_exec_post(b);
 #endif
 }
 #endif
@@ -418,6 +453,9 @@ static void fd_install(int fd,struct file *fp) {
 	assert(fd==output_fd && reservations==1 && fp->f_count==0);
 	fp->f_count=1; reservations--; installs++;
 }
+#ifdef TRANSFER_CONTRACT
+#include "virtgpu-transfer-seams.h"
+#endif
 #include "submit-native-resv.h"
 #include "submit-production.h"
 static int close_private(struct file *fp) {
@@ -448,7 +486,12 @@ static int virtqueue_add_sgs(struct netbsd_virtqueue *q,struct linux_virtio_sg *
 	if (advanced) {
 		struct virtio_gpu_vbuffer *b = cookie;
 		queue_calls++;
+#ifdef TRANSFER_CONTRACT
+		assert(transfer_attachment && transfer_attachment->held);
+#endif
+		#if !defined(TRANSFER_CONTRACT) || defined(TRANSFER_FOUNDATION)
 		assert(b->objs->registered && b->objs->prepared);
+#endif
 		for (unsigned i=0;i<b->objs->nents;i++)
 			assert(!b->objs->objs[i]->resv->locked);
 		if (pressure && queue_calls==1) return -ENOSPC;
@@ -660,6 +703,10 @@ run_case(unsigned which)
 #include "virtgpu-exec-cases.h"
 #endif
 
+#ifdef TRANSFER_CONTRACT
+#include "virtgpu-transfer-cases.h"
+#endif
+
 int
 #ifdef COMPLETION_CONTRACT
 submit_contract_main(void)
@@ -667,6 +714,9 @@ submit_contract_main(void)
 main(void)
 #endif
 {
+#ifdef TRANSFER_CONTRACT
+	return transfer_contract_main();
+#endif
 	#if defined(EXEC_CONTRACT) && defined(EXEC_FOUNDATION)
 	return exec_contract_main();
 #endif

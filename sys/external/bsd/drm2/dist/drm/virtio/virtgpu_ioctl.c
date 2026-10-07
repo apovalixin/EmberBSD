@@ -349,115 +349,146 @@ static int virtio_gpu_resource_info_ioctl(struct drm_device *dev, void *data,
 	return 0;
 }
 
-static int virtio_gpu_transfer_from_host_ioctl(struct drm_device *dev,
-					       void *data,
-					       struct drm_file *file)
+/* Transfer retains exactly one acknowledged attachment through acceptance. */
+static int
+virtio_gpu_transfer_3d_ioctl(struct drm_device *dev, struct drm_file *file,
+    u32 handle, u32 offset, u32 level, struct drm_virtgpu_3d_box *box, bool from)
 {
 	struct virtio_gpu_device *vgdev = dev->dev_private;
 	struct virtio_gpu_fpriv *vfpriv = file->driver_priv;
-	struct drm_virtgpu_3d_transfer_from_host *args = data;
-	struct virtio_gpu_object_array *objs;
-	struct virtio_gpu_fence *fence;
+	struct virtio_gpu_object_array *objs = NULL;
+	struct virtio_gpu_fence *fence = NULL;
+	struct drm_gem_object *obj;
+	struct dma_fence **scratch = NULL;
+	size_t scratch_bytes = 0;
+	unsigned int started = (unsigned int)jiffies;
+	bool attached = false, locked = false;
 	int ret;
-	u32 offset = args->offset;
 
-	if (vgdev->has_virgl_3d == false)
+	if (!vgdev->has_virgl_3d)
 		return -ENOSYS;
-
-	objs = virtio_gpu_array_from_handles(file, &args->bo_handle, 1);
-	if (objs == NULL)
+	if (!vfpriv)
+		return -EINVAL;
+	obj = drm_gem_object_lookup(file, handle);
+	if (!obj)
 		return -ENOENT;
-
-	ret = virtio_gpu_array_lock_resv(objs);
-	if (ret != 0)
-		goto err_put_free;
-
+	objs = virtio_gpu_operation_array_alloc(vgdev, 1,
+	    from ? VIRTGPU_OPERATION_FROM_HOST : VIRTGPU_OPERATION_TO_HOST);
+	if (!objs) {
+		drm_gem_object_put_unlocked(obj);
+		return -ENOMEM;
+	}
+	objs->objs[0] = obj;
+	objs->nents = 1;
+	scratch = virtio_gpu_dependency_alloc(vgdev, false, &scratch_bytes);
+	if (IS_ERR(scratch)) {
+		ret = PTR_ERR(scratch);
+		scratch = NULL;
+		goto out;
+	}
 	fence = virtio_gpu_fence_alloc(vgdev);
 	if (!fence) {
 		ret = -ENOMEM;
-		goto err_unlock;
+		goto out;
 	}
-	virtio_gpu_cmd_transfer_from_host_3d
-		(vgdev, vfpriv->ctx_id, offset, args->level,
-		 &args->box, objs, fence);
-	dma_fence_put(&fence->f);
-	return 0;
-
-err_unlock:
-	virtio_gpu_array_unlock_resv(objs);
-err_put_free:
-	virtio_gpu_array_put_free(objs);
+	mutex_lock(&vfpriv->attachment_lock);
+	attached = true;
+	ret = virtio_gpu_transfer_member(vgdev, vfpriv, obj);
+	if (ret)
+		goto out;
+	fence->software_key = vfpriv->software_key;
+	ret = virtio_gpu_array_lock_resv(objs);
+	if (ret)
+		goto out;
+	locked = true;
+	ret = virtio_gpu_object_dependencies(vgdev, obj, scratch,
+	    vgdev->fence_drv.limit, 0, started, false, false, false);
+	if (ret)
+		goto out;
+	/* Both helpers consume the locked array on every return. */
+	if (from)
+		ret = virtio_gpu_cmd_transfer_from_host_3d(vgdev, vfpriv->ctx_id,
+		    offset, level, box, objs, fence);
+	else
+		ret = virtio_gpu_cmd_transfer_to_host_3d(vgdev, vfpriv->ctx_id,
+		    offset, level, box, objs, fence);
+	objs = NULL;
+	locked = false;
+out:
+	if (locked)
+		virtio_gpu_array_unlock_resv(objs);
+	if (attached)
+		mutex_unlock(&vfpriv->attachment_lock);
+	if (objs)
+		virtio_gpu_array_put_free(objs);
+	if (fence)
+		dma_fence_put(&fence->f);
+	kvfree(scratch);
+	virtio_gpu_exec_uncharge(vgdev, scratch_bytes);
 	return ret;
+}
+
+static int virtio_gpu_transfer_from_host_ioctl(struct drm_device *dev,
+    void *data, struct drm_file *file)
+{
+	struct drm_virtgpu_3d_transfer_from_host *args = data;
+
+	return virtio_gpu_transfer_3d_ioctl(dev, file, args->bo_handle,
+	    args->offset, args->level, &args->box, true);
 }
 
 static int virtio_gpu_transfer_to_host_ioctl(struct drm_device *dev, void *data,
-					     struct drm_file *file)
+    struct drm_file *file)
 {
 	struct virtio_gpu_device *vgdev = dev->dev_private;
-	struct virtio_gpu_fpriv *vfpriv = file->driver_priv;
 	struct drm_virtgpu_3d_transfer_to_host *args = data;
 	struct virtio_gpu_object_array *objs;
-	struct virtio_gpu_fence *fence;
-	int ret;
-	u32 offset = args->offset;
 
+	if (vgdev->has_virgl_3d)
+		return virtio_gpu_transfer_3d_ioctl(dev, file, args->bo_handle,
+		    args->offset, args->level, &args->box, false);
+	/* Legacy 2D ownership is unchanged by the explicit 3D contract. */
 	objs = virtio_gpu_array_from_handles(file, &args->bo_handle, 1);
-	if (objs == NULL)
+	if (!objs)
 		return -ENOENT;
-
-	if (!vgdev->has_virgl_3d) {
-		return virtio_gpu_cmd_transfer_to_host_2d
-			(vgdev, offset,
-			 args->box.w, args->box.h, args->box.x, args->box.y,
-			 objs, NULL);
-	} else {
-		ret = virtio_gpu_array_lock_resv(objs);
-		if (ret != 0)
-			goto err_put_free;
-
-		ret = -ENOMEM;
-		fence = virtio_gpu_fence_alloc(vgdev);
-		if (!fence)
-			goto err_unlock;
-
-		virtio_gpu_cmd_transfer_to_host_3d
-			(vgdev,
-			 vfpriv ? vfpriv->ctx_id : 0, offset,
-			 args->level, &args->box, objs, fence);
-		dma_fence_put(&fence->f);
-	}
-	return 0;
-
-err_unlock:
-	virtio_gpu_array_unlock_resv(objs);
-err_put_free:
-	virtio_gpu_array_put_free(objs);
-	return ret;
+	return virtio_gpu_cmd_transfer_to_host_2d(vgdev, args->offset,
+	    args->box.w, args->box.h, args->box.x, args->box.y, objs, NULL);
 }
 
 static int virtio_gpu_wait_ioctl(struct drm_device *dev, void *data,
-				 struct drm_file *file)
+    struct drm_file *file)
 {
+	struct virtio_gpu_device *vgdev = dev->dev_private;
 	struct drm_virtgpu_3d_wait *args = data;
 	struct drm_gem_object *obj;
-	long timeout = 15 * HZ;
+	struct dma_fence **scratch;
+	size_t bytes = 0;
+	unsigned int started = (unsigned int)jiffies;
+	bool nowait = (args->flags & VIRTGPU_WAIT_NOWAIT) != 0;
 	int ret;
 
+	if (args->flags & ~VIRTGPU_WAIT_NOWAIT)
+		return -EINVAL;
 	obj = drm_gem_object_lookup(file, args->handle);
-	if (obj == NULL)
+	if (!obj)
 		return -ENOENT;
-
-	if (args->flags & VIRTGPU_WAIT_NOWAIT) {
-		ret = dma_resv_test_signaled_rcu(obj->resv, true);
-	} else {
-		ret = dma_resv_wait_timeout_rcu(obj->resv, true, true,
-						timeout);
+	scratch = virtio_gpu_dependency_alloc(vgdev, nowait, &bytes);
+	if (IS_ERR(scratch)) {
+		ret = PTR_ERR(scratch);
+		goto out;
 	}
-	if (ret == 0)
-		ret = -EBUSY;
-	else if (ret > 0)
-		ret = 0;
-
+	if (nowait)
+		ret = dma_resv_trylock(obj->resv) ? 0 : -EBUSY;
+	else
+		ret = dma_resv_lock_interruptible(obj->resv, NULL);
+	if (!ret) {
+		ret = virtio_gpu_object_dependencies(vgdev, obj, scratch,
+		    vgdev->fence_drv.limit, 0, started, false, nowait, true);
+		dma_resv_unlock(obj->resv);
+	}
+	kvfree(scratch);
+	virtio_gpu_exec_uncharge(vgdev, bytes);
+out:
 	drm_gem_object_put_unlocked(obj);
 	return ret;
 }

@@ -398,7 +398,8 @@ virtio_gpu_context_key(struct virtio_gpu_device *vgdev, u64 *key)
 }
 
 struct virtio_gpu_object_array *
-virtio_gpu_exec_array_alloc(struct virtio_gpu_device *vgdev, u32 count)
+virtio_gpu_operation_array_alloc(struct virtio_gpu_device *vgdev, u32 count,
+    enum virtgpu_operation_kind kind)
 {
 	struct virtio_gpu_object_array *objs;
 	size_t bytes, unit = sizeof(objs->objs[0]) + sizeof(*objs->members);
@@ -417,9 +418,15 @@ virtio_gpu_exec_array_alloc(struct virtio_gpu_device *vgdev, u32 count)
 	objs->budget_dev = vgdev;
 	objs->budget_bytes = bytes;
 	objs->total = count;
-	objs->exec = true;
+	objs->operation = kind;
 	objs->members = (void *)&objs->objs[count];
 	return objs;
+}
+
+struct virtio_gpu_object_array *
+virtio_gpu_exec_array_alloc(struct virtio_gpu_device *vgdev, u32 count)
+{
+	return virtio_gpu_operation_array_alloc(vgdev, count, VIRTGPU_OPERATION_EXEC);
 }
 
 /* In-place heapsort: no hidden sleep/allocation under the final mutex. */
@@ -493,4 +500,56 @@ virtio_gpu_exec_snapshot(struct virtio_gpu_device *vgdev,
 			return -EINVAL;
 	}
 	return 0;
+}
+
+/* Shared bounded ledger scratch, including nonblocking WAIT admission. */
+struct dma_fence **
+virtio_gpu_dependency_alloc(struct virtio_gpu_device *vgdev, bool nowait,
+    size_t *bytes)
+{
+	struct dma_fence **scratch;
+	size_t count = max(vgdev->fence_drv.limit, 1U), size;
+	int ret;
+
+	*bytes = 0;
+	if (count > SIZE_MAX / sizeof(*scratch))
+		return ERR_PTR(-ENOMEM);
+	size = count * sizeof(*scratch);
+	ret = virtio_gpu_exec_charge(vgdev, size);
+	if (ret)
+		return ERR_PTR(ret);
+	scratch = kvmalloc(size, nowait ? GFP_NOWAIT : GFP_KERNEL);
+	if (!scratch) {
+		virtio_gpu_exec_uncharge(vgdev, size);
+		return ERR_PTR(-ENOMEM);
+	}
+	*bytes = size;
+	return scratch;
+}
+
+/* attachment_lock held, after all handle lookups and scratch allocations. */
+int
+virtio_gpu_transfer_member(struct virtio_gpu_device *vgdev,
+    struct virtio_gpu_fpriv *vfpriv, struct drm_gem_object *obj)
+{
+	struct virtio_gpu_attachment *entry;
+	struct virtio_gpu_object *bo = gem_to_virtio_gpu_obj(obj);
+	bool admitted;
+
+	if (!vfpriv->ctx_id || !vfpriv->software_key)
+		return -EINVAL;
+	if (vfpriv->closing || !vgdev->vqs_ready)
+		return -ENODEV;
+	list_for_each_entry(entry, &vfpriv->attachments, node) {
+		if (entry->obj != obj)
+			continue;
+		if (!virtio_gpu_object_dma_admitted(vgdev, obj))
+			return -EOPNOTSUPP;
+		spin_lock(&vgdev->dma_lock);
+		admitted = bo->dma_lease == VIRTGPU_LEASE_OPEN &&
+		    !bo->release_pending && !vgdev->dma_stopped;
+		spin_unlock(&vgdev->dma_lock);
+		return admitted ? 0 : -EOPNOTSUPP;
+	}
+	return -EINVAL;
 }

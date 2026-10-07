@@ -9,7 +9,7 @@ static bool
 virtgpu_dma_finalize_claim(struct virtio_gpu_object *bo)
 {
 	if (!bo->release_pending || bo->dma_finalizing || bo->dma_members ||
-	    bo->dma_retire_refs || bo->exec_pending || bo->dma_lease == VIRTGPU_LEASE_OPEN ||
+	    bo->dma_retire_refs || bo->operation_pending || bo->dma_lease == VIRTGPU_LEASE_OPEN ||
 	    bo->dma_lease == VIRTGPU_LEASE_CLOSING)
 		return false;
 	bo->dma_finalizing = true;
@@ -26,9 +26,25 @@ virtgpu_dma_sync(struct virtio_gpu_device *vgdev,
 	    0, bo->base.base.size, ops);
 }
 
+/* Direction belongs to the immutable request record, not the wire reply. */
+static int
+virtgpu_operation_sync_ops(enum virtgpu_operation_kind kind, bool post)
+{
+	switch (kind) {
+	case VIRTGPU_OPERATION_TO_HOST:
+		return post ? BUS_DMASYNC_POSTWRITE : BUS_DMASYNC_PREWRITE;
+	case VIRTGPU_OPERATION_FROM_HOST:
+		return post ? BUS_DMASYNC_POSTREAD : BUS_DMASYNC_PREREAD;
+	default:
+		KASSERT(kind == VIRTGPU_OPERATION_EXEC);
+		return post ? BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE :
+		    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE;
+	}
+}
+
 /* Resvs held; registered producer protects PRE against reset closure. */
 static int
-virtgpu_exec_prepare(struct virtio_gpu_vbuffer *vbuf)
+virtgpu_operation_prepare(struct virtio_gpu_vbuffer *vbuf)
 {
 	struct virtio_gpu_device *vgdev = vbuf->vgdev;
 	struct virtio_gpu_object_array *objs = vbuf->objs;
@@ -49,19 +65,19 @@ virtgpu_exec_prepare(struct virtio_gpu_vbuffer *vbuf)
 			goto out;
 		}
 		if (bo->dma_members == UINT_MAX || (!objs->registered &&
-		    bo->exec_pending >= vgdev->fence_drv.limit)) {
+		    bo->operation_pending >= vgdev->fence_drv.limit)) {
 			ret = -EOVERFLOW;
 			goto out;
 		}
 	}
 	if (!objs->registered) {
-		objs->exec_fence = dma_fence_get(&vbuf->fence->f);
+		objs->operation_fence = dma_fence_get(&vbuf->fence->f);
 		for (i = 0; i < objs->nents; i++) {
 			bo = gem_to_virtio_gpu_obj(objs->objs[i]);
 			objs->members[i].bo = bo;
-			objs->members[i].fence = objs->exec_fence;
-			list_add_tail(&objs->members[i].node, &bo->exec_members);
-			bo->exec_pending++;
+			objs->members[i].fence = objs->operation_fence;
+			list_add_tail(&objs->members[i].node, &bo->operation_members);
+			bo->operation_pending++;
 		}
 		objs->registered = true;
 	}
@@ -72,7 +88,7 @@ virtgpu_exec_prepare(struct virtio_gpu_vbuffer *vbuf)
 	/* No failure or allocation after validation: POST will cover every PRE. */
 	for (i = 0; i < objs->nents; i++)
 		virtgpu_dma_sync(vgdev, objs->members[i].bo,
-		    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+		    virtgpu_operation_sync_ops(objs->operation, false));
 	return 0;
 out:
 	spin_unlock(&vgdev->dma_lock);
@@ -80,7 +96,7 @@ out:
 }
 
 static void
-virtgpu_exec_post(struct virtio_gpu_vbuffer *vbuf)
+virtgpu_operation_post(struct virtio_gpu_vbuffer *vbuf)
 {
 	struct virtio_gpu_device *vgdev = vbuf->vgdev;
 	struct virtio_gpu_object_array *objs = vbuf->objs;
@@ -102,7 +118,7 @@ virtgpu_exec_post(struct virtio_gpu_vbuffer *vbuf)
 	spin_unlock(&vgdev->dma_lock);
 	for (i = 0; i < objs->nents; i++)
 		virtgpu_dma_sync(vgdev, objs->members[i].bo,
-		    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+		    virtgpu_operation_sync_ops(objs->operation, true));
 	spin_lock(&vgdev->dma_lock);
 	for (i = 0; i < objs->nents; i++) {
 		bo = objs->members[i].bo;
@@ -114,80 +130,127 @@ virtgpu_exec_post(struct virtio_gpu_vbuffer *vbuf)
 }
 
 static void
-virtgpu_exec_finish(struct virtio_gpu_vbuffer *vbuf)
+virtgpu_operation_finish(struct virtio_gpu_vbuffer *vbuf)
 {
 	struct virtio_gpu_device *vgdev = vbuf->vgdev;
 	struct virtio_gpu_object_array *objs = vbuf->objs;
 	struct dma_fence *fence = NULL;
 	u32 i;
 
-	virtgpu_exec_post(vbuf);
+	virtgpu_operation_post(vbuf);
 	spin_lock(&vgdev->dma_lock);
 	if (objs->registered) {
 		for (i = 0; i < objs->nents; i++) {
 			list_del_init(&objs->members[i].node);
-			objs->members[i].bo->exec_pending--;
+			objs->members[i].bo->operation_pending--;
 		}
 		objs->registered = false;
-		fence = objs->exec_fence;
-		objs->exec_fence = NULL;
+		fence = objs->operation_fence;
+		objs->operation_fence = NULL;
 	}
 	spin_unlock(&vgdev->dma_lock);
 	if (fence)
 		dma_fence_put(fence);
 }
 
-/* All resvs held: no new member can appear, but completion can remove one. */
+/*
+ * One BO's ledger snapshot; reservations stabilize all new additions.
+ * Shared reservation fences have their own count, independent of our limit.
+ */
+int
+virtio_gpu_object_dependencies(struct virtio_gpu_device *vgdev,
+    struct drm_gem_object *obj, struct dma_fence **scratch, unsigned int capacity,
+    u64 key, unsigned int started, bool implicit, bool nowait, bool wait_request)
+{
+	struct virtgpu_operation_member *member;
+	struct virtio_gpu_object *bo = gem_to_virtio_gpu_obj(obj);
+	struct dma_resv_list *shared;
+	struct dma_fence *f, *exclusive;
+	unsigned int n = 0, j, pass;
+	int ret = 0, status;
+	bool busy = false;
+
+	spin_lock(&vgdev->dma_lock);
+	list_for_each_entry(member, &bo->operation_members, node) {
+		KASSERT(n < capacity);
+		scratch[n++] = dma_fence_get(member->fence);
+	}
+	spin_unlock(&vgdev->dma_lock);
+	exclusive = dma_resv_get_excl(obj->resv);
+	shared = dma_resv_get_list(obj->resv);
+	/* Check every already-known error before waiting on any pending fence. */
+	for (pass = 0; pass < (nowait ? 1U : 2U); pass++) {
+		for (j = 0; j < n; j++) {
+			status = virtio_gpu_dependency_status(scratch[j]);
+			if (status < 0) {
+				ret = status;
+				goto out;
+			}
+			busy |= status == 0;
+			if (pass) {
+				ret = wait_request ?
+				    virtio_gpu_wait_dependency(scratch[j], started) :
+				    virtio_gpu_exec_dependency(vgdev, scratch[j],
+				    key, started, implicit);
+				if (ret)
+					goto out;
+			}
+		}
+		if (exclusive) {
+			f = dma_fence_get(exclusive);
+			status = virtio_gpu_dependency_status(f);
+			busy |= status == 0;
+			ret = status < 0 ? status : 0;
+			if (!ret && pass)
+				ret = wait_request ?
+				    virtio_gpu_wait_dependency(f, started) :
+				    virtio_gpu_exec_dependency(vgdev, f, key, started,
+				    implicit);
+			dma_fence_put(f);
+			if (ret)
+				goto out;
+		}
+		for (j = 0; shared && j < shared->shared_count; j++) {
+			f = dma_fence_get(shared->shared[j]);
+			status = virtio_gpu_dependency_status(f);
+			busy |= status == 0;
+			ret = status < 0 ? status : 0;
+			if (!ret && pass)
+				ret = wait_request ?
+				    virtio_gpu_wait_dependency(f, started) :
+				    virtio_gpu_exec_dependency(vgdev, f, key, started,
+				    implicit);
+			dma_fence_put(f);
+			if (ret)
+				goto out;
+		}
+	}
+	if (nowait && busy)
+		ret = -EBUSY;
+out:
+	for (j = 0; j < n; j++)
+		dma_fence_put(scratch[j]);
+	return ret;
+}
+
+/* All snapshot reservations held. Only positively typed EXEC may skip waits. */
 int
 virtio_gpu_exec_dependencies(struct virtio_gpu_device *vgdev,
     struct virtio_gpu_object_array *objs, struct dma_fence **scratch,
     unsigned int capacity, u64 key, unsigned int started)
 {
-	struct virtgpu_exec_member *member;
-	struct virtio_gpu_object *bo;
-	struct dma_resv_list *shared;
-	struct dma_fence *f;
-	unsigned int n, j;
 	u32 i;
 	int ret;
 
 	for (i = 0; i < objs->nents; i++) {
-		bo = gem_to_virtio_gpu_obj(objs->objs[i]);
-		n = 0;
-		spin_lock(&vgdev->dma_lock);
-		list_for_each_entry(member, &bo->exec_members, node) {
-			KASSERT(n < capacity);
-			scratch[n++] = dma_fence_get(member->fence);
-		}
-		spin_unlock(&vgdev->dma_lock);
-		ret = 0;
-		for (j = 0; j < n; j++) {
-			if (!ret)
-				ret = virtio_gpu_exec_dependency(vgdev, scratch[j],
-				    key, started, true);
-			dma_fence_put(scratch[j]);
-		}
+		ret = virtio_gpu_object_dependencies(vgdev, objs->objs[i], scratch,
+		    capacity, key, started, true, false, false);
 		if (ret)
 			return ret;
-		f = dma_resv_get_excl(objs->objs[i]->resv);
-		if (f) {
-			dma_fence_get(f);
-			ret = virtio_gpu_exec_dependency(vgdev, f, key, started, true);
-			dma_fence_put(f);
-			if (ret)
-				return ret;
-		}
-		shared = dma_resv_get_list(objs->objs[i]->resv);
-		for (j = 0; shared && j < shared->shared_count; j++) {
-			f = dma_fence_get(shared->shared[j]);
-			ret = virtio_gpu_exec_dependency(vgdev, f, key, started, true);
-			dma_fence_put(f);
-			if (ret)
-				return ret;
-		}
 	}
 	return 0;
 }
+
 
 void
 virtio_gpu_dma_stop(struct virtio_gpu_device *vgdev)
@@ -207,8 +270,8 @@ virtio_gpu_dma_prepare(struct virtio_gpu_vbuffer *vbuf)
 	bool lease = false;
 	int ret = 0;
 
-	if (vbuf->objs && vbuf->objs->exec)
-		return virtgpu_exec_prepare(vbuf);
+	if (vbuf->objs && vbuf->objs->operation)
+		return virtgpu_operation_prepare(vbuf);
 	if (bo == NULL)
 		return 0;
 	spin_lock(&vgdev->dma_lock);
@@ -256,8 +319,8 @@ virtio_gpu_dma_post(struct virtio_gpu_vbuffer *vbuf)
 	struct virtgpu_dma_op *op = &vbuf->dma_op;
 	struct virtio_gpu_object *bo = op->bo;
 
-	if (vbuf->objs && vbuf->objs->exec) {
-		virtgpu_exec_post(vbuf);
+	if (vbuf->objs && vbuf->objs->operation) {
+		virtgpu_operation_post(vbuf);
 		return;
 	}
 	if (bo == NULL)
@@ -309,8 +372,8 @@ virtio_gpu_dma_finish(struct virtio_gpu_vbuffer *vbuf, int error)
 	struct virtio_gpu_object *bo = op->bo;
 	bool close = false;
 
-	if (vbuf->objs && vbuf->objs->exec) {
-		virtgpu_exec_finish(vbuf);
+	if (vbuf->objs && vbuf->objs->operation) {
+		virtgpu_operation_finish(vbuf);
 		return;
 	}
 	virtio_gpu_dma_post(vbuf);
@@ -319,7 +382,7 @@ virtio_gpu_dma_finish(struct virtio_gpu_vbuffer *vbuf, int error)
 	/* Only verified fenced UNREF success closes here; errors use reset. */
 	spin_lock(&vgdev->dma_lock);
 	if (bo->dma_lease == VIRTGPU_LEASE_OPEN) {
-		KASSERT(!bo->dma_members && !bo->exec_pending && !bo->dma_retire_refs);
+		KASSERT(!bo->dma_members && !bo->operation_pending && !bo->dma_retire_refs);
 		bo->dma_lease = VIRTGPU_LEASE_CLOSING;
 		bo->dma_retire_refs++;
 		close = true;
@@ -343,7 +406,7 @@ virtio_gpu_dma_reset(struct virtio_gpu_device *vgdev)
 			KASSERT(bo->dma_lease != VIRTGPU_LEASE_CLOSING);
 			if (bo->dma_lease != VIRTGPU_LEASE_OPEN)
 				continue;
-			KASSERT(!bo->dma_members && !bo->exec_pending && !bo->dma_retire_refs);
+			KASSERT(!bo->dma_members && !bo->operation_pending && !bo->dma_retire_refs);
 			bo->dma_lease = VIRTGPU_LEASE_CLOSING;
 			bo->dma_retire_refs++;
 			chosen = bo;

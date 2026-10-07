@@ -216,6 +216,24 @@ void virtio_gpu_fail_fences(struct virtio_gpu_device *vgdev, int error)
 	wake_up_all(&vgdev->ctrlq.ack_queue);
 }
 
+/* Exact known cookie errors may precede contiguous timeline publication. */
+int
+virtio_gpu_dependency_status(struct dma_fence *f)
+{
+	struct virtio_gpu_fence *native;
+	int status;
+
+	if (f->ops == &virtio_fence_ops) {
+		native = to_virtio_fence(f);
+		spin_lock(f->lock);
+		status = native->ready ? native->result : 0;
+		spin_unlock(f->lock);
+		if (status < 0)
+			return status;
+	}
+	return dma_fence_get_status(f);
+}
+
 /* One wrap-safe dependency deadline; explicit input never takes the skip path. */
 int
 virtio_gpu_exec_dependency(struct virtio_gpu_device *vgdev, struct dma_fence *f,
@@ -249,4 +267,23 @@ virtio_gpu_exec_dependency(struct virtio_gpu_device *vgdev, struct dma_fence *f,
 		return waited < 0 ? waited : -ETIMEDOUT;
 	status = dma_fence_get_status(f);
 	return status > 0 ? 0 : (status < 0 ? status : -EIO);
+}
+
+/* WAIT distinguishes its own unfinished budget from a stored timeout error. */
+int
+virtio_gpu_wait_dependency(struct dma_fence *f, unsigned int started)
+{
+	unsigned int elapsed;
+	long waited;
+	int status = virtio_gpu_dependency_status(f);
+
+	if (status)
+		return status > 0 ? 0 : status;
+	elapsed = (unsigned int)jiffies - started;
+	waited = dma_fence_wait_timeout(f, true,
+	    elapsed < 15 * HZ ? 15 * HZ - elapsed : 0);
+	if (waited < 0)
+		return waited;
+	status = virtio_gpu_dependency_status(f);
+	return status > 0 ? 0 : (status < 0 ? status : -EBUSY);
 }

@@ -31,6 +31,22 @@ typedef uint32_t __u32, __le32;
 typedef uint64_t __u64, __le64;
 C
 sed -n '/^struct virtio_gpu_wait {/,/^};/p' "$vq" > "$work/resource-layout.h"
+if grep -q '^enum virtgpu_operation_kind ' "$hdr"; then
+    # Keep older baseline fixtures source-compatible with renamed ledger fields.
+    cat >> "$work/resource-layout.h" <<'C'
+#define TRANSFER_FOUNDATION 1
+#define virtgpu_exec_member virtgpu_operation_member
+#define exec_members operation_members
+#define exec_pending operation_pending
+#define exec_fence operation_fence
+#define virtgpu_exec_prepare virtgpu_operation_prepare
+#define virtgpu_exec_post virtgpu_operation_post
+#define virtgpu_exec_finish virtgpu_operation_finish
+C
+    sed -n '/^enum virtgpu_operation_kind /,/^$/p; /^struct virtgpu_operation_member {/,/^};/p' "$hdr" >> "$work/resource-layout.h"
+else
+    printf '#define operation exec\n' >> "$work/resource-layout.h"
+fi
 sed -n '/^enum virtgpu_dma_lease /,/^};/p' "$hdr" >> "$work/resource-layout.h"
 sed -n '/^#define VIRTGPU_CLASSIC_FENCE_MAX /p; /^#define VIRTGPU_EXEC_/p; /^struct virtgpu_exec_member {/,/^};/p' "$hdr" >> "$work/resource-layout.h"
 for name in virtio_gpu_vbuffer virtio_gpu_attachment virtio_gpu_fpriv \

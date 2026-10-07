@@ -24,8 +24,10 @@ The standard VirtGPU ioctl numbers and permission flags are retained;
 unsupported 3D requests fail through their existing feature checks.
 The retained 3D code passes native contracts and object compilation for
 [asynchronous EXECBUFFER errors and private fence descriptors](submit-ownership.md).
-Transfer error propagation and readback DMA preparation remain required
-before VIRGL can be enabled and tested.
+The [explicit 3D transfer and WAIT contract](transfer-wait.md) adds directional
+request phases and exact tracked errors, with host software checks. Legacy 2D
+DMA/CPU ownership and complete 3D request bounds remain required before VIRGL
+can be enabled and tested.
 
 ## Provenance
 

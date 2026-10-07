@@ -32,6 +32,22 @@ typedef uint64_t __u64, __le64;
 C
 layout="$work/submit-layout.h"
 : > "$layout"
+if grep -q '^enum virtgpu_operation_kind ' "$hdr"; then
+    # Keep older baseline fixtures source-compatible with renamed ledger fields.
+    cat >> "$layout" <<'C'
+#define TRANSFER_FOUNDATION 1
+#define virtgpu_exec_member virtgpu_operation_member
+#define exec_members operation_members
+#define exec_pending operation_pending
+#define exec_fence operation_fence
+#define virtgpu_exec_prepare virtgpu_operation_prepare
+#define virtgpu_exec_post virtgpu_operation_post
+#define virtgpu_exec_finish virtgpu_operation_finish
+C
+    sed -n '/^enum virtgpu_operation_kind /,/^$/p; /^struct virtgpu_operation_member {/,/^};/p' "$hdr" >> "$layout"
+else
+    printf '#define operation exec\n' >> "$layout"
+fi
 sed -n '/^#define VIRTGPU_CLASSIC_FENCE_MAX /p' "$hdr" >> "$layout"
 if grep -q '^#define VIRTGPU_EXEC_MAX_OBJECTS' "$hdr"; then
     printf '#define EXEC_FOUNDATION 1\n' >> "$layout"
@@ -105,12 +121,16 @@ if grep -q '^#define VIRTGPU_EXEC_MAX_OBJECTS' "$hdr"; then
     extract virtio_gpu_exec_charge "$gem" 'static int' >> "$prod"
     extract virtio_gpu_exec_uncharge "$gem" 'static void' >> "$prod"
     extract virtio_gpu_context_key "$gem" 'static int __attribute__((unused))' >> "$prod"
+    if grep -q '^virtio_gpu_dependency_status(' "$fence"; then
+        extract virtio_gpu_dependency_status "$fence" 'static int' >> "$prod"
+        extract virtio_gpu_wait_dependency "$fence" 'static int' >> "$prod"
+    fi
     extract virtio_gpu_exec_dependency "$fence" 'static int' >> "$prod"
 fi
 extract virtio_gpu_array_alloc "$gem" 'static struct virtio_gpu_object_array *' >> "$prod"
 for name in virtio_gpu_array_free virtio_gpu_array_put_free; do extract "$name" "$gem" 'static void' >> "$prod"; done
 # Baseline ioctl and completion cases call this; whole-context EXEC does not.
-if [ "${COMPLETION_CONTRACT:-0}" = 1 ] ||
+if [ "${COMPLETION_CONTRACT:-0}" = 1 ] || [ "${TRANSFER_CONTRACT:-0}" = 1 ] ||
     ! grep -q '^#define VIRTGPU_EXEC_MAX_OBJECTS' "$hdr"; then
     extract virtio_gpu_array_from_handles "$gem" 'static struct virtio_gpu_object_array *' >> "$prod"
 fi
@@ -126,14 +146,30 @@ for name in virtio_gpu_array_unlock_resv virtio_gpu_array_add_fence virtio_gpu_a
 done
 if grep -q '^#define VIRTGPU_EXEC_MAX_OBJECTS' "$hdr"; then
     extract virtio_gpu_array_add_obj "$gem" 'static void' >> "$prod"
+    if grep -q '^virtio_gpu_operation_array_alloc(' "$gem"; then
+        extract virtio_gpu_operation_array_alloc "$gem" 'static struct virtio_gpu_object_array *' >> "$prod"
+    fi
     extract virtio_gpu_exec_array_alloc "$gem" 'static struct virtio_gpu_object_array *' >> "$prod"
     extract virtgpu_exec_sift "$gem" 'static void' >> "$prod"
     extract virtio_gpu_exec_snapshot "$gem" 'static int' >> "$prod"
     dma="$base/virtio/virtgpu_dma.c"
+if grep -q '^virtgpu_operation_prepare(' "$dma"; then
+    extract virtgpu_operation_sync_ops "$dma" 'static int' >> "$prod"
+    extract virtgpu_operation_prepare "$dma" 'static int' >> "$prod"
+    extract virtgpu_operation_post "$dma" 'static void' >> "$prod"
+    extract virtgpu_operation_finish "$dma" 'static void' >> "$prod"
+    extract virtio_gpu_object_dependencies "$dma" 'static int' >> "$prod"
+else
     extract virtgpu_exec_prepare "$dma" 'static int' >> "$prod"
     extract virtgpu_exec_post "$dma" 'static void' >> "$prod"
     extract virtgpu_exec_finish "$dma" 'static void' >> "$prod"
+fi
     extract virtio_gpu_exec_dependencies "$dma" 'static int' >> "$prod"
+fi
+if [ "${TRANSFER_CONTRACT:-0}" = 1 ]; then
+    sed -n '/^struct drm_virtgpu_3d_box {/,/^};/p; /^struct drm_virtgpu_3d_transfer_from_host {/,/^};/p; /^struct drm_virtgpu_3d_transfer_to_host {/,/^};/p; /^struct drm_virtgpu_3d_wait {/,/^};/p; /^#define VIRTGPU_WAIT_NOWAIT/p' "$base/dist/include/uapi/drm/virtgpu_drm.h" >> "$layout"
+    printf 'static void\n' >> "$prod"
+    sed -n '/^virtio_gpu_complete_transfer(/,/^}/p' "$vq" >> "$prod"
 fi
 extract virtio_gpu_get_vbuf "$vq" 'static struct virtio_gpu_vbuffer *' >> "$prod"
 extract virtio_gpu_alloc_cmd "$vq" 'static void *' >> "$prod"
@@ -151,6 +187,21 @@ extract virtio_gpu_queue_fenced_ctrl_buffer "$vq" 'static int' >> "$prod"
 type=$(awk '/^(void|int) virtio_gpu_cmd_submit\(/ { print "static " $1 }' "$vq")
 extract virtio_gpu_cmd_submit "$vq" "$type" >> "$prod"
 extract virtio_gpu_execbuffer_ioctl "$base/dist/drm/virtio/virtgpu_ioctl.c" 'static int' >> "$prod"
+if [ "${TRANSFER_CONTRACT:-0}" = 1 ]; then
+    extract convert_to_hw_box "$vq" 'static void' >> "$prod"
+    for name in virtio_gpu_cmd_transfer_to_host_3d virtio_gpu_cmd_transfer_from_host_3d; do
+        type=$(awk -v name="$name" '$0 ~ "^(void|int) " name "[(]" { print "static " $1 }' "$vq")
+        extract "$name" "$vq" "$type" >> "$prod"
+    done
+if grep -q '^virtio_gpu_transfer_3d_ioctl(' "$base/dist/drm/virtio/virtgpu_ioctl.c"; then
+    extract virtio_gpu_dependency_alloc "$gem" 'static struct dma_fence **' >> "$prod"
+    extract virtio_gpu_transfer_member "$gem" 'static int' >> "$prod"
+    extract virtio_gpu_transfer_3d_ioctl "$base/dist/drm/virtio/virtgpu_ioctl.c" 'static int' >> "$prod"
+fi
+    for name in virtio_gpu_transfer_from_host_ioctl virtio_gpu_transfer_to_host_ioctl virtio_gpu_wait_ioctl; do
+        extract "$name" "$base/dist/drm/virtio/virtgpu_ioctl.c" 'static int' >> "$prod"
+    done
+fi
 ${CC:-cc} -std=gnu11 -Wall -Wextra -Werror -Wno-unused-parameter \
     ${SUBMIT_TEST_CFLAGS:-} -I"$work" -I"$base/include" \
     -I"$tools" "$tools/virtgpu-submit-fixture.c" -o "$work/test"

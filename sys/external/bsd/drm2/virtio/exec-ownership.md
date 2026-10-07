@@ -48,7 +48,8 @@ registered before reservation replacement/unlock. Each attempt then issues
 full-map PREWRITE|PREREAD. No fallible metadata allocation occurs after PRE.
 The common queue tracks reservation-lock ownership separately from emission.
 
-Each BO ledger retains all outstanding EXEC members, independently of the
+Each BO ledger retains outstanding EXEC and [explicit 3D transfer](transfer-wait.md)
+members, independently of the
 reservation slot. Descriptor pressure closes only the rejected attempt's
 POSTWRITE|POSTREAD token before the existing bounded wait. The original
 record and fence survive; retry opens a new token without another emission.
@@ -125,8 +126,9 @@ objects built with base GCC 12.5 and normal `-Werror` in 2.39 seconds,
 with 67,412 KiB peak RSS and no swaps. No kernel was linked, installed or
 booted; the partial object directory is not a matched kernel artifact.
 
-Transfers, WAIT status, console/cursor CPU copies, packet/cap enforcement,
-and live loaded-map/host qualification remain separate.
+[Explicit 3D transfer and WAIT](transfer-wait.md) now share this typed ledger
+and metadata budget. Legacy 2D ownership, console/cursor CPU copies, packet/cap
+enforcement and live loaded-map/host qualification remain separate.
 [Classic wire-fence exhaustion](classic-fence-range.md) now has a separate
 native software/object contract preserving this ledger and rejection ownership.
 This stage does not enable acceleration or certify arbitrary bus_dma backends.

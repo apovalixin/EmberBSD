@@ -147,7 +147,7 @@ struct drm_gem_object *virtio_gpu_create_object(struct drm_device *dev,
 	if (!bo)
 		return NULL;
 
-	INIT_LIST_HEAD(&bo->exec_members);
+	INIT_LIST_HEAD(&bo->operation_members);
 	bo->base.base.funcs = &virtio_gpu_gem_funcs;
 	return &bo->base.base;
 }
