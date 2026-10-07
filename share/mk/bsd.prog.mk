@@ -52,9 +52,8 @@ MKDEP_SUFFIXES?=	.o .ln .d
 .if (${MKCTF:Uno} != "no") && (${CFLAGS:M-g} != "")
 CTFFLAGS+= -g
 CTFMFLAGS+= -g
-.if defined(HAVE_GCC)
-#CFLAGS+=-gdwarf-2
-.endif
+# Origin: EmberBSD (AI-assisted), keep DWARF readable by ctfconvert.
+CFLAGS+= -gdwarf-4
 .endif
 
 # ELF platforms depend on crti.o, crtbegin.o, crtend.o, and crtn.o

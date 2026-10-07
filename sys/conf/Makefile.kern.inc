@@ -139,6 +139,8 @@ COPTS.debugsyms.c+=	-g
 
 # Add CTF sections for DTrace
 .if defined(CTFCONVERT)
+# Origin: EmberBSD (AI-assisted), ctfconvert accepts DWARF through version 4.
+CFLAGS+=	-gdwarf-4
 COMPILE_CTFCONVERT=	${_MKSHECHO}\
 			${CTFCONVERT} ${CTFFLAGS} ${.TARGET} && \
 			${CTFCONVERT} ${CTFFLAGS} ${.TARGET}
