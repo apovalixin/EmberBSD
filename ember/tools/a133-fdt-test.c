@@ -147,6 +147,19 @@ main(void)
 	assert(fdt_node_offset_by_phandle(fdt, fdt32_to_cpu(*cells)) >= 0);
 	assert(sun50i_a133_fdt_fixup(fdt) == 0);
 	/* The touch controller is optional; other resources must still attach. */
+	/* A changed reset route must revoke a previously valid board marker. */
+	provider = fdt_path_offset(fdt,
+	    "/soc@03000000/twi@0x05002c00/goodix_ts@5d");
+	{
+		fdt32_t invalid[7] = {cpu_to_fdt32(99), cpu_to_fdt32(7),
+		    cpu_to_fdt32(15), 0, 0, 0, 0};
+		assert(fdt_setprop(fdt, provider, "goodix,rst-gpio",
+		    invalid, sizeof(invalid)) == 0);
+	}
+	assert(sun50i_a133_fdt_fixup(fdt) == 0);
+	provider = fdt_path_offset(fdt,
+	    "/soc@03000000/twi@0x05002c00/goodix_ts@5d");
+	assert(fdt_getprop(fdt, provider, "ember,ys-m33-reset", NULL) == NULL);
 	fixture(fdt, 16384, "allwinner,a133");
 	twi = fdt_path_offset(fdt, "/soc@03000000/twi@0x05002c00");
 	assert(fdt_del_node(fdt, twi) == 0);

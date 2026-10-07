@@ -117,7 +117,7 @@ gt9xx_poll(void *arg)
 	/* A non-MPSAFE thread serializes wscons operations with the kernel lock. */
 	KASSERT(KERNEL_LOCKED_P());
 	while (!sc->sc_dying) {
-		if (!sc->sc_enabled)
+		if (!sc->sc_enabled || sc->sc_mouse == NULL)
 			goto wait;
 		error = gt9xx_read(sc, 0x814e, data, 1);
 		if (error != 0)
@@ -200,19 +200,23 @@ gt9xx_attach(device_t parent, device_t self, void *aux)
 	aprint_normal_dev(self, "GT9271 firmware %04x, %ux%u, single pointer, "
 	    "20 ms polling interval\n", id[4] | id[5] << 8,
 	    sc->sc_maxx, sc->sc_maxy);
-	mouse.accessops = &gt9xx_accessops;
-	mouse.accesscookie = sc;
-	sc->sc_mouse = config_found(self, &mouse, wsmousedevprint, CFARGS_NONE);
-	if (sc->sc_mouse == NULL)
-		return;
 	error = kthread_create(PRI_NONE, KTHREAD_MUSTJOIN, NULL,
 	    gt9xx_poll, sc, &sc->sc_thread, "%s", device_xname(self));
 	if (error != 0) {
 		aprint_error_dev(self, "cannot create sensor poller\n");
-		(void)config_detach_children(self, 0);
 		return;
 	}
+	/* An already-open mux can call enable from inside config_found. */
 	sc->sc_ready = true;
+	mouse.accessops = &gt9xx_accessops;
+	mouse.accesscookie = sc;
+	sc->sc_mouse = config_found(self, &mouse, wsmousedevprint, CFARGS_NONE);
+	if (sc->sc_mouse == NULL) {
+		sc->sc_ready = false;
+		sc->sc_dying = true;
+		(void)kthread_join(sc->sc_thread);
+		sc->sc_thread = NULL;
+	}
 }
 
 static int
