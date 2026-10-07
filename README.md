@@ -294,10 +294,13 @@ on every board in the hardware catalog.
   The paired [GL/EGL wait adaptation](https://github.com/neonix20b/EmberBSD-Ports/blob/main/probes/utm-virgl-host/wait-errors.md)
   also prevents failed waits from becoming successful fence callbacks;
   causal renderer-to-QEMU source checks pass in all three modes.
-  Focused macOS/arm64 source and sanitizer checks pass; full host builds,
-  native lifetime qualification, remaining bounds and error propagation are pending.
-  VirGL stays disabled; GPU rendering, reliable console recovery and Vulkan
-  Compute are not yet established.
+  A [full private renderer build](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/utm-virgl-host/host)
+  with current libepoxy 1.5.10 passes direct texture readback, native fences
+  and three cleanup/reinit cycles on Apple M3/ANGLE Metal. It also fixes a
+  reproduced absent-context cleanup error. This is host renderer acceptance;
+  full QEMU integration, native reset/display qualification and guest Mesa
+  remain pending. Guest VirGL stays disabled; an accelerated EmberBSD session,
+  reliable console recovery and Vulkan Compute are not yet established.
 - **Physical GPU and NPU porting targets:** CIX P1 is the first selected
   direction: Mali-G720 through Panthor/[Mesa PanVK](https://docs.mesa3d.org/drivers/panfrost.html),
   and Zhouyi v3/X2 through the [Compass driver/runtime sources](https://github.com/Arm-China/Compass_NPU_Driver).
