@@ -209,3 +209,38 @@ void virtio_gpu_fail_fences(struct virtio_gpu_device *vgdev, int error)
 	spin_unlock(&drv->lock);
 	wake_up_all(&vgdev->ctrlq.ack_queue);
 }
+
+/* One wrap-safe dependency deadline; explicit input never takes the skip path. */
+int
+virtio_gpu_exec_dependency(struct virtio_gpu_device *vgdev, struct dma_fence *f,
+    u64 key, unsigned int started, bool implicit)
+{
+	struct virtio_gpu_fence *native;
+	unsigned int elapsed;
+	long waited;
+	int status;
+	bool skip = false;
+
+	if (!f)
+		return 0;
+	if (f->ops == &virtio_fence_ops) {
+		native = to_virtio_fence(f);
+		spin_lock(f->lock);
+		status = native->ready ? native->result : 0;
+		skip = implicit && native->drv == &vgdev->fence_drv &&
+		    native->exec && native->software_key == key;
+		spin_unlock(f->lock);
+		/* A known cookie error must not hide behind the timeline prefix. */
+		if (status < 0)
+			return status;
+		if (skip)
+			return 0;
+	}
+	elapsed = (unsigned int)jiffies - started;
+	waited = dma_fence_wait_timeout(f, true,
+	    elapsed < 15 * HZ ? 15 * HZ - elapsed : 0);
+	if (waited <= 0)
+		return waited < 0 ? waited : -ETIMEDOUT;
+	status = dma_fence_get_status(f);
+	return status > 0 ? 0 : (status < 0 ? status : -EIO);
+}

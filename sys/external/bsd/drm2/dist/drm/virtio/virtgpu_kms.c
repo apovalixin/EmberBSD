@@ -383,6 +383,11 @@ int virtio_gpu_driver_open(struct drm_device *dev, struct drm_file *file)
 	if (!vfpriv)
 		return -ENOMEM;
 
+	id = virtio_gpu_context_key(vgdev, &vfpriv->software_key);
+	if (id) {
+		kfree(vfpriv);
+		return id;
+	}
 	strlcpy(dbgname, current->p_comm, sizeof(dbgname));
 	id = virtio_gpu_context_create(vgdev, strlen(dbgname), dbgname);
 	if (id < 0) {
@@ -411,6 +416,7 @@ void virtio_gpu_driver_postclose(struct drm_device *dev, struct drm_file *file)
 		return;
 
 	mutex_lock(&vfpriv->attachment_lock);
+	vfpriv->closing = true;
 	virtio_gpu_context_destroy(vgdev, vfpriv->ctx_id);
 	/* Core normally closed every handle before reaching postclose. */
 	WARN_ON(!list_empty(&vfpriv->attachments));
@@ -419,6 +425,7 @@ void virtio_gpu_driver_postclose(struct drm_device *dev, struct drm_file *file)
 		drm_gem_object_put_unlocked(entry->obj);
 		kfree(entry);
 	}
+	vfpriv->attachment_count = 0;
 	mutex_unlock(&vfpriv->attachment_lock);
 	linux_mutex_destroy(&vfpriv->attachment_lock);
 	kfree(vfpriv);

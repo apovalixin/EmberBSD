@@ -92,7 +92,8 @@ struct virtio_gpu_object {
 	bool dma_eligible;
 	bool dma_required;
 	enum virtgpu_dma_lease dma_lease;
-	struct list_head dma_registry;
+	struct list_head dma_registry, exec_members;
+	unsigned int exec_pending;
 	unsigned int dma_members, dma_retire_refs;
 	bool release_pending, dma_finalizing;
 	bool dumb;
@@ -101,7 +102,23 @@ struct virtio_gpu_object {
 #define gem_to_virtio_gpu_obj(gobj) \
 	container_of((gobj), struct virtio_gpu_object, base.base)
 
+#define VIRTGPU_EXEC_MAX_OBJECTS 65536U
+#define VIRTGPU_EXEC_BUDGET (16U * 1024U * 1024U)
+
+/* A ledger member survives all descriptor-pressure token attempts. */
+struct virtgpu_exec_member {
+	struct list_head node;
+	struct virtio_gpu_object *bo;
+	struct dma_fence *fence;
+};
+
 struct virtio_gpu_object_array {
+	struct virtio_gpu_device *budget_dev;
+	size_t budget_bytes;
+	struct virtgpu_exec_member *members;
+	struct dma_fence *exec_fence;
+	bool exec, registered, prepared;
+
 	struct ww_acquire_ctx ticket;
 	struct list_head next;
 	u32 nents, total;
@@ -130,6 +147,8 @@ struct virtio_gpu_fence_driver {
 struct virtio_gpu_fence {
 	struct dma_fence f;
 	bool ready;
+	bool exec;
+	u64 software_key;
 	int result;
 	struct virtio_gpu_fence_driver *drv;
 	struct list_head node;
@@ -234,6 +253,8 @@ struct virtio_gpu_device {
 	spinlock_t dma_lock;
 	struct list_head dma_leases;
 	bool dma_stopped;
+	size_t exec_bytes;
+	u64 next_context_key;
 
 	struct kmem_cache *vbufs;
 	bool vqs_ready;
@@ -278,11 +299,26 @@ struct virtio_gpu_attachment {
 
 struct virtio_gpu_fpriv {
 	uint32_t ctx_id;
+	u64 software_key;
+	u32 attachment_count;
+	bool closing;
 	struct mutex attachment_lock;
 	struct list_head attachments;
 };
 
+int virtio_gpu_exec_charge(struct virtio_gpu_device *, size_t);
+void virtio_gpu_exec_uncharge(struct virtio_gpu_device *, size_t);
+int virtio_gpu_context_key(struct virtio_gpu_device *, u64 *);
+struct virtio_gpu_object_array *virtio_gpu_exec_array_alloc(struct virtio_gpu_device *, u32);
+int virtio_gpu_exec_snapshot(struct virtio_gpu_device *, struct virtio_gpu_fpriv *,
+    struct virtio_gpu_object_array *, struct virtio_gpu_object_array *);
+int virtio_gpu_exec_dependencies(struct virtio_gpu_device *,
+    struct virtio_gpu_object_array *, struct dma_fence **, unsigned int,
+    u64, unsigned int);
+int virtio_gpu_exec_dependency(struct virtio_gpu_device *, struct dma_fence *,
+    u64, unsigned int, bool);
 /* virtio_ioctl.c */
+
 #define DRM_VIRTIO_NUM_IOCTLS 10
 extern struct drm_ioctl_desc virtio_gpu_ioctls[DRM_VIRTIO_NUM_IOCTLS];
 

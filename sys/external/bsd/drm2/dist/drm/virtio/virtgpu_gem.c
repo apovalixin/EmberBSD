@@ -132,7 +132,7 @@ int virtio_gpu_gem_object_open(struct drm_gem_object *obj,
 
 	/* PRIME may hold prime.lock; release this lock before returning to core. */
 	mutex_lock(&vfpriv->attachment_lock);
-	if (!vgdev->vqs_ready) {
+	if (!vgdev->vqs_ready || vfpriv->closing) {
 		ret = -ENODEV;
 		goto out;
 	}
@@ -147,6 +147,10 @@ int virtio_gpu_gem_object_open(struct drm_gem_object *obj,
 			ret = -EOVERFLOW;
 		else
 			entry->handles++;
+		goto out;
+	}
+	if (vfpriv->attachment_count == VIRTGPU_EXEC_MAX_OBJECTS) {
+		ret = -ENOMEM;
 		goto out;
 	}
 	entry = kzalloc(sizeof(*entry), GFP_KERNEL);
@@ -177,6 +181,7 @@ int virtio_gpu_gem_object_open(struct drm_gem_object *obj,
 	entry->obj = obj;
 	entry->handles = 1;
 	list_add_tail(&entry->node, &vfpriv->attachments);
+	vfpriv->attachment_count++;
 out:
 	mutex_unlock(&vfpriv->attachment_lock);
 	return ret;
@@ -215,6 +220,7 @@ void virtio_gpu_gem_object_close(struct drm_gem_object *obj,
 		if (ret)
 			virtio_gpu_stop(vgdev, ret);
 		list_del(&entry->node);
+		vfpriv->attachment_count--;
 		drm_gem_object_put_unlocked(entry->obj);
 		kfree(entry);
 		goto out;
@@ -231,7 +237,7 @@ struct virtio_gpu_object_array *virtio_gpu_array_alloc(u32 nents)
 	struct virtio_gpu_object_array *objs;
 	size_t size = sizeof(*objs) + sizeof(objs->objs[0]) * nents;
 
-	objs = kmalloc(size, GFP_KERNEL);
+	objs = kzalloc(size, GFP_KERNEL);
 	if (!objs)
 		return NULL;
 
@@ -242,7 +248,12 @@ struct virtio_gpu_object_array *virtio_gpu_array_alloc(u32 nents)
 
 static void virtio_gpu_array_free(struct virtio_gpu_object_array *objs)
 {
+	struct virtio_gpu_device *vgdev = objs->budget_dev;
+	size_t bytes = objs->budget_bytes;
+
 	kfree(objs);
+	if (vgdev)
+		virtio_gpu_exec_uncharge(vgdev, bytes);
 }
 
 struct virtio_gpu_object_array*
@@ -287,6 +298,8 @@ int virtio_gpu_array_lock_resv(struct virtio_gpu_object_array *objs)
 	} else {
 		ret = drm_gem_lock_reservations(objs->objs, objs->nents,
 						&objs->ticket);
+		if (ret)
+			ww_acquire_fini(&objs->ticket);
 	}
 	return ret;
 }
@@ -344,4 +357,140 @@ void virtio_gpu_array_put_free_work(struct work_struct *work)
 		spin_lock(&vgdev->obj_free_lock);
 	}
 	spin_unlock(&vgdev->obj_free_lock);
+}
+
+/* Charged before allocation; the delayed array worker returns its own charge. */
+int
+virtio_gpu_exec_charge(struct virtio_gpu_device *vgdev, size_t bytes)
+{
+	int ret = 0;
+
+	spin_lock(&vgdev->dma_lock);
+	if (bytes > VIRTGPU_EXEC_BUDGET - vgdev->exec_bytes)
+		ret = -ENOMEM;
+	else
+		vgdev->exec_bytes += bytes;
+	spin_unlock(&vgdev->dma_lock);
+	return ret;
+}
+
+void
+virtio_gpu_exec_uncharge(struct virtio_gpu_device *vgdev, size_t bytes)
+{
+	spin_lock(&vgdev->dma_lock);
+	KASSERT(bytes <= vgdev->exec_bytes);
+	vgdev->exec_bytes -= bytes;
+	spin_unlock(&vgdev->dma_lock);
+}
+
+int
+virtio_gpu_context_key(struct virtio_gpu_device *vgdev, u64 *key)
+{
+	int ret = 0;
+
+	spin_lock(&vgdev->dma_lock);
+	if (vgdev->next_context_key == UINT64_MAX)
+		ret = -EOVERFLOW;
+	else
+		*key = ++vgdev->next_context_key;
+	spin_unlock(&vgdev->dma_lock);
+	return ret;
+}
+
+struct virtio_gpu_object_array *
+virtio_gpu_exec_array_alloc(struct virtio_gpu_device *vgdev, u32 count)
+{
+	struct virtio_gpu_object_array *objs;
+	size_t bytes, unit = sizeof(objs->objs[0]) + sizeof(*objs->members);
+
+	if (count > VIRTGPU_EXEC_MAX_OBJECTS ||
+	    count > (SIZE_MAX - sizeof(*objs)) / unit)
+		return NULL;
+	bytes = sizeof(*objs) + count * unit;
+	if (virtio_gpu_exec_charge(vgdev, bytes))
+		return NULL;
+	objs = kzalloc(bytes, GFP_KERNEL);
+	if (!objs) {
+		virtio_gpu_exec_uncharge(vgdev, bytes);
+		return NULL;
+	}
+	objs->budget_dev = vgdev;
+	objs->budget_bytes = bytes;
+	objs->total = count;
+	objs->exec = true;
+	objs->members = (void *)&objs->objs[count];
+	return objs;
+}
+
+/* In-place heapsort: no hidden sleep/allocation under the final mutex. */
+static void
+virtgpu_exec_sift(struct drm_gem_object **objects, u32 root, u32 count)
+{
+	struct drm_gem_object *tmp;
+	u32 child;
+
+	while (root < count / 2) {
+		child = root * 2 + 1;
+		if (child + 1 < count &&
+		    (uintptr_t)objects[child] < (uintptr_t)objects[child + 1])
+			child++;
+		if ((uintptr_t)objects[root] >= (uintptr_t)objects[child])
+			break;
+		tmp = objects[root];
+		objects[root] = objects[child];
+		objects[child] = tmp;
+		root = child;
+	}
+}
+
+/* attachment_lock held. All storage exists, and hints already own references. */
+int
+virtio_gpu_exec_snapshot(struct virtio_gpu_device *vgdev,
+    struct virtio_gpu_fpriv *vfpriv, struct virtio_gpu_object_array *objs,
+    struct virtio_gpu_object_array *hints)
+{
+	struct virtio_gpu_attachment *entry;
+	struct virtio_gpu_object *bo;
+	struct drm_gem_object *tmp;
+	u32 i, lo, hi, mid;
+	bool admitted;
+
+	if (vfpriv->closing || !vgdev->vqs_ready)
+		return -ENODEV;
+	if (vfpriv->attachment_count > objs->total)
+		return -EAGAIN;
+	list_for_each_entry(entry, &vfpriv->attachments, node) {
+		if (!virtio_gpu_object_dma_admitted(vgdev, entry->obj))
+			return -EOPNOTSUPP;
+		bo = gem_to_virtio_gpu_obj(entry->obj);
+		spin_lock(&vgdev->dma_lock);
+		admitted = bo->dma_lease == VIRTGPU_LEASE_OPEN &&
+		    !bo->release_pending && !vgdev->dma_stopped;
+		spin_unlock(&vgdev->dma_lock);
+		if (!admitted)
+			return -EOPNOTSUPP;
+		virtio_gpu_array_add_obj(objs, entry->obj);
+	}
+	for (i = objs->nents / 2; i > 0; i--)
+		virtgpu_exec_sift(objs->objs, i - 1, objs->nents);
+	for (i = objs->nents; i > 1; i--) {
+		tmp = objs->objs[0];
+		objs->objs[0] = objs->objs[i - 1];
+		objs->objs[i - 1] = tmp;
+		virtgpu_exec_sift(objs->objs, 0, i - 1);
+	}
+	for (i = 0; hints && i < hints->nents; i++) {
+		lo = 0;
+		hi = objs->nents;
+		while (lo < hi) {
+			mid = lo + (hi - lo) / 2;
+			if ((uintptr_t)objs->objs[mid] < (uintptr_t)hints->objs[i])
+				lo = mid + 1;
+			else
+				hi = mid;
+		}
+		if (lo == objs->nents || objs->objs[lo] != hints->objs[i])
+			return -EINVAL;
+	}
+	return 0;
 }

@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <limits.h>
 #include <unistd.h>
 #include <linux/virtio_gpu.h>
 
@@ -21,6 +22,7 @@ typedef int atomic_t;
 #define atomic_dec(p) (--*(p))
 #define atomic_read(p) (*(p))
 #define atomic_set(p,v) (*(p)=(v))
+#define WARN_ON_ONCE(c) WARN_ON(c)
 #define WARN_ON(c) (assert(!(c)), 0)
 #define GFP_KERNEL 0
 #define GFP_ATOMIC 0
@@ -64,7 +66,8 @@ typedef struct mutex spinlock_t;
 typedef struct mutex kmutex_t;
 typedef struct { struct mutex lock; int cv; } wait_queue_head_t;
 #define DRM_WAKEUP_ALL(cv,lock) ((void)(cv),(void)(lock))
-static void mutex_lock(struct mutex *m) { assert(!m->held); m->held=1; }
+static void (*lock_hook)(struct mutex *);
+static void mutex_lock(struct mutex *m) { assert(!m->held); m->held=1; if(lock_hook) lock_hook(m); }
 static void mutex_unlock(struct mutex *m) {
 	assert(m->held); m->held=0;
 #ifdef COMPLETION_CONTRACT
@@ -97,6 +100,7 @@ static void list_del_init(struct list_head *p) { list_del(p); INIT_LIST_HEAD(p);
 	    &p->m!=(h); p=n,n=container_of(n->m.next,__typeof__(*n),m))
 struct dma_fence {
 	int refs, error, f_magic;
+	const struct dma_fence_ops *ops;
 	bool signaled, heap;
 	uint64_t seqno;
 	spinlock_t *lock;
@@ -104,7 +108,10 @@ struct dma_fence {
 struct dma_fence_cb { int unused; };
 struct dma_fence_ops { int unused; };
 static const struct dma_fence_ops virtio_fence_ops;
-struct ww_acquire_ctx { int unused; };
+struct ww_class { uint64_t wwc_ticket; };
+struct ww_acquire_ctx { struct ww_class *wwx_class; void *wwx_owner; uint64_t wwx_ticket; unsigned wwx_acquired; bool wwx_acquire_done; };
+static struct ww_class reservation_ww_class;
+
 struct work_struct { int unused; };
 struct irq_work { void (*fn)(struct irq_work *); };
 struct selinfo { int initialized; };
@@ -135,12 +142,24 @@ struct virtio_gpu_device {
 	struct mutex submit_lock;
 	struct virtio_gpu_fence_driver fence_drv;
 	spinlock_t obj_free_lock;
+	spinlock_t dma_lock;
+	bool dma_stopped;
+	size_t exec_bytes;
+	u64 next_context_key;
 	struct list_head obj_free_list;
 	struct work_struct obj_free_work;
 };
 struct drm_device { struct virtio_gpu_device *dev_private; };
 struct drm_file { struct virtio_gpu_fpriv *driver_priv; };
-struct reservation { bool locked; struct dma_fence *fence; };
+struct dma_resv_list { unsigned int shared_count; struct dma_fence *shared[4]; };
+struct dma_resv { bool locked; struct ww_acquire_ctx *owner; struct dma_fence *fence_excl; struct dma_resv_list *fence, shared; };
+#define reservation dma_resv
+struct dma_resv_write_ticket { int unused; };
+#define dma_resv_held(r) ((r)->locked)
+#define dma_resv_write_begin(r,t) ((void)(r), (void)(t))
+#define dma_resv_write_commit(r,t) ((void)(r), (void)(t))
+#define atomic_store_relaxed(p,v) (*(p)=(v))
+#define atomic64_inc_return(p) (++*(p))
 struct drm_gem_object { unsigned refs; struct reservation *resv; };
 
 static int alloc_calls, fail_alloc, live, copy_calls, fail_copy, lookup_calls, fail_lookup;
@@ -151,8 +170,57 @@ static int files_allocated, sync_created;
 static struct dma_fence *input;
 static struct virtio_gpu_vbuffer *pending;
 static struct virtio_gpu_device device;
+#if defined(EXEC_CONTRACT) && defined(EXEC_FOUNDATION)
+static bool advanced, defer_free;
+static int stop_pre, deny_bo;
+static struct virtio_gpu_vbuffer *exec_pending[8];
+static unsigned int exec_queued;
+static long dependency_ticks;
+static unsigned int dependency_advance;
+static void (*dma_sync_hook)(int);
+#endif
 static struct reservation resv[2];
 static struct drm_gem_object bos[2];
+#ifdef EXEC_FOUNDATION
+struct virtio_gpu_object {
+	enum virtgpu_dma_lease dma_lease;
+	bool release_pending;
+	unsigned int dma_members, dma_retire_refs, exec_pending;
+	struct list_head exec_members;
+	int pre, post;
+};
+static struct virtio_gpu_object backing[2];
+static struct virtio_gpu_object *gem_to_virtio_gpu_obj(struct drm_gem_object *o) {
+	assert(o >= bos && o < bos + 2); return &backing[o - bos];
+}
+static bool virtio_gpu_object_dma_admitted(struct virtio_gpu_device *d, struct drm_gem_object *o) {
+#if defined(EXEC_CONTRACT) && defined(EXEC_FOUNDATION)
+	if(deny_bo && o==&bos[deny_bo-1]) return false;
+#endif
+	return true; }
+static void drm_gem_object_get(struct drm_gem_object *o) { o->refs++; }
+#define BUS_DMASYNC_PREREAD 1
+#define BUS_DMASYNC_PREWRITE 2
+#define BUS_DMASYNC_POSTREAD 4
+#define BUS_DMASYNC_POSTWRITE 8
+static void virtgpu_dma_sync(struct virtio_gpu_device *d, struct virtio_gpu_object *b, int ops) {
+	assert(!d->dma_lock.held);
+	if (ops == 3) { b->pre++;
+#if defined(EXEC_CONTRACT) && defined(EXEC_FOUNDATION)
+		if(stop_pre && --stop_pre==0) { d->dma_stopped=true; d->vqs_ready=false; }
+#endif
+	}
+	else { assert(ops == 12 && b->pre > b->post); b->post++; }
+#if defined(EXEC_CONTRACT) && defined(EXEC_FOUNDATION)
+	if(dma_sync_hook) dma_sync_hook(ops);
+#endif
+}
+#define to_virtio_fence(f) container_of(f,struct virtio_gpu_fence,f)
+static int virtgpu_exec_prepare(struct virtio_gpu_vbuffer *);
+static void virtgpu_exec_post(struct virtio_gpu_vbuffer *);
+static void virtgpu_exec_finish(struct virtio_gpu_vbuffer *);
+#endif
+
 static void *test_alloc(size_t n) {
 	void *p;
 	if (++alloc_calls == fail_alloc) return NULL;
@@ -175,7 +243,7 @@ static void dma_fence_put(struct dma_fence *f) {
 	assert(f->refs>0); if (--f->refs==0 && f->heap) test_free(f);
 }
 static void dma_fence_init(struct dma_fence *f,const struct dma_fence_ops *o,spinlock_t *l,uint64_t ctx,uint64_t seq) {
-	f->refs=1; f->heap=true; f->lock=l; f->seqno=seq; f->f_magic=FENCE_MAGIC_GOOD;
+	f->ops=o; f->refs=1; f->heap=true; f->lock=l; f->seqno=seq; f->f_magic=FENCE_MAGIC_GOOD;
 }
 static void dma_fence_set_error(struct dma_fence *f,int e) { assert(e<0); f->error=e; }
 static void dma_fence_signal_locked(struct dma_fence *f) { f->signaled=true; }
@@ -183,7 +251,17 @@ static bool dma_fence_is_signaled_locked(struct dma_fence *f) { return f->signal
 static void dma_fence_remove_callback(struct dma_fence *f,struct dma_fence_cb *c) { assert(!"private callback"); }
 static void irq_work_queue(struct irq_work *w) { assert(w->fn); }
 static long __attribute__((unused)) dma_fence_wait_timeout(struct dma_fence *f,bool intr,long ticks) {
-	assert(f==input && intr && ticks==15*HZ); wait_calls++; return input_wait;
+	assert(intr); wait_calls++;
+#if defined(EXEC_CONTRACT) && defined(EXEC_FOUNDATION)
+	if (advanced) {
+		assert(!device.dma_lock.held && !device.fence_drv.lock.held && !device.submit_lock.held);
+		dependency_ticks=ticks;
+		if(f==input) fixture_ticks += dependency_advance;
+		if(f->signaled) return ticks? ticks:1;
+		return input_wait;
+	}
+#endif
+	assert(f==input && ticks==15*HZ); return input_wait;
 }
 /* Baseline-only API: marked unused so the fixed source does not need it. */
 static int __attribute__((unused)) dma_fence_wait(struct dma_fence *f,bool intr) {
@@ -201,41 +279,61 @@ static struct drm_gem_object *drm_gem_object_lookup(struct drm_file *f,uint32_t 
 	assert(h>=1 && h<=2); bos[h-1].refs++; return &bos[h-1];
 }
 static void drm_gem_object_put_unlocked(struct drm_gem_object *o) { assert(o->refs>1); o->refs--; }
-static int dma_resv_lock_interruptible(struct reservation *r,void *ctx) {
-	if (lock_error)
-		return lock_error;
-	assert(!r->locked);
-	r->locked = true;
+static unsigned int ww_calls, ww_slow_calls, ww_deadlock_at;
+static int ww_slow_error;
+static int dma_resv_lock_interruptible(struct reservation *r,struct ww_acquire_ctx *ctx) {
+	ww_calls++;
+	if (lock_error) return lock_error;
+	if (ww_calls == ww_deadlock_at) return -EDEADLK;
+	if (r->locked) return -EALREADY;
+	r->locked=true; r->owner=ctx;
+	if (ctx) ctx->wwx_acquired++;
 	return 0;
 }
-static void dma_resv_unlock(struct reservation *r) { assert(r->locked); r->locked=false; }
-static int drm_gem_lock_reservations(struct drm_gem_object **o,unsigned n,struct ww_acquire_ctx *t) {
-	if (lock_error) return lock_error;
-	for (unsigned i=0;i<n;i++) { assert(!o[i]->resv->locked); o[i]->resv->locked=true; } return 0;
+static void dma_resv_unlock(struct reservation *r) {
+	assert(r->locked); r->locked=false;
+	if (r->owner) { assert(r->owner->wwx_acquired); r->owner->wwx_acquired--; }
+	r->owner=NULL;
 }
-static void drm_gem_unlock_reservations(struct drm_gem_object **o,unsigned n,struct ww_acquire_ctx *t) {
-	for (unsigned i=0;i<n;i++) dma_resv_unlock(o[i]->resv);
-}
-static void dma_resv_add_excl_fence(struct reservation *r,struct dma_fence *f) {
-	assert(r->locked && !r->fence); r->fence=dma_fence_get(f);
+static int dma_resv_lock_slow_interruptible(struct reservation *r,struct ww_acquire_ctx *ctx) {
+	ww_slow_calls++; assert(!ctx->wwx_acquired);
+	return ww_slow_error ? ww_slow_error : dma_resv_lock_interruptible(r,ctx);
 }
 static void virtio_gpu_array_put_free_work(struct work_struct *);
-static void schedule_work(struct work_struct *w) { virtio_gpu_array_put_free_work(w); }
+static void schedule_work(struct work_struct *w) {
+#if defined(EXEC_CONTRACT) && defined(EXEC_FOUNDATION)
+	if(defer_free) return;
+#endif
+	virtio_gpu_array_put_free_work(w);
+}
 static void virtio_gpu_wait_done(struct virtio_gpu_vbuffer *b,int e) { assert(!b->wait); }
 #ifdef COMPLETION_CONTRACT
 static void virtio_gpu_complete_transfer(struct virtio_gpu_device *, struct virtio_gpu_vbuffer *);
 #endif
 #ifdef DMA_LEASE_SOURCE
 /* These unrelated contracts have no qualified backing operations. */
-static void virtio_gpu_dma_finish(struct virtio_gpu_vbuffer *b, int error) { }
+static void virtio_gpu_dma_finish(struct virtio_gpu_vbuffer *b, int error) {
+#ifdef EXEC_FOUNDATION
+	if (b->objs && b->objs->exec) virtgpu_exec_finish(b);
+#endif
+}
 #ifdef COMPLETION_CONTRACT
 static void virtio_gpu_dma_stop(struct virtio_gpu_device *d) { }
 static void virtio_gpu_dma_reset(struct virtio_gpu_device *d) { }
 #else
 static void virtio_gpu_complete_transfer(struct virtio_gpu_device *d, struct virtio_gpu_vbuffer *b) { }
 #endif
-static int virtio_gpu_dma_prepare(struct virtio_gpu_vbuffer *b) { return 0; }
-static void virtio_gpu_dma_post(struct virtio_gpu_vbuffer *b) { }
+static int virtio_gpu_dma_prepare(struct virtio_gpu_vbuffer *b) {
+#ifdef EXEC_FOUNDATION
+	if (b->objs && b->objs->exec) return virtgpu_exec_prepare(b);
+#endif
+	return 0;
+}
+static void virtio_gpu_dma_post(struct virtio_gpu_vbuffer *b) {
+#ifdef EXEC_FOUNDATION
+	if (b->objs && b->objs->exec) virtgpu_exec_post(b);
+#endif
+}
 #endif
 static void virtio_gpu_release_object(struct virtio_gpu_object *o) { assert(!o); }
 #ifdef COMPLETION_CONTRACT
@@ -251,7 +349,16 @@ static void virtio_gpu_stop(struct virtio_gpu_device *d,int e) { stops++; }
 static void wake_up_all(wait_queue_head_t *q) { }
 #endif
 static int virtqueue_add_sgs(struct netbsd_virtqueue *,struct linux_virtio_sg **,unsigned,unsigned,void *,int);
-static int __attribute__((unused)) pressure_wait(long ticks) { assert(ticks==5*HZ); return pressure==2; }
+static int __attribute__((unused)) pressure_wait(long ticks) {
+	assert(ticks==5*HZ);
+#if defined(EXEC_CONTRACT) && defined(EXEC_FOUNDATION)
+	if(advanced) {
+		assert(backing[0].exec_pending && !backing[0].dma_members);
+		assert(backing[0].pre==backing[0].post);
+	}
+#endif
+	return pressure==2;
+}
 #ifdef COMPLETION_CONTRACT
 static long completion_wait(long);
 #define wait_event_timeout(q,c,t) ((void)(q),(c)?(long)(t):completion_wait(t))
@@ -270,7 +377,7 @@ typedef struct { struct fdtab *fd_dt; fdfile_t *fd_dfdfile[8]; struct mutex fd_l
 typedef struct { filedesc_t *p_fd; } proc_t;
 static proc_t proc0, process;
 #define curproc (&process)
-static int curlwp;
+static int lwp_marker; static void *curlwp = &lwp_marker;
 static struct file *reserved_file;
 static fdfile_t fdslots[8];
 static struct fdtab fdtable;
@@ -301,7 +408,7 @@ static int fd_allocfile(struct file **fp,int *fd) {
 	*fp=kmem_zalloc(sizeof(**fp),0); (*fp)->f_cred=&process;
 	reserved_file=*fp; *fd=output_fd; reservations++; files_allocated++; return 0;
 }
-static void fd_set_exclose(int l,int fd,bool value) {
+static void fd_set_exclose(void *l,int fd,bool value) {
 	assert(fd==output_fd && !installs && value); close_on_exec=1;
 }
 static void fd_install(int fd,struct file *fp) {
@@ -310,6 +417,7 @@ static void fd_install(int fd,struct file *fp) {
 	assert(fd==output_fd && reservations==1 && fp->f_count==0);
 	fp->f_count=1; reservations--; installs++;
 }
+#include "submit-native-resv.h"
 #include "submit-production.h"
 static int close_private(struct file *fp) {
 	int ret=sync_file_close(fp); closes++; fp->f_data=NULL; return ret;
@@ -335,6 +443,24 @@ static int virtqueue_add_sgs(struct netbsd_virtqueue *q,struct linux_virtio_sg *
 #ifdef COMPLETION_CONTRACT
 	return completion_transport(q, cookie);
 #else
+#if defined(EXEC_CONTRACT) && defined(EXEC_FOUNDATION)
+	if (advanced) {
+		struct virtio_gpu_vbuffer *b = cookie;
+		queue_calls++;
+		assert(b->objs->registered && b->objs->prepared);
+		for (unsigned i=0;i<b->objs->nents;i++)
+			assert(!b->objs->objs[i]->resv->locked);
+		if (pressure && queue_calls==1) return -ENOSPC;
+		if (queue_error) return queue_error;
+		accepted++;
+		if (early_mode) retire(b,0);
+		else {
+			assert(exec_queued<8);
+			exec_pending[exec_queued++]=b;
+		}
+		return 0;
+	}
+#endif
 	queue_calls++;
 	assert(out==2 && in==1 && !installs);
 	if(pressure && queue_calls==1) return -ENOSPC;
@@ -372,6 +498,17 @@ run_case(unsigned which)
 	struct virtio_gpu_fpriv priv={.ctx_id=3};
 	struct drm_device drm={&device};
 	struct drm_file client={&priv};
+#ifdef EXEC_FOUNDATION
+	struct virtio_gpu_attachment attachments[2];
+	INIT_LIST_HEAD(&priv.attachments);
+	priv.attachment_count=2; priv.software_key=1;
+	for (unsigned i=0;i<2;i++) {
+		attachments[i].obj=&bos[i]; attachments[i].handles=1;
+		list_add_tail(&attachments[i].node,&priv.attachments);
+		backing[i].dma_lease=VIRTGPU_LEASE_OPEN;
+		INIT_LIST_HEAD(&backing[i].exec_members);
+	}
+#endif
 	uint32_t handles[65536], command[1024]={0};
 	struct drm_virtgpu_execbuffer args={.flags=VIRTGPU_EXECBUF_FENCE_FD_OUT,
 	    .size=4,.command=(uintptr_t)command,.bo_handles=(uintptr_t)handles,
@@ -384,7 +521,7 @@ run_case(unsigned which)
 	int expected=0, ret;
 
 	for(unsigned i=0;i<65536;i++) handles[i]=(i%2)+1;
-	for(unsigned i=0;i<2;i++) { bos[i].refs=1; bos[i].resv=&resv[i]; }
+	for(unsigned i=0;i<2;i++) { bos[i].refs=1; bos[i].resv=&resv[i]; resv[i].fence=&resv[i].shared; }
 	for(unsigned i=0;i<8;i++) fdtable.dt_ff[i]=filedesc.fd_dfdfile[i]=&fdslots[i];
 	filedesc.fd_dt=&fdtable; process.p_fd=&filedesc;
 	device.has_virgl_3d=true; device.vqs_ready=true; device.vdev=&native;
@@ -429,7 +566,7 @@ run_case(unsigned which)
 		expected=-EIO; break;
 	case 22: fd_error=EMFILE; expected=-EMFILE; break;
 	case 23: fail_alloc=1; expected=-ENOMEM; break;
-	case 24: fail_alloc=2; expected=-ENOENT; break;
+	case 24: fail_alloc=2; expected=-ENOMEM; break;
 	case 25: fail_alloc=3; expected=-ENOMEM; break;
 	case 26: fail_alloc=4; expected=-ENOMEM; break;
 	case 27: fail_alloc=5; expected=-ENOMEM; break;
@@ -481,6 +618,12 @@ run_case(unsigned which)
 	}
 	if(which>=16 && which<=21) assert(wait_calls==1 && input_fd==0 && input->refs==1 && !stops);
 	if(which==38) assert(queue_calls==2);
+	#ifdef EXEC_CONTRACT
+	if (!expected && pending) {
+		/* Actual attachment set contains both BOs; hints are not authority. */
+		assert(pending->objs && pending->objs->nents == 2);
+	}
+#endif
 	if(pending) {
 		int error=0;
 		if(which>=46) {
@@ -495,7 +638,7 @@ run_case(unsigned which)
 	}
 	for(unsigned i=0;i<2;i++) {
 		assert(bos[i].refs==1 && !resv[i].locked);
-		if(resv[i].fence) dma_fence_put(resv[i].fence);
+		if(resv[i].fence_excl) dma_fence_put(resv[i].fence_excl);
 	}
 	if(installs) {
 		assert(reserved_file->f_count==1);
@@ -503,10 +646,18 @@ run_case(unsigned which)
 		test_free(reserved_file); reserved_file=NULL;
 	}
 	assert(closes==sync_created && aborts+installs==files_allocated);
+	#ifdef EXEC_FOUNDATION
+	assert(!device.exec_bytes);
+	for (unsigned i=0;i<2;i++) assert(backing[i].pre==backing[i].post && !backing[i].exec_pending && !backing[i].dma_members);
+#endif
 	assert(!reservations && !live && list_empty(&device.fence_drv.fences));
 	assert(list_empty(&device.obj_free_list) && !device.submit_lock.held && !device.ctrlq.qlock.held);
 	if(array) free(array);
 }
+
+#if defined(EXEC_CONTRACT) && defined(EXEC_FOUNDATION)
+#include "virtgpu-exec-cases.h"
+#endif
 
 int
 #ifdef COMPLETION_CONTRACT
@@ -515,8 +666,15 @@ submit_contract_main(void)
 main(void)
 #endif
 {
-	unsigned failed=0, count=sizeof(cases)/sizeof(cases[0]);
+	#if defined(EXEC_CONTRACT) && defined(EXEC_FOUNDATION)
+	return exec_contract_main();
+#endif
+	unsigned failed=0, ran=0, count=sizeof(cases)/sizeof(cases[0]);
 	for(unsigned i=0;i<count;i++) {
+		#ifdef EXEC_CONTRACT
+		if (i != 0 && i != 42 && i != 43) continue;
+#endif
+		ran++;
 		pid_t pid=fork(); int status;
 		assert(pid>=0);
 		if(pid==0) { run_case(i); exit(0); }
@@ -525,7 +683,7 @@ main(void)
 		printf("%s %s\n", WIFEXITED(status)&&WEXITSTATUS(status)==0?"PASS":"FAIL",cases[i]);
 		fflush(stdout);
 	}
-	printf("%u groups, %u failed\n",count,failed);
+	printf("%u groups, %u failed\n",ran,failed);
 	return failed?1:0;
 }
 

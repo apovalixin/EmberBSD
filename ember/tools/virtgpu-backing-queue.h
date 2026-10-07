@@ -40,10 +40,7 @@ static void backing_callback(struct virtio_gpu_device *d,
 #define jiffies fixture_ticks
 #define DRM_ERROR(...) do { if (0) fprintf(stderr, __VA_ARGS__); } while (0)
 static bool virtio_gpu_fence_space(struct virtio_gpu_device *d) { return true; }
-static struct dma_fence *dma_fence_get(struct dma_fence *f) {
-	atomic_fetch_add(&f->refs, 1);
-	return f;
-}
+
 static int virtio_gpu_fence_emit(struct virtio_gpu_device *d,
     struct virtio_gpu_ctrl_hdr *h, struct virtio_gpu_fence *f) {
 	f->unref = h->type == VIRTIO_GPU_CMD_RESOURCE_UNREF;

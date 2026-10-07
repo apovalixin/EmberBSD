@@ -3,6 +3,7 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
+typedef uint64_t u64;
 #include <stddef.h>
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -271,6 +272,8 @@ static void virtio_gpu_complete_transfer(struct virtio_gpu_device *d, struct vir
 static void virtio_gpu_cancel_vbuf(void *);
 static int virtio_gpu_queue_fenced_ctrl_buffer(struct virtio_gpu_device *,
     struct virtio_gpu_vbuffer *, struct virtio_gpu_ctrl_hdr *, struct virtio_gpu_fence *);
+/* Key policy is tested by exec-contract; this fixture covers context transport. */
+static int virtio_gpu_context_key(struct virtio_gpu_device *d, u64 *key) { *key=1; return 0; }
 #include "context-production.h"
 
 /* Only submission and host response injection are models, not driver logic. */

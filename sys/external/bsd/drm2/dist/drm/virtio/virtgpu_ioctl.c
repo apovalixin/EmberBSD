@@ -63,146 +63,180 @@ static int virtio_gpu_execbuffer_ioctl(struct drm_device *dev, void *data,
 	struct drm_virtgpu_execbuffer *exbuf = data;
 	struct virtio_gpu_device *vgdev = dev->dev_private;
 	struct virtio_gpu_fpriv *vfpriv = drm_file->driver_priv;
-	struct virtio_gpu_fence *out_fence;
-	int ret;
-	uint32_t *bo_handles = NULL;
-	void __user *user_bo_handles = NULL;
-	struct virtio_gpu_object_array *buflist = NULL;
+	struct virtio_gpu_fence *out_fence = NULL;
+	struct virtio_gpu_object_array *buflist = NULL, *hints = NULL;
 	struct sync_file *sync_file = NULL;
+	struct dma_fence **scratch = NULL, *in_fence;
 	struct file *fp = NULL;
-	int in_fence_fd = exbuf->fence_fd;
-	int out_fence_fd = -1;
-	void *buf;
+	uint32_t *bo_handles = NULL, count;
+	size_t hint_bytes = 0, scratch_bytes = 0;
+	unsigned int started = (unsigned int)jiffies;
+	int in_fence_fd = exbuf->fence_fd, out_fence_fd = -1, ret;
+	bool attached = false, locked = false;
+	void *buf = NULL;
 
-	if (vgdev->has_virgl_3d == false)
+	if (!vgdev->has_virgl_3d)
 		return -ENOSYS;
-
 	exbuf->fence_fd = -1;
 	if (!vfpriv || !vfpriv->ctx_id)
 		return -EINVAL;
 	if (vgdev->vdev->max_request <= 256 || exbuf->size == 0 ||
 	    exbuf->size > vgdev->vdev->max_request - 256 ||
-	    exbuf->num_bo_handles > 65536)
-		return -EINVAL;
-	if ((exbuf->flags & ~VIRTGPU_EXECBUF_FLAGS))
+	    exbuf->num_bo_handles > VIRTGPU_EXEC_MAX_OBJECTS ||
+	    (exbuf->flags & ~VIRTGPU_EXECBUF_FLAGS))
 		return -EINVAL;
 
 	if (exbuf->flags & VIRTGPU_EXECBUF_FENCE_FD_IN) {
-		struct dma_fence *in_fence;
-		long waited;
-
 		in_fence = sync_file_get_fence(in_fence_fd);
-
 		if (!in_fence)
 			return -EINVAL;
-
-		/* Reject an unresolved dependency before submitting any command. */
-		waited = dma_fence_wait_timeout(in_fence, true, 15 * HZ);
-		if (waited > 0) {
-			ret = dma_fence_get_status(in_fence);
-			ret = ret > 0 ? 0 : (ret < 0 ? ret : -EIO);
-		} else {
-			ret = waited < 0 ? waited : -ETIMEDOUT;
-		}
-
+		ret = virtio_gpu_exec_dependency(vgdev, in_fence,
+		    vfpriv->software_key, started, false);
 		dma_fence_put(in_fence);
 		if (ret)
 			return ret;
 	}
-
 	if (exbuf->flags & VIRTGPU_EXECBUF_FENCE_FD_OUT) {
 		ret = -fd_allocfile(&fp, &out_fence_fd);
 		if (ret)
 			return ret;
 	}
 
+	/* Count is capped; still check all arithmetic before budget reservation. */
 	if (exbuf->num_bo_handles) {
+		size_t unit = sizeof(*bo_handles) + sizeof(hints->objs[0]);
+		if (exbuf->num_bo_handles > (SIZE_MAX - sizeof(*hints)) / unit) {
+			ret = -ENOMEM;
+			goto out;
+		}
+		hint_bytes = sizeof(*hints) + exbuf->num_bo_handles * unit;
+		ret = virtio_gpu_exec_charge(vgdev, hint_bytes);
+		if (ret) {
+			hint_bytes = 0;
+			goto out;
+		}
 		bo_handles = kvmalloc_array(exbuf->num_bo_handles,
-					    sizeof(uint32_t), GFP_KERNEL);
+		    sizeof(*bo_handles), GFP_KERNEL);
 		if (!bo_handles) {
 			ret = -ENOMEM;
-			goto out_unused_fd;
+			goto out;
 		}
-
-		user_bo_handles = u64_to_user_ptr(exbuf->bo_handles);
-		if (copy_from_user(bo_handles, user_bo_handles,
-				   exbuf->num_bo_handles * sizeof(uint32_t))) {
+		if (copy_from_user(bo_handles, u64_to_user_ptr(exbuf->bo_handles),
+		    exbuf->num_bo_handles * sizeof(*bo_handles))) {
 			ret = -EFAULT;
-			goto out_unused_fd;
+			goto out;
 		}
-
-		buflist = virtio_gpu_array_from_handles(drm_file, bo_handles,
-							exbuf->num_bo_handles);
-		if (!buflist) {
-			ret = -ENOENT;
-			goto out_unused_fd;
+		/* Separate allocation from lookup so OOM is not reported as ENOENT. */
+		hints = virtio_gpu_array_alloc(exbuf->num_bo_handles);
+		if (!hints) {
+			ret = -ENOMEM;
+			goto out;
 		}
-		kvfree(bo_handles);
-		bo_handles = NULL;
+		for (count = 0; count < exbuf->num_bo_handles; count++) {
+			hints->objs[count] = drm_gem_object_lookup(drm_file, bo_handles[count]);
+			if (!hints->objs[count]) {
+				ret = -ENOENT;
+				goto out;
+			}
+			hints->nents++;
+		}
 	}
-
-	if (buflist) {
-		ret = virtio_gpu_array_lock_resv(buflist);
-		if (ret)
-			goto out_unused_fd;
-	}
-
 	buf = kvmalloc(exbuf->size, GFP_KERNEL);
 	if (!buf) {
 		ret = -ENOMEM;
-		goto out_unresv;
+		goto out;
 	}
 	if (copy_from_user(buf, u64_to_user_ptr(exbuf->command), exbuf->size)) {
 		ret = -EFAULT;
-		goto out_memdup;
+		goto out;
 	}
-
-	out_fence = virtio_gpu_fence_alloc(vgdev);
-	if(!out_fence) {
+	mutex_lock(&vfpriv->attachment_lock);
+	count = vfpriv->attachment_count;
+	ret = vfpriv->closing || !vgdev->vqs_ready ? -ENODEV : 0;
+	mutex_unlock(&vfpriv->attachment_lock);
+	if (ret)
+		goto out;
+	buflist = virtio_gpu_exec_array_alloc(vgdev, count);
+	if (!buflist) {
 		ret = -ENOMEM;
-		goto out_memdup;
+		goto out;
 	}
-
+	if (vgdev->fence_drv.limit != 0 &&
+	    sizeof(*scratch) > SIZE_MAX / vgdev->fence_drv.limit) {
+		ret = -ENOMEM;
+		goto out;
+	}
+	scratch_bytes = vgdev->fence_drv.limit * sizeof(*scratch);
+	ret = virtio_gpu_exec_charge(vgdev, scratch_bytes);
+	if (ret) {
+		scratch_bytes = 0;
+		goto out;
+	}
+	scratch = kvmalloc(scratch_bytes, GFP_KERNEL);
+	if (!scratch) {
+		ret = -ENOMEM;
+		goto out;
+	}
+	out_fence = virtio_gpu_fence_alloc(vgdev);
+	if (!out_fence) {
+		ret = -ENOMEM;
+		goto out;
+	}
+	out_fence->exec = true;
+	out_fence->software_key = vfpriv->software_key;
 	if (out_fence_fd >= 0) {
 		sync_file = sync_file_create(&out_fence->f, fp);
 		if (!sync_file) {
-			dma_fence_put(&out_fence->f);
 			ret = -ENOMEM;
-			goto out_memdup;
+			goto out;
 		}
 	}
-
-	/* Submit consumes buf and the locked array on both success and failure. */
-	ret = virtio_gpu_cmd_submit(vgdev, buf, exbuf->size,
-			      vfpriv->ctx_id, buflist, out_fence);
-	buflist = NULL;
-	if (!ret && out_fence_fd >= 0) {
-		fd_set_exclose(curlwp, out_fence_fd, true);
-		fd_install(out_fence_fd, sync_file->file);
-		exbuf->fence_fd = out_fence_fd;
-	}
-	dma_fence_put(&out_fence->f);
+	mutex_lock(&vfpriv->attachment_lock);
+	attached = true;
+	ret = virtio_gpu_exec_snapshot(vgdev, vfpriv, buflist, hints);
 	if (ret)
-		goto out_unused_fd;
-	return 0;
-
-out_memdup:
-	kvfree(buf);
-out_unresv:
-	if (buflist)
+		goto out;
+	ret = virtio_gpu_array_lock_resv(buflist);
+	if (ret)
+		goto out;
+	locked = true;
+	ret = virtio_gpu_exec_dependencies(vgdev, buflist, scratch,
+	    vgdev->fence_drv.limit, vfpriv->software_key, started);
+	if (ret)
+		goto out;
+	/* Queue consumes command and locked array on every return. */
+	ret = virtio_gpu_cmd_submit(vgdev, buf, exbuf->size,
+	    vfpriv->ctx_id, buflist, out_fence);
+	buf = NULL;
+	buflist = NULL;
+	locked = false;
+out:
+	if (locked)
 		virtio_gpu_array_unlock_resv(buflist);
-out_unused_fd:
-	kvfree(bo_handles);
+	if (attached)
+		mutex_unlock(&vfpriv->attachment_lock);
 	if (buflist)
 		virtio_gpu_array_put_free(buflist);
-
+	if (hints)
+		virtio_gpu_array_put_free(hints);
+	kvfree(bo_handles);
+	kvfree(scratch);
+	kvfree(buf);
+	virtio_gpu_exec_uncharge(vgdev, hint_bytes + scratch_bytes);
+	if (out_fence)
+		dma_fence_put(&out_fence->f);
 	if (out_fence_fd >= 0) {
-		/* fd_abort frees the private file but does not call fo_close. */
-		if (sync_file)
-			(void)fp->f_ops->fo_close(fp);
-		fd_abort(curproc, fp, out_fence_fd);
+		if (!ret) {
+			fd_set_exclose(curlwp, out_fence_fd, true);
+			fd_install(out_fence_fd, sync_file->file);
+			exbuf->fence_fd = out_fence_fd;
+		} else {
+			/* fd_abort does not call fo_close on the private file. */
+			if (sync_file)
+				(void)fp->f_ops->fo_close(fp);
+			fd_abort(curproc, fp, out_fence_fd);
+		}
 	}
-
 	return ret;
 }
 

@@ -409,7 +409,8 @@ virtio_gpu_queue_fenced_ctrl_buffer(struct virtio_gpu_device *vgdev,
 	struct linux_virtio_sg resp = { vbuf->resp_buf, vbuf->resp_size, NULL };
 	struct linux_virtio_sg *sgs[3];
 	unsigned int out = 1, before, started;
-	bool registered, emitted = false, admission_timeout = false;
+	bool registered, admission_timeout = false;
+	bool resv_locked = fence && vbuf->objs;
 	long remaining;
 	int ret;
 
@@ -444,18 +445,18 @@ virtio_gpu_queue_fenced_ctrl_buffer(struct virtio_gpu_device *vgdev,
 		ret = virtio_gpu_fence_emit(vgdev, hdr, fence);
 		if (ret)
 			goto out_unlock;
-		emitted = true;
 		vbuf->fence = fence;
 		dma_fence_get(&fence->f);
-		if (vbuf->objs) {
-			virtio_gpu_array_add_fence(vbuf->objs, &fence->f);
-			virtio_gpu_array_unlock_resv(vbuf->objs);
-		}
 	}
 	for (;;) {
 		ret = virtio_gpu_dma_prepare(vbuf);
 		if (ret)
 			break;
+		if (resv_locked) {
+			virtio_gpu_array_add_fence(vbuf->objs, &fence->f);
+			virtio_gpu_array_unlock_resv(vbuf->objs);
+			resv_locked = false;
+		}
 		spin_lock(&vgdev->ctrlq.qlock);
 		before = vq->num_free;
 		ret = vgdev->vqs_ready ? virtqueue_add_sgs(vq, sgs, out,
@@ -479,7 +480,7 @@ out_reject:
 	if (ret) {
 		vgdev->submit_error = ret;
 		DRM_ERROR("control submission failed: %d\n", ret);
-		if (fence && !emitted && vbuf->objs)
+		if (resv_locked)
 			virtio_gpu_array_unlock_resv(vbuf->objs);
 		if (admission_timeout || vbuf->release)
 			virtio_gpu_stop(vgdev, ret);

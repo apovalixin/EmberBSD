@@ -32,6 +32,7 @@ typedef uint64_t __u64, __le64;
 C
 sed -n '/^struct virtio_gpu_wait {/,/^};/p' "$vq" > "$work/resource-layout.h"
 sed -n '/^enum virtgpu_dma_lease /,/^};/p' "$hdr" >> "$work/resource-layout.h"
+sed -n '/^#define VIRTGPU_EXEC_/p; /^struct virtgpu_exec_member {/,/^};/p' "$hdr" >> "$work/resource-layout.h"
 for name in virtio_gpu_vbuffer virtio_gpu_attachment virtio_gpu_fpriv \
     virtio_gpu_object_params virtio_gpu_object virtio_gpu_object_array; do
     sed -n "/^struct $name {/,/^};/p" "$hdr" >> "$work/resource-layout.h"
@@ -60,6 +61,8 @@ for name in virtio_gpu_response_error virtio_gpu_queue_sync virtio_gpu_cmd_conte
     virtio_gpu_cmd_resource_create_3d virtio_gpu_cmd_resource_attach_backing \
     virtio_gpu_object_attach; do extract "$name" "$vq" 'static int' >> "$prod"; done
 for name in virtio_gpu_object_detach virtio_gpu_queue_unref; do extract "$name" "$vq" 'static void' >> "$prod"; done
+extract virtio_gpu_exec_uncharge "$gem" 'static void' >> "$prod"
+extract virtio_gpu_context_key "$gem" 'static int' >> "$prod"
 extract virtio_gpu_array_alloc "$gem" 'static struct virtio_gpu_object_array *' >> "$prod"
 for name in virtio_gpu_array_free virtio_gpu_array_add_obj virtio_gpu_array_unlock_resv \
     virtio_gpu_array_put_free; do extract "$name" "$gem" 'static void' >> "$prod"; done

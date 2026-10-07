@@ -32,6 +32,10 @@ typedef uint64_t __u64, __le64;
 C
 layout="$work/submit-layout.h"
 : > "$layout"
+if grep -q '^#define VIRTGPU_EXEC_MAX_OBJECTS' "$hdr"; then
+    printf '#define EXEC_FOUNDATION 1\n' >> "$layout"
+    sed -n '/^#define VIRTGPU_EXEC_/p; /^struct virtgpu_exec_member {/,/^};/p; /^struct virtio_gpu_attachment {/,/^};/p' "$hdr" >> "$layout"
+fi
 sed -n '/^enum virtgpu_dma_lease /,/^};/p' "$hdr" >> "$layout"
 if [ -f "$src/sys/external/bsd/drm2/virtio/virtgpu_dma.c" ]; then
     printf '#define DMA_LEASE_SOURCE 1\n' >> "$layout"
@@ -47,7 +51,18 @@ for name in dma_fence_array_cb dma_fence_array; do
 done
 sed -n '/^struct drm_virtgpu_execbuffer {/,/^};/p; /^#define VIRTGPU_EXECBUF_FENCE_/p; /^#define VIRTGPU_EXECBUF_FLAGS/,/0)/p' \
     "$base/dist/include/uapi/drm/virtgpu_drm.h" >> "$layout"
+native="$work/submit-native-resv.h"
+: > "$native"
+for name in ww_acquire_init ww_acquire_done ww_acquire_fini; do
+    extract "$name" "$base/linux/linux_ww_mutex.c" 'static void' >> "$native"
+done
+extract drm_gem_lock_reservations "$base/dist/drm/drm_gem.c" 'static int' >> "$native"
+extract drm_gem_unlock_reservations "$base/dist/drm/drm_gem.c" 'static void' >> "$native"
+extract dma_resv_add_excl_fence "$base/linux/linux_dma_resv.c" 'static void' >> "$native"
+extract dma_resv_get_excl "$base/linux/linux_dma_resv.c" 'static struct dma_fence * __attribute__((unused))' >> "$native"
+extract dma_resv_get_list "$base/linux/linux_dma_resv.c" 'static struct dma_resv_list * __attribute__((unused))' >> "$native"
 prod="$work/submit-production.h"
+
 if [ "${COMPLETION_CONTRACT:-0}" = 1 ]; then
     extract virtio_gpu_reset_work "$base/dist/drm/virtio/virtgpu_kms.c" 'static void' > "$work/completion-production.h"
     extract virtio_gpu_stop "$base/dist/drm/virtio/virtgpu_kms.c" 'static void' >> "$work/completion-production.h"
@@ -81,9 +96,15 @@ for name in virtio_gpu_fail_fences virtio_gpu_fence_fail; do
     fi
 done
 
+if grep -q '^#define VIRTGPU_EXEC_MAX_OBJECTS' "$hdr"; then
+    extract virtio_gpu_exec_charge "$gem" 'static int' >> "$prod"
+    extract virtio_gpu_exec_uncharge "$gem" 'static void' >> "$prod"
+    extract virtio_gpu_context_key "$gem" 'static int __attribute__((unused))' >> "$prod"
+    extract virtio_gpu_exec_dependency "$fence" 'static int' >> "$prod"
+fi
 extract virtio_gpu_array_alloc "$gem" 'static struct virtio_gpu_object_array *' >> "$prod"
 for name in virtio_gpu_array_free virtio_gpu_array_put_free; do extract "$name" "$gem" 'static void' >> "$prod"; done
-extract virtio_gpu_array_from_handles "$gem" 'static struct virtio_gpu_object_array *' >> "$prod"
+extract virtio_gpu_array_from_handles "$gem" 'static struct virtio_gpu_object_array * __attribute__((unused))' >> "$prod"
 extract virtio_gpu_array_lock_resv "$gem" 'static int' >> "$prod"
 for name in virtio_gpu_array_unlock_resv virtio_gpu_array_add_fence virtio_gpu_array_put_free_delayed virtio_gpu_array_put_free_work; do
     if [ "$name" = virtio_gpu_array_add_fence ]; then
@@ -94,6 +115,17 @@ for name in virtio_gpu_array_unlock_resv virtio_gpu_array_add_fence virtio_gpu_a
         printf '#pragma GCC diagnostic pop\n' >> "$prod"
     fi
 done
+if grep -q '^#define VIRTGPU_EXEC_MAX_OBJECTS' "$hdr"; then
+    extract virtio_gpu_array_add_obj "$gem" 'static void' >> "$prod"
+    extract virtio_gpu_exec_array_alloc "$gem" 'static struct virtio_gpu_object_array *' >> "$prod"
+    extract virtgpu_exec_sift "$gem" 'static void' >> "$prod"
+    extract virtio_gpu_exec_snapshot "$gem" 'static int' >> "$prod"
+    dma="$base/virtio/virtgpu_dma.c"
+    extract virtgpu_exec_prepare "$dma" 'static int' >> "$prod"
+    extract virtgpu_exec_post "$dma" 'static void' >> "$prod"
+    extract virtgpu_exec_finish "$dma" 'static void' >> "$prod"
+    extract virtio_gpu_exec_dependencies "$dma" 'static int' >> "$prod"
+fi
 extract virtio_gpu_get_vbuf "$vq" 'static struct virtio_gpu_vbuffer *' >> "$prod"
 extract virtio_gpu_alloc_cmd "$vq" 'static void *' >> "$prod"
 extract free_vbuf "$vq" 'static void' >> "$prod"

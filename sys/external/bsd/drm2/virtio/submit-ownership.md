@@ -12,7 +12,9 @@ Accepted cookies own their storage; queue cancellation owns rejected cookies.
 The caller retains its own fence reference throughout the call.
 The subsequent [completion foundation](completion-lifetime.md) bounds retained
 fences and delays terminal publication until their exact cookies retire.
-It preserves this asynchronous acceptance contract.
+It preserves this asynchronous acceptance contract. The subsequent
+[whole-context ownership stage](exec-ownership.md) replaces optional BO hints
+with actual attachment snapshots and combines input/implicit dependency waits.
 
 EXECBUFFER finishes copies, handle lookup, reservations and private
 sync-file preparation before sending. After transport acceptance it sets

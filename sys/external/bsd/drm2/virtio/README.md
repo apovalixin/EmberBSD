@@ -66,7 +66,10 @@ For accepted backing, the [lease and retirement contract](backing-lifetime.md)
 adds distinct bidirectional persistent and ATTACH/UNREF phases. Its host and
 native contracts preserve backing through cookie drain and reset retirement;
 fourteen fresh native driver objects compile with the normal warnings.
-This source gate leaves feature negotiation disabled.
+This source gate leaves feature negotiation disabled. The subsequent
+[whole-context EXEC contract](exec-ownership.md) snapshots actual attachments,
+retains independent operation ledgers and bounds dependency/storage ownership.
+Its host contracts pass; native and live qualification remain separate gates.
 
 All synchronous control operations request and validate a GPU fence,
 including create, attach, transfer, scanout and flush. A returned descriptor
@@ -89,7 +92,8 @@ Qualified backing leases close after that drain. Terminal fences publish
 only after lease retirement, before console/config/object
 worker joins. The bounded per-cookie timeline and teardown contract is
 documented in [completion lifetime](completion-lifetime.md). This foundation
-does not establish context-wide backing DMA. Normal live detach is rejected
+does not qualify the remaining transfer/CPU-copy paths or live graphics.
+Normal live detach is rejected
 with EBUSY.
 
 ## Classic capset queries

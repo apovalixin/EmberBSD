@@ -45,6 +45,7 @@ fixture_warn_on(bool condition)
 #define IS_ERR_OR_NULL(p) (!(p) || IS_ERR(p))
 #define roundup(n,a) (((n)+(a)-1)&~((a)-1))
 typedef uint32_t u32;
+typedef uint64_t u64;
 typedef atomic_int atomic_t;
 #define atomic_read(p) atomic_load(p)
 #define atomic_inc(p) atomic_fetch_add(p,1)
@@ -151,6 +152,7 @@ struct drm_gem_shmem_object {
 	void *vaddr;
 	struct page **pages;
 };
+static void ww_acquire_fini(void *c) { }
 struct ww_acquire_ctx {
 	int unused;
 };
@@ -216,13 +218,15 @@ struct virtio_gpu_device {
 	struct work_struct reset_work, config_changed_work, obj_free_work;
 	struct mutex submit_lock;
 	atomic_t submitters;
-	struct { int stop_error; bool stopped; struct mutex lock; } fence_drv;
+	struct { unsigned int limit; int stop_error; bool stopped; struct mutex lock; } fence_drv;
 	struct ida ctx_id_ida, resource_ida;
 	bool has_virgl_3d;
 	atomic_int submit_error;
 	struct mutex dma_lock;
 	struct list_head dma_leases;
 	bool dma_stopped;
+	size_t exec_bytes;
+	u64 next_context_key;
 };
 struct driver {
 	int (*gem_open_object) (struct drm_gem_object *, struct drm_file *);
@@ -572,7 +576,14 @@ dma_fence_put(struct dma_fence *f)
 	if (atomic_fetch_sub(&f->refs, 1) == 1)
 		test_free(f);
 }
+static struct dma_fence *dma_fence_get(struct dma_fence *f) { atomic_fetch_add(&f->refs,1); return f; }
+struct dma_resv_list { unsigned shared_count; struct dma_fence **shared; };
+#define dma_resv_get_excl(r) ((struct dma_fence *)NULL)
+#define dma_resv_get_list(r) ((struct dma_resv_list *)NULL)
+static int virtio_gpu_exec_dependency(struct virtio_gpu_device *d, struct dma_fence *f,
+    u64 key, unsigned int start, bool implicit) { assert(!"unrelated EXEC path"); return -EINVAL; }
 static void virtio_gpu_array_put_free(struct virtio_gpu_object_array *);
+
 static void
 virtio_gpu_array_put_free_delayed(struct virtio_gpu_device *d, struct virtio_gpu_object_array *a)
 {
@@ -1189,8 +1200,10 @@ duplicate_tests(void)
 	open.name = o->name;
 	assert(drm_gem_open_ioctl(&dev, &open, &f) == 0);
 	h2 = open.handle;
+	assert(f.driver_priv->attachment_count==1);
 	assert(h1 != h2 && attach_commands == 1 && o->handle_count == 2 && f.vmas == 2);
 	assert(drm_gem_handle_delete(&f, h1) == 0 && detach_commands == 0 && attached[0][0]);
+	assert(f.driver_priv->attachment_count==1);
 	assert(drm_gem_open_ioctl(&dev, &open, &g) == 0 && attach_commands == 2 && attached[1][0]);
 	file_fini(&f);
 	assert(detach_commands == 1 && attached[1][0] && refs(bo) == 3);
@@ -1589,7 +1602,20 @@ boundary_tests(void)
 	entry->handles = UINT_MAX;
 	assert(drm_gem_handle_create(&f, &bo->base.base, &h2) == -EOVERFLOW && h2 == 0xdead && attach_commands == 1 && f.vmas == 1);
 	entry->handles = 1;
+	/* The unique limit rejects only new members, never duplicate handles. */
+	f.driver_priv->attachment_count=VIRTGPU_EXEC_MAX_OBJECTS;
+	assert(drm_gem_handle_create(&f,&bo->base.base,&h2)==0);
+	assert(drm_gem_handle_delete(&f,h2)==0 && detach_commands==0);
+	struct virtio_gpu_object *other=make_bo(true);
+	assert(drm_gem_handle_create(&f,&other->base.base,&h2)==-ENOMEM);
+	assert(attach_commands==1 && !other->base.base.handle_count);
+	drm_gem_object_put_unlocked(&other->base.base);
+	f.driver_priv->attachment_count=1;
+	f.driver_priv->closing=true;
+	assert(drm_gem_handle_create(&f,&bo->base.base,&h2)==-ENODEV);
+	f.driver_priv->closing=false;
 	file_fini(&f);
+
 	drm_gem_object_put_unlocked(&bo->base.base);
 	fini();
 	init();

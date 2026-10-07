@@ -185,7 +185,7 @@ finish_all(void)
 	virtio_gpu_reset_work(&device.reset_work);
 	for(unsigned i=0;i<2;i++) {
 		assert(bos[i].refs==1 && !resv[i].locked);
-		if(resv[i].fence) dma_fence_put(resv[i].fence);
+		if(resv[i].fence_excl) dma_fence_put(resv[i].fence_excl);
 	}
 	for(unsigned i=0;i<held_count;i++) dma_fence_put(&held[i]->f);
 	assert(!owned() && !used_count && !live);
