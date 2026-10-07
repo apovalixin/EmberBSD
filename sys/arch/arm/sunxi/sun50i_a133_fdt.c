@@ -38,6 +38,8 @@
 #define CCU SOC "/clock-controller@03001000"
 #define PINS PIO "/ember-mmc2-pins"
 #define TOUCH SOC "/twi@0x05002c00/goodix_ts@5d"
+#define CODEC SOC "/codec@0x05096000"
+#define SOUND SOC "/sound@0"
 
 int sun50i_a133_fdt_fixup(void *);
 
@@ -107,6 +109,81 @@ a133_clock(void *fdt, const char *name, uint32_t rate, uint32_t *phandle)
 	cell = cpu_to_fdt32(value); \
 	A133_SET(path, name, &cell, sizeof(cell)); \
 } while (0)
+
+static bool
+a133_audio_okay(const void *fdt, const char *path)
+{
+	const char *status;
+	int node, len;
+
+	node = fdt_path_offset(fdt, path);
+	if (node < 0)
+		return false;
+	status = fdt_getprop(fdt, node, "status", &len);
+	return status != NULL && len == 5 && memcmp(status, "okay", 5) == 0;
+}
+
+/* The six-cell GPIO binding remains vendor-owned; translate only this IRQ. */
+static int
+a133_audio(void *fdt)
+{
+	const fdt32_t *p;
+	fdt32_t irq[3], cell;
+	uint32_t pio, codec, gic;
+	int node, len, error, i;
+
+	node = fdt_path_offset(fdt, CODEC);
+	if (node < 0)
+		return 0;
+	error = fdt_delprop(fdt, node, "ember,ys-m33-audio");
+	if (error != 0 && error != -FDT_ERR_NOTFOUND)
+		return error;
+	if (!a133_audio_okay(fdt, CODEC) || !a133_audio_okay(fdt, SOUND))
+		return 0;
+	node = fdt_path_offset(fdt, CODEC);
+	if (fdt_node_check_compatible(fdt, node, "allwinner,sunxi-internal-codec") != 0)
+		return 0;
+	codec = fdt_get_phandle(fdt, node);
+	p = fdt_getprop(fdt, node, "reg", &len);
+	if (codec == 0 || p == NULL || len != 16 || p[0] != 0 || p[2] != 0 ||
+	    fdt32_to_cpu(p[1]) != 0x05096000 || fdt32_to_cpu(p[3]) != 0x32c)
+		return 0;
+	p = fdt_getprop(fdt, node, "pa_level", &len);
+	if (p == NULL || len != 4 || fdt32_to_cpu(*p) != 0)
+		return 0;
+	p = fdt_getprop(fdt, node, "pa_msleep_time", &len);
+	if (p == NULL || len != 4 || fdt32_to_cpu(*p) != 120)
+		return 0;
+	node = fdt_path_offset(fdt, PIO);
+	pio = fdt_get_phandle(fdt, node);
+	p = fdt_getprop(fdt, node, "#gpio-cells", &len);
+	if (pio == 0 || p == NULL || len != 4 || fdt32_to_cpu(*p) != 6)
+		return 0;
+	node = fdt_path_offset(fdt, SOUND);
+	if (fdt_node_check_compatible(fdt, node, "allwinner,sunxi-codec-machine") != 0)
+		return 0;
+	p = fdt_getprop(fdt, node, "sunxi,audio-codec", &len);
+	if (p == NULL || len != 4 || fdt32_to_cpu(*p) != codec)
+		return 0;
+	p = fdt_getprop(fdt, node, "spk-gpio", &len);
+	if (p == NULL || len != 28 || fdt32_to_cpu(p[0]) != pio ||
+	    fdt32_to_cpu(p[1]) != 5 || fdt32_to_cpu(p[2]) != 6)
+		return 0;
+	for (i = 3; i < 7; i++)
+		if (fdt32_to_cpu(p[i]) != 1)
+			return 0;
+	p = fdt_getprop(fdt, node, "interrupts", &len);
+	if (p == NULL || len != 12 || p[0] != 0 ||
+	    fdt32_to_cpu(p[1]) != 25 || fdt32_to_cpu(p[2]) != 4)
+		return 0;
+	memcpy(irq, p, sizeof(irq));
+	node = fdt_path_offset(fdt, "/interrupt-controller@03020000");
+	if (node < 0 || (gic = fdt_get_phandle(fdt, node)) == 0)
+		return 0;
+	A133_SET(CODEC, "interrupts", irq, sizeof(irq));
+	A133_CELL(CODEC, "interrupt-parent", gic);
+	return a133_prop(fdt, CODEC, "ember,ys-m33-audio", NULL, 0);
+}
 
 static int
 a133_touch_reset(void *fdt)
@@ -336,6 +413,9 @@ sun50i_a133_fdt_fixup(void *fdt)
 				    "interrupt-parent", gic);
 		}
 	}
+	error = a133_audio(fdt);
+	if (error != 0)
+		return error;
 	error = a133_touch_reset(fdt);
 	if (error != 0)
 		return error;
