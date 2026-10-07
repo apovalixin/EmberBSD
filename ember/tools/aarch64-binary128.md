@@ -111,3 +111,26 @@ levels. Native candidate execution, native compiler coverage, the full
 libc link, installed-library bindings and affected compiler regressions
 require their own results. These tests do not establish arithmetic,
 conversion, complete LTO or full compiler-suite correctness.
+
+## Native candidate validation
+
+On 2026-10-07, GCC 12.5 and GCC 16.2 on NetBSD 11/AArch64 in UTM built the
+actual source as static/PIC objects and private namespaced DSOs. The actual
+ATF Makefile built both test executables. Each candidate passed the 3,600-row
+masked matrix, all 16 controlled modes and the trap cases. IOE was writable;
+the expected children received SIGFPE with the existing `FPE_FLTUND` code.
+INVALID-specific signal classification remains unimplemented.
+
+All eight helper exports and the real cmp/le alias were preserved. The
+unrenamed objects/DSOs had no undefined symbols, public-helper calls, FPCR
+writes, dynamic relocations or new library dependencies. A controlled
+installed-libc baseline failed 1,255 of the expanded 3,600 rows; live GOT
+inspection confirmed its internal calls resolved to that same libc. A test
+executable linked to GCC16 can interpose those old calls, so direct `dladdr`
+identity alone is insufficient for a baseline comparison.
+
+The compiler-rt Makefile include selects the opt-in only for hard-float
+AArch64. A full libc Makefile command, complete libc link and installation
+are still unverified. LLVM23 native compilation and the full compiler suite
+also remain outside this candidate result. For a native test build that
+overrides `CFLAGS`, retain the platform's `-fPIE` when linking the default PIE.

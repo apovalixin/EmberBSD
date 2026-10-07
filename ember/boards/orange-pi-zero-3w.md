@@ -2,7 +2,8 @@
 
 [Board catalog](README.md) · [Build instructions](../../README.ember.md#building)
 
-This page preserves the published hardware results; it is not a new test run.
+The capability table preserves earlier published hardware results. The
+current-kernel check below records a separate physical run.
 Board revision: not recorded in the original support table.
 
 ## Capabilities
@@ -45,6 +46,39 @@ temperature sensors, watchdog reset, frequency switching on both clusters, Wi-Fi
 devices, Bluetooth pairing, a long run
 
 ## Evidence
+
+### Current kernel check, 2026-10-07
+
+A physical Zero 3W with 4 GiB RAM booted `EMBER64 #0` from commit
+`aed986038b1da44cbc9cb8b124b25ec58587bd11`. The board revision was not
+recorded. Native GCC 12.5 built the kernel and three matching modules from
+a clean export in 55 minutes 54 seconds. The highest sampled temperature
+was 57.1 degC. The existing NetBSD Python build contracts passed separately
+in an AArch64 VM; the board did not require a Python installation.
+
+After the update, all eight cores, microSD root and Wi-Fi returned. A 32 MiB
+file transferred in each direction with matching SHA256. All 16 memfd ATF
+cases passed using the same test binary that reproduced two partial-page
+mapping/seal failures on the previous kernel. FP defaults and preservation
+across threads, signals, fork and exec also passed. Those FP cases already
+passed on this board before the update; this does not reproduce the
+initial-state bug seen on CPUs without AArch32.
+
+The native image SHA256 is
+`5f5c9bd1abef2dda00606ad42d0dce4de5beb58868994bdfd473adc181b351ef`;
+the ELF kernel SHA256 is
+`aaaa0443d4e63311091267ffcc8e69a941757b92962720296468936cc695f600`.
+Both newly built A733 DTBs matched the installed files byte for byte.
+Vendor boot files, firmware, storage layout and network settings were
+preserved. The old kernel and module tree remain available for rollback;
+the active module directory contains the three modules from this build.
+
+Userland remains the NetBSD 11 release userland. This short boot, network
+and regression check does not establish a full release, sustained uptime,
+hardware GPU/NPU execution or a physical Wayland session. Accelerators and
+the newer common development packages still need their own acceptance.
+
+### Earlier support matrix
 
 Results were migrated from the [published support matrix](https://github.com/apovalixin/EmberBSD/blob/fe2727f6ef675868eba642efa73c5a0e33f92191/README.md#supported-boards)
 and [hardware notes](https://github.com/apovalixin/EmberBSD/blob/fe2727f6ef675868eba642efa73c5a0e33f92191/README.ember.md#hardware-support-and-validation)

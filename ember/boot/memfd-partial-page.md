@@ -38,6 +38,13 @@ On the original EMBER64 kernel, the two new partial-page cases fail while
 the other fourteen cases pass. This establishes the regression; it is not
 a successful run of the corrected kernel.
 
+On 2026-10-07, a clean `EMBER64` build from `aed986038b1` booted on a
+physical Orange Pi Zero 3W. The same native ATF executable reproduced the
+two failures on the previous kernel and passed all sixteen cases after
+the update. The [board receipt](../boards/orange-pi-zero-3w.md#current-kernel-check-2026-10-07)
+records the exact kernel identity. This validates the corrected mapping
+boundary on that board; it does not update the desktop VM's running kernel.
+
 Live acceptance requires a completely rebuilt kernel, the same sixteen
 ATF cases, and a Wayland allocation test without application-side rounding.
 Remove the temporary KWin allocation workaround only after those native

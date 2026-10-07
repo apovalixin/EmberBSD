@@ -231,11 +231,16 @@ on every board in the hardware catalog.
   [graphics probes](https://github.com/neonix20b/EmberBSD-Examples/tree/main/desktop/wayland-utm).
   Ports owns the [current Mesa 26.2.4 source adaptation](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/wayland-utm),
   with native DSO-lifetime/numeric regressions under GCC 16.2 and
-  common-toolchain staging rules;
-  its complete build and consumer migration remain pending. A Ports
+  common-toolchain staging rules. A [common graphics source profile](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/common-graphics)
+  supplies canonical MesaLib 26.2.4/libdrm 2.4.134nb1 recipes with checked
+  pkgsrc/Qt dependency selection; native packages, complete builds and
+  consumer migration remain pending. A Ports
   [host-side VirGL 1.3.0 adaptation](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/utm-virgl-host)
   preserves the upstream IOV-size correction and prevents resource publication
   after reported CREATE failures, with cleanup of owned partial allocations.
+  Its [classic backing ledger](https://github.com/neonix20b/EmberBSD-Ports/blob/main/probes/utm-virgl-host/BACKING.md)
+  retains guest mappings through renderer detach and all cleanup paths,
+  including deferred UNREF, with causal ownership and sanitizer checks.
   Focused macOS/arm64 source and sanitizer checks pass; full host builds,
   remaining bounds, async completion/reset and error propagation are pending.
   VirGL stays disabled; GPU rendering, reliable console recovery and Vulkan
@@ -273,6 +278,11 @@ on every board in the hardware catalog.
   aarch64 missing a reschedule, and the SD host controller driver.
   Source changes preserve their provenance; `ember/patches` records the
   original board adaptations already applied to this tree.
+- **Current kernel on Orange Pi Zero 3W:** a clean EMBER64 build boots on
+  physical A733 hardware, passes all 16 memfd tests and a checked Wi-Fi
+  round trip. The [board receipt](ember/boards/orange-pi-zero-3w.md#current-kernel-check-2026-10-07)
+  records the kernel hashes, matching modules and remaining userland and
+  accelerator limits.
 - **AArch64 numerical correctness:** an [initial FP state correction](ember/boot/aarch64-fp-state.md)
   addresses lost subnormal values and NaN payloads on CPUs without AArch32.
   Production contracts and native object compilation pass; verification
@@ -282,6 +292,11 @@ on every board in the hardware catalog.
   not skipped. All 850 native production checks and an isolated unchanged
   GCC atomic regression pass with the repaired objects. Installing the
   corrected libc and accepting the complete compiler suite remain pending.
+- **AArch64 binary128 comparisons:** [libc exception-policy fixes](ember/tools/aarch64-binary128.md)
+  preserve NaN comparison results while raising the required INVALID exception.
+  Native raw-ABI, FP-mode and trap checks pass with GCC 12.5 and GCC 16.2
+  candidate objects in UTM. A complete libc build and installation remain
+  pending; the kernel's existing FP signal classification is unchanged.
 - **Reproducible builds and development:** pinned kernel/UEFI inputs and
   checked firmware assets, pkgsrc overlays, versioned source probes and
   standalone examples. The [Ports development toolchain](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/development-toolchain)
