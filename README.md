@@ -330,13 +330,16 @@ on every board in the hardware catalog.
 - **AArch64 atomic correctness:** [narrow outlined CAS helpers](ember/boot/aarch64-outlined-cas.md)
   now normalize expected arguments so matching byte/halfword updates are
   not skipped. All 850 native production checks and an isolated unchanged
-  GCC atomic regression pass with the repaired objects. Installing the
-  corrected libc and accepting the complete compiler suite remain pending.
+  GCC atomic regression pass with the repaired objects. The complete corrected
+  shared/static libc is installed on physical Orange Pi Zero 3W; the installed
+  shared library passes all 850 checks. Full compiler-suite acceptance remains
+  separate.
 - **AArch64 binary128 comparisons:** [libc exception-policy fixes](ember/tools/aarch64-binary128.md)
   preserve NaN comparison results while raising the required INVALID exception.
   Native raw-ABI, FP-mode and trap checks pass with GCC 12.5 and GCC 16.2
-  candidate objects in UTM. A complete libc build and installation remain
-  pending; the kernel's existing FP signal classification is unchanged.
+  candidate objects in UTM. The complete libc built and installed on Zero 3W
+  passes the 3,600-row matrix and all 16 FP modes; hardware IOE is unavailable
+  there, so trap cases skip. The kernel's FP signal classification is unchanged.
 - **Reproducible builds and development:** pinned kernel/UEFI inputs and
   checked firmware assets, pkgsrc overlays, versioned source probes and
   standalone examples. The [Ports development toolchain](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/development-toolchain)
