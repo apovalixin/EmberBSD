@@ -104,8 +104,9 @@ if grep -q '^#define VIRTGPU_EXEC_MAX_OBJECTS' "$hdr"; then
 fi
 extract virtio_gpu_array_alloc "$gem" 'static struct virtio_gpu_object_array *' >> "$prod"
 for name in virtio_gpu_array_free virtio_gpu_array_put_free; do extract "$name" "$gem" 'static void' >> "$prod"; done
-# The baseline ioctl needs this helper; whole-context EXEC does its own lookup.
-if ! grep -q '^#define VIRTGPU_EXEC_MAX_OBJECTS' "$hdr"; then
+# Baseline ioctl and completion cases call this; whole-context EXEC does not.
+if [ "${COMPLETION_CONTRACT:-0}" = 1 ] ||
+    ! grep -q '^#define VIRTGPU_EXEC_MAX_OBJECTS' "$hdr"; then
     extract virtio_gpu_array_from_handles "$gem" 'static struct virtio_gpu_object_array *' >> "$prod"
 fi
 extract virtio_gpu_array_lock_resv "$gem" 'static int' >> "$prod"
