@@ -35,4 +35,6 @@
 #define	SUNXI_CORE_PBASE	0x01c00000
 #define	SUNXI_CORE_SIZE		0x06400000
 
+const struct fdt_platform *sun50i_a133_platform(void);
+
 #endif /* _ARM_SUNXI_PLATFORM_H */

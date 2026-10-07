@@ -36,6 +36,7 @@ __KERNEL_RCSID(0, "$NetBSD: fdt_machdep.c,v 1.109 2025/03/08 14:30:05 jmcneill E
 #include "opt_efi.h"
 #include "opt_machdep.h"
 #include "opt_multiprocessor.h"
+#include "opt_soc.h"
 
 #include "genfb.h"
 #include "pci.h"
@@ -272,12 +273,76 @@ initarm(void *arg)
 	if (error != 0)
 		panic("fdt_move failed: %s", fdt_strerror(error));
 
+#ifdef SOC_SUN50I_A100
+	{
+		int sun50i_a133_fdt_fixup(void *);
+
+		error = sun50i_a133_fdt_fixup(fdt_data);
+		if (error != 0)
+			panic("A133 FDT fixup: %s", fdt_strerror(error));
+	}
+#endif
 	fdtbus_init(fdt_data);
 
 	/* Lookup platform specific backend */
 	plat = fdt_platform_find();
 	if (plat == NULL)
 		panic("Kernel does not support this device");
+	/*
+	 * A133 is an A100. The early sunxi console addresses UART0 inside
+	 * the 0x01c00000 window, not as a lone page at the window base.
+	 * The generic platform maps only that page, so the first print
+	 * after devmap bootstrap writes into an unmapped address.
+	 */
+	{
+		const int root = fdt_path_offset(fdt_data, "/");
+		int clen = 0;
+		const char *c0 = fdt_getprop(fdt_data, root, "compatible",
+		    &clen);
+		const int a133 = fdt_node_check_compatible(fdt_data, root,
+		    "allwinner,sun50i-a133");
+		const int shortname = fdt_node_check_compatible(fdt_data, root,
+		    "allwinner,a133");
+
+		VPRINTF("a133 root=%d compat=%d short=%d c0=%s\n",
+		    root, a133, shortname, c0 != NULL ? c0 : "-");
+		if (a133 == 0 || shortname == 0 ||
+		    fdt_node_check_compatible(fdt_data, root,
+		    "allwinner,sun50i-a100") == 0) {
+			const struct fdt_platform *sun50i_a133_platform(void);
+			const int uart = fdt_path_offset(fdt_data,
+			    "/soc@03000000/uart@05000000");
+			const int gic = fdt_path_offset(fdt_data,
+			    "/interrupt-controller@03020000");
+			int glen = 0;
+			const void *gph;
+
+			plat = sun50i_a133_platform();
+			/*
+			 * The vendor tree inherits interrupt-parent from the
+			 * root, and that parent is the wakeup generator, not
+			 * the GIC. UART0's cells are already GIC SPI 0.
+			 * Without the GIC the tty sends one byte and waits.
+			 */
+			gph = (uart >= 0 && gic >= 0) ?
+			    fdt_getprop(fdt_data, gic, "phandle", &glen) : NULL;
+			if (gph != NULL && glen == 4) {
+				int err;
+
+				/*
+				 * Replacing the existing root value takes no
+				 * extra space. A new property on the Ethernet
+				 * node did not fit (FDT_ERR_NOSPACE).
+				 */
+				err = fdt_setprop(fdt_data, root,
+				    "interrupt-parent", gph, 4);
+				VPRINTF("root parent %d\n", err);
+				err = fdt_setprop(fdt_data, uart,
+				    "interrupt-parent", gph, 4);
+				VPRINTF("uart parent %d\n", err);
+			}
+		}
+	}
 
 	/* Early console may be available, announce ourselves. */
 	VPRINTF("FDT<%p>\n", fdt_addr_r);

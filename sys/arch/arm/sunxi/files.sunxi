@@ -5,6 +5,7 @@
 #
 
 file	arch/arm/sunxi/sunxi_platform.c		soc_sunxi
+file	arch/arm/sunxi/sun50i_a133_fdt.c		soc_sun50i_a100
 
 file	arch/arm/sunxi/sunxi_mc_smp.c		soc_sunxi_mc
 file	arch/arm/sunxi/sunxi_mc_mpstart.S	soc_sunxi_mc
