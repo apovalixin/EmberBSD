@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Origin: EmberBSD (AI-assisted), check font pointer ownership on every exit. */
 #include <sys/types.h>
+#undef NDEBUG
 #include <assert.h>
 #include <errno.h>
 #include <stdio.h>
