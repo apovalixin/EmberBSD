@@ -269,6 +269,27 @@ sun50i_a133_fdt_fixup(void *fdt)
 		A133_SET(SOC "/s_twi@0x07081400", "clocks", cells,
 		    sizeof(cells[0]));
 	}
+	/* Translate the optional touch bus without changing its children. */
+	if (fdt_path_offset(fdt, SOC "/twi@0x05002c00") >= 0) {
+		node = a133_node(fdt, PIO, "ember-i2c3-pins", &pins);
+		if (node < 0)
+			return node;
+		A133_STRING(PIO "/ember-i2c3-pins", "pins", "PH12\0PH13");
+		A133_STRING(PIO "/ember-i2c3-pins", "function", "i2c3");
+		A133_CELL(PIO "/ember-i2c3-pins", "drive-strength", 20);
+		A133_SET(PIO "/ember-i2c3-pins", "bias-pull-up", NULL, 0);
+		A133_STRING(SOC "/twi@0x05002c00", "compatible",
+		    "allwinner,sun6i-a31-i2c");
+		cells[0] = cpu_to_fdt32(ccu);
+		cells[1] = cpu_to_fdt32(A100_CLK_BUS_I2C3);
+		A133_SET(SOC "/twi@0x05002c00", "clocks", cells,
+		    2 * sizeof(cells[0]));
+		cells[1] = cpu_to_fdt32(A100_RST_BUS_I2C3);
+		A133_SET(SOC "/twi@0x05002c00", "resets", cells,
+		    2 * sizeof(cells[0]));
+		A133_CELL(SOC "/twi@0x05002c00", "pinctrl-0", pins);
+		A133_STRING(SOC "/twi@0x05002c00", "pinctrl-names", "default");
+	}
 	/* Copy the provider value before any update can move its property. */
 	node = fdt_path_offset(fdt, "/interrupt-controller@03020000");
 	if (node >= 0) {

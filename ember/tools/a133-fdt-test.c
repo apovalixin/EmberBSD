@@ -1,3 +1,4 @@
+/* Origin: EmberBSD - exercise the early A133 resource translation contract. */
 /* Exercise the actual early FDT adapter without accessing hardware. */
 #include <assert.h>
 #include <stdint.h>
@@ -11,7 +12,7 @@ int sun50i_a133_fdt_fixup(void *);
 static void
 fixture(void *fdt, int size, const char *compat)
 {
-	int soc, pio, mmc, twi, gic, uart;
+	int soc, pio, mmc, twi, gic, uart, touch;
 
 	assert(fdt_create_empty_tree(fdt, size) == 0);
 	assert(fdt_setprop_string(fdt, 0, "compatible", compat) == 0);
@@ -43,6 +44,15 @@ fixture(void *fdt, int size, const char *compat)
 	assert(twi >= 0);
 	assert(fdt_setprop_string(fdt, twi, "compatible",
 	    "allwinner,sun50i-twi") == 0);
+	soc = fdt_path_offset(fdt, "/soc@03000000");
+	twi = fdt_add_subnode(fdt, soc, "twi@0x05002c00");
+	assert(twi >= 0);
+	assert(fdt_setprop_string(fdt, twi, "compatible",
+	    "allwinner,sun50i-twi") == 0);
+	touch = fdt_add_subnode(fdt, twi, "goodix_ts@5d");
+	assert(touch >= 0);
+	assert(fdt_setprop_string(fdt, touch, "compatible", "goodix,gt9xx") == 0);
+	assert(fdt_setprop_u32(fdt, touch, "reg", 0x5d) == 0);
 }
 
 int
@@ -72,6 +82,27 @@ main(void)
 	assert(provider >= 0);
 	cells = fdt_getprop(fdt, provider, "clock-frequency", &len);
 	assert(cells != NULL && len == 4 && fdt32_to_cpu(*cells) == 24000000);
+	twi = fdt_path_offset(fdt, "/soc@03000000/twi@0x05002c00");
+	assert(fdt_node_check_compatible(fdt, twi,
+	    "allwinner,sun6i-a31-i2c") == 0);
+	cells = fdt_getprop(fdt, twi, "clocks", &len);
+	assert(cells != NULL && len == 8 && fdt32_to_cpu(cells[1]) == 77);
+	provider = fdt_node_offset_by_phandle(fdt, fdt32_to_cpu(cells[0]));
+	assert(provider >= 0 && fdt_node_check_compatible(fdt, provider,
+	    "allwinner,sun50i-a100-ccu") == 0);
+	cells = fdt_getprop(fdt, twi, "resets", &len);
+	assert(cells != NULL && len == 8 && fdt32_to_cpu(cells[1]) == 26);
+	cells = fdt_getprop(fdt, twi, "pinctrl-0", &len);
+	assert(cells != NULL && len == 4);
+	provider = fdt_node_offset_by_phandle(fdt, fdt32_to_cpu(*cells));
+	assert(provider >= 0);
+	assert(strcmp(fdt_getprop(fdt, provider, "function", NULL), "i2c3") == 0);
+	assert(memcmp(fdt_getprop(fdt, provider, "pins", &len),
+	    "PH12\0PH13", 10) == 0 && len == 10);
+	provider = fdt_path_offset(fdt,
+	    "/soc@03000000/twi@0x05002c00/goodix_ts@5d");
+	cells = fdt_getprop(fdt, provider, "reg", &len);
+	assert(cells != NULL && len == 4 && fdt32_to_cpu(*cells) == 0x5d);
 	mmc = fdt_path_offset(fdt, "/soc@03000000/sdmmc@04022000");
 	assert(fdt_node_check_compatible(fdt, mmc,
 	    "allwinner,sun50i-a100-emmc") == 0);
@@ -99,6 +130,11 @@ main(void)
 	cells = fdt_getprop(fdt, mmc, "pinctrl-0", &len);
 	assert(cells != NULL && len == 4);
 	assert(fdt_node_offset_by_phandle(fdt, fdt32_to_cpu(*cells)) >= 0);
+	assert(sun50i_a133_fdt_fixup(fdt) == 0);
+	/* The touch controller is optional; other resources must still attach. */
+	fixture(fdt, 16384, "allwinner,a133");
+	twi = fdt_path_offset(fdt, "/soc@03000000/twi@0x05002c00");
+	assert(fdt_del_node(fdt, twi) == 0);
 	assert(sun50i_a133_fdt_fixup(fdt) == 0);
 
 	/* A live vendor scanout must never remain allocatable kernel RAM. */
