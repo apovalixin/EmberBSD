@@ -142,6 +142,14 @@ on every board in the hardware catalog.
   BER 0.516113 when carrier correction is removed. This verifies bounded
   software processing with known carrier and timing parameters; physical SDR,
   real-time deadlines, GUI and Python bindings remain unverified.
+- **Offline visual SLAM:** ORB-SLAM3 runs with the common Eigen 5.0.1 and
+  OpenCV 5.0.0 through a [headless Ports adaptation](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/orb-slam3).
+  Ports adapts current dependencies and repairs worker shutdown, cancellation
+  and missing-pose export. The [standalone RGB-D example](https://github.com/neonix20b/EmberBSD-Examples/tree/main/robotics/orb-slam3-rgbd)
+  tracks all 573 TUM fr1/desk image pairs in an AArch64 VM, with 1.71–1.76 cm
+  translation ATE RMSE across two controlled runs and fixed-scale alignment. This enables
+  recorded-data navigation experiments; live cameras, IMU fusion, boards,
+  GUI, sustained operation and real-time performance remain unverified.
 - **Numerical estimation and behavior logic:** Ceres 2.2.0 uses the common
   Eigen 5.0.1 for nonlinear fitting; BehaviorTree.CPP 4.9.0 coordinates
   asynchronous actions. Nine installed AArch64 VM cases verify numerical
