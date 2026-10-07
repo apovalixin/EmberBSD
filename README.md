@@ -150,6 +150,11 @@ on every board in the hardware catalog.
   [CAN FD guide and reproducible checks](ember/can/README.md).
   This is software-stack validation; physical drivers, data-phase timing,
   ISO-TP over FD and a booted kernel with this extension remain unverified.
+- **MQTT for connected devices:** Ports provides a [Mosquitto 2.1.2 source probe](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/mosquitto)
+  built with common GCC 16.2, cJSON 1.7.19 and SQLite 3.53.4. Twelve installed
+  AArch64 VM cases verify MQTT 3.1.1/5 QoS 0/1/2, authentication, ACL, TLS and
+  retained-state recovery. Package and boot-service integration remain pending;
+  this does not establish other smart-home applications or physical devices.
 
 ### Graphical interfaces
 
