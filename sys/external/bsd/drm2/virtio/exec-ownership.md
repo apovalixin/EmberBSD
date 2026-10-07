@@ -10,7 +10,10 @@ object compilation pass; live graphics qualification remains a separate gate.
 
 A context contains at most 65536 unique attached BOs. Duplicate handles
 share an entry. Commands and referenced hints are copied before the final
-attachment mutex. Allocation follows a count/read/unlock/relock sequence:
+attachment mutex. [Classic EXEC framing](exec-framing.md) checks dword alignment
+and bounded packet lengths after the single command copy, before snapshot,
+reservation, fence and PRE work. Its [host obligations](exec-framing.md#host-obligations-before-activation)
+remain independent prerequisites for activation. Allocation follows a count/read/unlock/relock sequence:
 new growth beyond capacity returns EAGAIN; shrink uses the current set.
 An in-place heapsort and binary search validate hints by object identity.
 Missing handles return ENOENT, foreign-context hints EINVAL, and backing
@@ -129,7 +132,7 @@ booted; the partial object directory is not a matched kernel artifact.
 [Explicit 3D transfer and WAIT](transfer-wait.md) now share this typed ledger
 and metadata budget. The linked [controlled console/2D stage](controlled-console.md)
 adds finite legacy phases, private console copies and synchronous cursor status.
-Full packet/cap enforcement and live loaded-map/host qualification remain separate.
+Command semantics/cap enforcement and live loaded-map/host qualification remain separate.
 [Classic wire-fence exhaustion](classic-fence-range.md) now has a separate
 native software/object contract preserving this ledger and rejection ownership.
 This stage does not enable acceleration or certify arbitrary bus_dma backends.

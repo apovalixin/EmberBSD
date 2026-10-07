@@ -200,6 +200,10 @@ extract virtio_gpu_queue_fenced_ctrl_buffer "$vq" 'static int' >> "$prod"
 # The baseline helper returned void; preserve its actual interface in RED.
 type=$(awk '/^(void|int) virtio_gpu_cmd_submit\(/ { print "static " $1 }' "$vq")
 extract virtio_gpu_cmd_submit "$vq" "$type" >> "$prod"
+ioctl="$base/dist/drm/virtio/virtgpu_ioctl.c"
+if grep -q '^virtio_gpu_exec_framing(' "$ioctl"; then
+    extract virtio_gpu_exec_framing "$ioctl" 'static int' >> "$prod"
+fi
 extract virtio_gpu_execbuffer_ioctl "$base/dist/drm/virtio/virtgpu_ioctl.c" 'static int' >> "$prod"
 if [ "${TRANSFER_CONTRACT:-0}" = 1 ]; then
     extract convert_to_hw_box "$vq" 'static void' >> "$prod"

@@ -534,7 +534,7 @@ static int virtqueue_add_sgs(struct netbsd_virtqueue *q,struct linux_virtio_sg *
 
 static const char *const cases[] = {
 	"accepted pending", "disabled", "unknown flags", "size zero",
-	"max zero", "max one", "max 255", "max 256", "max 257 exact",
+	"max zero", "max one", "max 255", "max 256", "minimum aligned request exact",
 	"max 257 overflow", "exact request boundary", "handle cap overflow",
 	"handle cap exact lookup failure", "missing context", "zero context",
 	"invalid input fd", "input timeout", "input interrupted", "input failed",
@@ -601,7 +601,7 @@ run_case(unsigned which)
 	case 5: native.max_request=1; expected=-EINVAL; break;
 	case 6: native.max_request=255; expected=-EINVAL; break;
 	case 7: native.max_request=256; expected=-EINVAL; break;
-	case 8: native.max_request=257; args.size=1; break;
+	case 8: native.max_request=260; args.size=4; break;
 	case 9: native.max_request=257; args.size=2; expected=-EINVAL; break;
 	case 10: args.size=4096-256; break;
 	case 11: args.num_bo_handles=65537; expected=-EINVAL; break;
@@ -720,6 +720,10 @@ run_case(unsigned which)
 #include "virtgpu-exec-cases.h"
 #endif
 
+#ifdef FRAMING_CONTRACT
+#include "virtgpu-exec-framing-cases.h"
+#endif
+
 #ifdef TRANSFER_CONTRACT
 #include "virtgpu-transfer-cases.h"
 #endif
@@ -735,6 +739,9 @@ submit_contract_main(void)
 main(void)
 #endif
 {
+#ifdef FRAMING_CONTRACT
+	return framing_contract_main();
+#endif
 #ifdef CONTROLLED_2D_CONTRACT
 	return controlled_2d_main();
 #endif

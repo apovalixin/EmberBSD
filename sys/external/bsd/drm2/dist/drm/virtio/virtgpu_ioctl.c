@@ -52,6 +52,29 @@ static int virtio_gpu_map_ioctl(struct drm_device *dev, void *data,
 }
 
 /*
+ * Classic command headers and payload are native uint32_t words.  This only
+ * checks framing; the renderer owns command/object semantics and memory bounds.
+ * END_TRANSFERS padding is opaque payload, just like any other packet payload.
+ */
+static int
+virtio_gpu_exec_framing(const void *buf, size_t size)
+{
+	const uint32_t *words = buf;
+	size_t remaining = size / sizeof(*words);
+	uint32_t payload;
+
+	while (remaining != 0) {
+		payload = *words++ >> 16;
+		remaining--;
+		if (payload > remaining)
+			return -EINVAL;
+		words += payload;
+		remaining -= payload;
+	}
+	return 0;
+}
+
+/*
  * Usage of execbuffer:
  * Relocations need to take into account the full VIRTIO_GPUDrawable size.
  * However, the command as passed from user space must *not* contain the initial
@@ -81,6 +104,7 @@ static int virtio_gpu_execbuffer_ioctl(struct drm_device *dev, void *data,
 	if (!vfpriv || !vfpriv->ctx_id)
 		return -EINVAL;
 	if (vgdev->vdev->max_request <= 256 || exbuf->size == 0 ||
+	    exbuf->size % sizeof(uint32_t) != 0 ||
 	    exbuf->size > vgdev->vdev->max_request - 256 ||
 	    exbuf->num_bo_handles > VIRTGPU_EXEC_MAX_OBJECTS ||
 	    (exbuf->flags & ~VIRTGPU_EXECBUF_FLAGS))
@@ -150,6 +174,10 @@ static int virtio_gpu_execbuffer_ioctl(struct drm_device *dev, void *data,
 		ret = -EFAULT;
 		goto out;
 	}
+	/* kvmalloc supplies aligned storage; inspect the single unchanged copy. */
+	ret = virtio_gpu_exec_framing(buf, exbuf->size);
+	if (ret)
+		goto out;
 	mutex_lock(&vfpriv->attachment_lock);
 	count = vfpriv->attachment_count;
 	ret = vfpriv->closing || !vgdev->vqs_ready ? -ENODEV : 0;
