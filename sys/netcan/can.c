@@ -1,4 +1,5 @@
 /*	$NetBSD: can.c,v 1.14 2024/07/05 04:31:54 rin Exp $	*/
+/* Origin: EmberBSD; AI-assisted CAN FD and packet ownership adaptation. */
 
 /*-
  * Copyright (c) 2003, 2017 The NetBSD Foundation, Inc.
@@ -83,6 +84,10 @@ static struct mowner can_tx_mowner = MOWNER_INIT("can", "tx");
 #endif
 
 static int can_output(struct mbuf *, struct canpcb *);
+static bool can_frame_len_valid(size_t);
+static bool can_frame_valid(const struct mbuf *);
+static void can_mbuf_free(struct mbuf *);
+static struct mbuf *can_mbuf_pullup(struct mbuf *, int);
 
 static int can_control(struct socket *, u_long, void *, struct ifnet *);
 
@@ -166,6 +171,10 @@ can_set_netlink(struct ifnet *ifp, struct ifdrv *ifd)
 			csc->csc_linkmodes |= mode;
 		else
 			csc->csc_linkmodes &= ~mode;
+		if ((mode & CAN_LINKMODE_FD) != 0)
+			ifp->if_mtu =
+			    (csc->csc_linkmodes & CAN_LINKMODE_FD) != 0 ?
+			    CANFD_MTU : CAN_MTU;
 		return 0;
 	}
 	return EOPNOTSUPP;
@@ -230,30 +239,110 @@ can_ifinit_timings(struct canif_softc *csc)
 	memset(&csc->csc_timings, 0xff, sizeof(struct can_link_timings));
 }
 
+static bool
+can_frame_len_valid(size_t len)
+{
+
+	return len == CANFD_MTU ||
+	    (len >= offsetof(struct can_frame, data) && len <= CAN_MTU);
+}
+
+static bool
+can_frame_valid(const struct mbuf *m)
+{
+	const struct can_frame *cf;
+	const struct canfd_frame *cfd;
+	size_t len = m->m_pkthdr.len;
+
+	if (!can_frame_len_valid(len))
+		return false;
+	KASSERT(m->m_len >= len);
+	if (len == CANFD_MTU) {
+		cfd = mtod(m, const struct canfd_frame *);
+		return cfd->len <= CANFD_MAX_DLEN &&
+		    (cfd->can_id & (CAN_RTR_FLAG | CAN_ERR_FLAG)) == 0 &&
+		    (cfd->flags & ~(CANFD_BRS | CANFD_ESI | CANFD_FDF)) == 0;
+	}
+
+	cf = mtod(m, const struct can_frame *);
+	if (cf->can_dlc > CAN_MAX_DLEN)
+		return false;
+	/* RTR's DLC requests data; the request itself has no payload. */
+	return (cf->can_id & CAN_RTR_FLAG) != 0 ||
+	    len >= offsetof(struct can_frame, data) + cf->can_dlc;
+}
+
+/* A queued loopback packet holds one reference to its sending PCB. */
+static void
+can_mbuf_free(struct mbuf *m)
+{
+	struct m_tag *sotag;
+
+	if (m == NULL)
+		return;
+	sotag = (m->m_flags & M_PKTHDR) != 0 ?
+	    m_tag_find(m, PACKET_TAG_SO) : NULL;
+	if (sotag != NULL)
+		canp_unref(*(struct canpcb **)(sotag + 1));
+	m_freem(m);
+}
+
+static struct mbuf *
+can_mbuf_pullup(struct mbuf *m, int len)
+{
+	struct m_tag *sotag;
+	struct canpcb *sender = NULL;
+
+	if (m->m_len >= len)
+		return m;
+	sotag = m_tag_find(m, PACKET_TAG_SO);
+	if (sotag != NULL)
+		sender = *(struct canpcb **)(sotag + 1);
+	m = m_pullup(m, len);
+	/* m_pullup frees the mbuf and its tag on failure, not the PCB ref. */
+	if (m == NULL && sender != NULL)
+		canp_unref(sender);
+	return m;
+}
+
+/* Consumes m on both success and failure, like ifq_enqueue(). */
 static int
 can_output(struct mbuf *m, struct canpcb *canp)
 {
 	struct ifnet *ifp;
 	struct m_tag *sotag;
 	struct canif_softc *csc;
+	int error;
 
 	if (canp == NULL) {
-		printf("can_output: no pcb\n");
-		return EINVAL;
+		error = EINVAL;
+		goto fail;
 	}
 	ifp = canp->canp_ifp;
 	if (ifp == 0) {
-		return EDESTADDRREQ;
+		error = EDESTADDRREQ;
+		goto fail;
+	}
+	if ((ifp->if_flags & (IFF_UP | IFF_RUNNING)) !=
+	    (IFF_UP | IFF_RUNNING)) {
+		error = ENETDOWN;
+		goto fail;
+	}
+	if (m->m_pkthdr.len > ifp->if_mtu) {
+		error = EMSGSIZE;
+		goto fail;
 	}
 	csc = ifp->if_softc;
 	if (csc && (csc->csc_linkmodes & CAN_LINKMODE_LISTENONLY)) {
-		return ENETUNREACH;
+		error = ENETUNREACH;
+		goto fail;
 	}
 		
-	sotag = m_tag_get(PACKET_TAG_SO, sizeof(struct socket *), PR_NOWAIT);
+	sotag = m_tag_get(PACKET_TAG_SO, sizeof(struct canpcb *), PR_NOWAIT);
 	if (sotag == NULL) {
 		if_statinc(ifp, if_oerrors);
-		return ENOMEM;
+		error = ENOMEM;
+		goto fail;
 	}
 	mutex_enter(&canp->canp_mtx);
 	canp_ref(canp);
@@ -261,11 +350,16 @@ can_output(struct mbuf *m, struct canpcb *canp)
 	*(struct canpcb **)(sotag + 1) = canp;
 	m_tag_prepend(m, sotag);
 
-	if (m->m_len <= ifp->if_mtu) {
-		can_output_cnt++;
-		return ifq_enqueue(ifp, m);
-	} else
-		return EMSGSIZE;
+	can_output_cnt++;
+	error = ifq_enqueue(ifp, m);
+	/* The queue has already freed m on error; only its PCB ref remains. */
+	if (error != 0)
+		canp_unref(canp);
+	return error;
+
+fail:
+	can_mbuf_free(m);
+	return error;
 }
 
 /*
@@ -293,14 +387,38 @@ can_mbuf_tag_clean(struct mbuf *m)
 void
 can_input(struct ifnet *ifp, struct mbuf *m)
 {
-	if ((ifp->if_flags & IFF_UP) == 0) {
-		m_freem(m);
+	int pktlen;
+
+	if ((ifp->if_flags & IFF_UP) == 0 ||
+	    (m->m_flags & M_PKTHDR) == 0) {
+		can_mbuf_free(m);
 		return;
 	}
 
-	const int pktlen = m->m_pkthdr.len;
+	pktlen = m->m_pkthdr.len;
+	if (!can_frame_len_valid(pktlen) || pktlen > ifp->if_mtu) {
+		if_statinc(ifp, if_ierrors);
+		can_mbuf_free(m);
+		return;
+	}
+	m = can_mbuf_pullup(m, pktlen);
+	if (m == NULL) {
+		if_statinc(ifp, if_ierrors);
+		return;
+	}
+	if (!can_frame_valid(m)) {
+		if_statinc(ifp, if_ierrors);
+		can_mbuf_free(m);
+		return;
+	}
+	if (pktlen == CANFD_MTU) {
+		struct canfd_frame *cfd = mtod(m, struct canfd_frame *);
+
+		cfd->flags |= CANFD_FDF;
+		cfd->__res0 = cfd->__res1 = 0;
+	}
 	if (__predict_false(!pktq_enqueue(can_pktq, m, 0))) {
-		m_freem(m);
+		can_mbuf_free(m);
 	} else {
 		if_statadd2(ifp, if_ipackets, 1, if_ibytes, pktlen);
 	}
@@ -348,6 +466,12 @@ canintr(void *arg __unused)
 			mutex_enter(&canp->canp_mtx);
 			/* skip if we're detached */
 			if (canp->canp_state == CANP_DETACHED) {
+				mutex_exit(&canp->canp_mtx);
+				continue;
+			}
+			/* Legacy sockets must never receive a larger FD record. */
+			if (m->m_pkthdr.len == CANFD_MTU &&
+			    (canp->canp_flags & CANP_FD_FRAMES) == 0) {
 				mutex_exit(&canp->canp_mtx);
 				continue;
 			}
@@ -613,20 +737,36 @@ can_send(struct socket *so, struct mbuf *m, struct sockaddr *nam,
 	int error = 0;
 	int s;
 
-	if (control && control->m_len) {
+	if (control != NULL) {
+		if (control->m_len != 0)
+			error = EINVAL;
 		m_freem(control);
-		error = EINVAL;
-		goto err;
+		if (error != 0)
+			goto err;
 	}
-	if (m->m_len > sizeof(struct can_frame) ||
-	   m->m_len < offsetof(struct can_frame, can_dlc)) {
+	if (m == NULL || (m->m_flags & M_PKTHDR) == 0 ||
+	    !can_frame_len_valid(m->m_pkthdr.len)) {
 		error = EINVAL;
 		goto err;
 	}
 
-	/* we expect all data in the first mbuf */
-	KASSERT((m->m_flags & M_PKTHDR) != 0);
-	KASSERT(m->m_len == m->m_pkthdr.len);
+	m = can_mbuf_pullup(m, m->m_pkthdr.len);
+	if (m == NULL) {
+		error = ENOBUFS;
+		goto err;
+	}
+	if (!can_frame_valid(m) || (m->m_pkthdr.len == CANFD_MTU &&
+	    (canp->canp_flags & CANP_FD_FRAMES) == 0)) {
+		error = EINVAL;
+		goto err;
+	}
+	if (m->m_pkthdr.len == CANFD_MTU) {
+		struct canfd_frame *cfd = mtod(m, struct canfd_frame *);
+
+		/* Mark FD before the driver exposes the frame to BPF. */
+		cfd->flags |= CANFD_FDF;
+		cfd->__res0 = cfd->__res1 = 0;
+	}
 
 	if (nam) {
 		if ((so->so_state & SS_ISCONNECTED) != 0) {
@@ -646,12 +786,14 @@ can_send(struct socket *so, struct mbuf *m, struct sockaddr *nam,
 		}
 	}
 	error = can_output(m, canp);
+	m = NULL;	/* can_output consumes the packet even on failure. */
 	if (nam) {
 		struct sockaddr_can lscan;
 		memset(&lscan, 0, sizeof(lscan));
 		lscan.can_family = AF_CAN;
 		lscan.can_len = sizeof(lscan);
 		can_pcbbind(canp, &lscan, l);
+		splx(s);
 	}
 	if (error)
 		goto err;
@@ -863,6 +1005,10 @@ can_raw_getop(struct canpcb *canp, struct sockopt *sopt)
 	int error;
 
 	switch (sopt->sopt_name) {
+	case CAN_RAW_FD_FRAMES:
+		optval = (canp->canp_flags & CANP_FD_FRAMES) ? 1 : 0;
+		error = sockopt_set(sopt, &optval, sizeof(optval));
+		break;
 	case CAN_RAW_LOOPBACK:
 		optval = (canp->canp_flags & CANP_NO_LOOPBACK) ? 0 : 1;
 		error = sockopt_set(sopt, &optval, sizeof(optval));
@@ -889,6 +1035,15 @@ can_raw_setop(struct canpcb *canp, struct sockopt *sopt)
 	int error;
 
 	switch (sopt->sopt_name) {
+	case CAN_RAW_FD_FRAMES:
+		error = sockopt_getint(sopt, &optval);
+		if (error == 0) {
+			if (optval)
+				canp->canp_flags |= CANP_FD_FRAMES;
+			else
+				canp->canp_flags &= ~CANP_FD_FRAMES;
+		}
+		break;
 	case CAN_RAW_LOOPBACK:
 		error = sockopt_getint(sopt, &optval);
 		if (error == 0) {

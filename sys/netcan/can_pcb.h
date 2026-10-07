@@ -1,4 +1,5 @@
 /*	$NetBSD: can_pcb.h,v 1.2 2017/05/27 21:02:56 bouyer Exp $	*/
+/* Origin: EmberBSD; AI-assisted CAN FD socket opt-in state. */
 
 /*-
  * Copyright (c) 2003, 2017 The NetBSD Foundation, Inc.
@@ -82,6 +83,7 @@ struct canpcbtable {
 /* flags in canp_flags: */
 #define CANP_NO_LOOPBACK	0x0001 /* local loopback disabled */
 #define CANP_RECEIVE_OWN	0x0002 /* receive own message */
+#define CANP_FD_FRAMES	0x0004 /* send and receive CAN FD records */
 
 
 #define	sotocanpcb(so)		((struct canpcb *)(so)->so_pcb)

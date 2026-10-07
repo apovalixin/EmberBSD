@@ -1,4 +1,5 @@
 /*	$NetBSD: if_canloop.c,v 1.10 2022/09/03 02:48:00 thorpej Exp $	*/
+/* Origin: EmberBSD; AI-assisted CAN FD software interface adaptation. */
 
 /*-
  * Copyright (c) 2017 The NetBSD Foundation, Inc.
@@ -45,6 +46,7 @@ __KERNEL_RCSID(0, "$NetBSD: if_canloop.c,v 1.10 2022/09/03 02:48:00 thorpej Exp 
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
+#include <sys/kmem.h>
 #include <sys/mbuf.h>
 #include <sys/socket.h>
 #include <sys/errno.h>
@@ -106,8 +108,13 @@ static int
 canloop_clone_create(struct if_clone *ifc, int unit)
 {
 	struct ifnet *ifp;
+	struct canif_softc *csc;
 
 	ifp = if_alloc(IFT_OTHER);
+	csc = kmem_zalloc(sizeof(*csc), KM_SLEEP);
+	can_ifinit_timings(csc);
+	csc->csc_timecaps.cltc_linkmode_caps = CAN_LINKMODE_FD;
+	ifp->if_softc = csc;
 
 	if_initname(ifp, ifc->ifc_name, unit);
 
@@ -134,6 +141,7 @@ canloop_clone_create(struct if_clone *ifc, int unit)
 static int
 canloop_clone_destroy(struct ifnet *ifp)
 {
+	struct canif_softc *csc = ifp->if_softc;
 
 	ifp->if_flags &= ~IFF_RUNNING;
 
@@ -143,6 +151,7 @@ canloop_clone_destroy(struct ifnet *ifp)
 #endif
 
 	can_ifdetach(ifp);
+	kmem_free(csc, sizeof(*csc));
 
 	if_free(ifp);
 	canloop_count--;
@@ -192,6 +201,7 @@ static int
 canloop_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 {
 	struct ifreq *ifr = data;
+	struct canif_softc *csc = ifp->if_softc;
 	int error = 0;
 
 	switch (cmd) {
@@ -201,8 +211,20 @@ canloop_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 		break;
 
 	case SIOCSIFMTU:
-		if ((unsigned)ifr->ifr_mtu != sizeof(struct can_frame))
+		if (ifr->ifr_mtu != CAN_MTU && ifr->ifr_mtu != CANFD_MTU) {
 			error = EINVAL;
+			break;
+		}
+		if (ifr->ifr_mtu != ifp->if_mtu &&
+		    (ifp->if_flags & IFF_UP) != 0) {
+			error = EBUSY;
+			break;
+		}
+		ifp->if_mtu = ifr->ifr_mtu;
+		if (ifp->if_mtu == CANFD_MTU)
+			csc->csc_linkmodes |= CAN_LINKMODE_FD;
+		else
+			csc->csc_linkmodes &= ~CAN_LINKMODE_FD;
 		break;
 
 	case SIOCADDMULTI:

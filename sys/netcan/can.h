@@ -1,4 +1,5 @@
 /*	$NetBSD: can.h,v 1.3 2017/05/30 13:30:51 bouyer Exp $	*/
+/* Origin: EmberBSD; AI-assisted CAN FD socket ABI extension. */
 
 /*-
  * Copyright (c) 2003, 2017 The NetBSD Foundation, Inc.
@@ -60,6 +61,8 @@ typedef uint32_t can_err_mask_t;
 /* CAN payload length and DLC definitions according to ISO 11898-1 */
 #define CAN_MAX_DLC 8
 #define CAN_MAX_DLEN 8
+#define CANFD_MAX_DLC 15
+#define CANFD_MAX_DLEN 64
 
 /* CAN frame */
 struct can_frame {
@@ -72,6 +75,21 @@ struct can_frame {
 };
 
 #define CAN_MTU         (sizeof(struct can_frame))
+
+/* CAN FD uses a separate record; the Classical CAN ABI stays unchanged. */
+struct canfd_frame {
+	canid_t	can_id;
+	uint8_t	len;	/* payload length in bytes, not the on-wire DLC */
+	uint8_t	flags;
+	uint8_t	__res0;
+	uint8_t	__res1;
+	uint8_t	data[CANFD_MAX_DLEN] __aligned(8);
+};
+
+#define CANFD_MTU	(sizeof(struct canfd_frame))
+#define CANFD_BRS	0x01	/* bit rate switch */
+#define CANFD_ESI	0x02	/* error state indicator */
+#define CANFD_FDF	0x04	/* record is a CAN FD frame */
 
 /* protocols */
 #define CAN_RAW         1 /* RAW sockets */
@@ -100,6 +118,7 @@ struct sockaddr_can {
 #define CAN_RAW_FILTER	1	/* struct can_filter: set filter */
 #define CAN_RAW_LOOPBACK 4	/* bool: loopback to local sockets (default:on) */
 #define CAN_RAW_RECV_OWN_MSGS 5	/* bool: receive my own msgs (default:off) */
+#define CAN_RAW_FD_FRAMES 6	/* bool: accept/send CAN FD (default:off) */
 
 /*
  * CAN ID based filter
