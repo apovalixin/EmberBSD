@@ -36,10 +36,16 @@ clock lease, saves owned register state, rejects an active DAC/ADC or non-codec
 PLL consumers, and programs the measured 98.304MHz PLL (N39/P4/M0=0/M1=1,
 pattern0 c001eb85). Module DAC/ADC clocks divide by4. Poll PLL lock with a bounded
 100ms nominal wait, never in an ISR. Deassert codec bus reset with bounded delays.
-All clock operations restore owned fields on failure or final disable; unrelated
-CCU fields, PIO pins, PMIC rails and calibration are preserved.
+Clock operations restore gates, PLL and owned fields on failure or final disable;
+unrelated CCU fields, PIO pins, PMIC rails and calibration are preserved. One
+intentional exception: after releasing codec bus reset, leave it released even
+when returning the bus gate to its original state. Never pulse or reassert that
+reset: it erases unowned BIAS/DAP/calibration state. A timeout before release
+preserves the original reset bit. This is not full restoration of the CCU reset
+state; the original clock gate state is restored and saved stream enables
+were inactive.
 
-Save codec state before reset; disable headset interrupts and DSP DAP. The
+Save codec state before releasing reset; disable headset interrupts and DSP DAP. The
 speaker route follows the heard native HPOUT pattern DAC310=1b15d05a,
 HP324 low16=8f8c with upper calibration preserved. PF6 low follows the inspected
 vendor pa_level; polarity isolation is still pending. MIC1 uses ADC-left gain16

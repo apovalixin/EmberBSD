@@ -53,8 +53,11 @@ a133_codec_restore(const struct a133_codec_io *io, struct a133_codec_lease *l)
 	update(io, A133_CODEC_CCU, 0x78, 0x80000000, 0);
 	io->write(io->cookie, A133_CODEC_CCU, 0x178, l->ccu[1]);
 	update(io, A133_CODEC_CCU, 0x78, ccu_masks[0], l->ccu[0]);
-	for (i = 2; i < 6; i++)
-		update(io, A133_CODEC_CCU, ccu_regs[i], ccu_masks[i], l->ccu[i]);
+	for (i = 2; i < 6; i++) {
+		/* Never reassert a released reset: it erases unowned trims/DAP. */
+		uint32_t mask = i == 5 && l->codec_touched ? 1 : ccu_masks[i];
+		update(io, A133_CODEC_CCU, ccu_regs[i], mask, l->ccu[i]);
+	}
 	if (l->pio_owned) {
 		update(io, A133_CODEC_PIO, 0xb4, 0x07000000, l->pio_cfg);
 		update(io, A133_CODEC_PIO, 0xc4, 0x40, l->pio_data);
@@ -105,10 +108,9 @@ a133_codec_prepare(const struct a133_codec_io *io, struct a133_codec_lease *l)
 	update(io, A133_CODEC_CCU, 0xa50, ccu_masks[2], 0x80000003);
 	update(io, A133_CODEC_CCU, 0xa54, ccu_masks[3], 0x80000003);
 	update(io, A133_CODEC_CCU, 0xa58, ccu_masks[4], 0x80000000);
-	l->codec_touched = true;
-	update(io, A133_CODEC_CCU, 0xa5c, ccu_masks[5], 1);
-	io->delay_us(io->cookie, 1000);
+	/* Release reset once; do not pulse or later reassert the bus reset. */
 	update(io, A133_CODEC_CCU, 0xa5c, ccu_masks[5], 0x10001);
+	l->codec_touched = true;
 	io->delay_us(io->cookie, 10000);
 	/* Headset detection and DSP paths are not part of this board route. */
 	update(io, A133_CODEC_REG, 0x328, 7, 0);

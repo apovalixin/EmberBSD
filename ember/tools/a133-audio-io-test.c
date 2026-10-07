@@ -13,6 +13,7 @@ struct bank {
 	uint32_t tx[256], rx[128];
 	unsigned reads, writes, delay, ntx, nrx, irx;
 	unsigned space_writes[3];
+	unsigned resets;
 	bool lock;
 };
 
@@ -39,6 +40,15 @@ wr(void *cookie, unsigned space, unsigned reg, uint32_t value)
 	assert(space < 3 && reg < 4096 && reg % 4 == 0);
 	b->writes++;
 	b->space_writes[space]++;
+	/* Bus reset destroys state outside the driver's owned register list. */
+	if (space == A133_CODEC_CCU && reg == 0xa5c &&
+	    (b->regs[space][reg / 4] & 0x10000) != 0 && (value & 0x10000) == 0) {
+		b->resets++;
+		b->regs[A133_CODEC_REG][0x320 / 4] = 0x80;
+		b->regs[A133_CODEC_REG][0x100 / 4] = 0;
+		b->regs[A133_CODEC_REG][0x324 / 4] = 0x80800c44;
+		b->regs[A133_CODEC_REG][0x310 / 4] = 0;
+	}
 	/* PLL lock status is read-only, unlike the software-owned control bits. */
 	if (space == A133_CODEC_CCU && reg == 0x78)
 		value &= ~0x10000000U;
@@ -66,6 +76,8 @@ fixture(struct bank *b)
 	b->regs[A133_CODEC_CCU][0xa5c / 4] = 0x00204000;
 	b->regs[A133_CODEC_REG][0x324 / 4] = 0x80800c44;
 	b->regs[A133_CODEC_REG][0x310 / 4] = 0x00150000;
+	b->regs[A133_CODEC_REG][0x320 / 4] = 0x91;
+	b->regs[A133_CODEC_REG][0x100 / 4] = 0x12345678;
 	b->regs[A133_CODEC_PIO][0xb4 / 4] = 0x07373733;
 	b->regs[A133_CODEC_PIO][0xc4 / 4] = 0xa5318300;
 }
@@ -83,6 +95,7 @@ lifecycle(void)
 	b.regs[A133_CODEC_REG][0x310 / 4] |= 0x04000020;
 	before = b;
 	assert(a133_codec_prepare(&io, &lease) == 0 && lease.prepared);
+	assert(b.resets == 0);
 	assert((b.regs[A133_CODEC_CCU][0x78 / 4] & 0xa93fff03) == 0xa9042702);
 	assert(b.regs[A133_CODEC_CCU][0x178 / 4] == 0xc001eb85);
 	assert(b.regs[A133_CODEC_CCU][0xa50 / 4] == 0x80402013);
@@ -102,9 +115,12 @@ lifecycle(void)
 	/* Another owner changes an unrelated GPIO bit while the lease is held. */
 	b.regs[A133_CODEC_PIO][0xc4 / 4] ^= 0x100;
 	a133_codec_restore(&io, &lease);
+	assert(b.resets == 0);
 	assert(!lease.saved && !lease.prepared && lease.routes == 0);
 	assert(memcmp(b.regs[A133_CODEC_REG], before.regs[A133_CODEC_REG],
 	    sizeof(b.regs[A133_CODEC_REG])) == 0);
+	/* A released reset stays released: reasserting it would erase trims. */
+	before.regs[A133_CODEC_CCU][0xa5c / 4] |= 0x10000;
 	assert(memcmp(b.regs[A133_CODEC_CCU], before.regs[A133_CODEC_CCU],
 	    sizeof(b.regs[A133_CODEC_CCU])) == 0);
 	assert(b.regs[A133_CODEC_PIO][0xb4 / 4] == 0x07373733);
@@ -112,6 +128,17 @@ lifecycle(void)
 	writes = b.writes;
 	a133_codec_restore(&io, &lease);
 	assert(b.writes == writes);
+
+	fixture(&b); b.regs[A133_CODEC_CCU][0xa5c / 4] |= 0x10000;
+	before = b;
+	assert(a133_codec_prepare(&io, &lease) == 0);
+	assert(a133_codec_route(&io, &lease, A133_PCM_PLAY, true) == 0);
+	assert(b.regs[A133_CODEC_REG][0x320 / 4] == 0x91);
+	assert(b.regs[A133_CODEC_REG][0x100 / 4] == 0x12345678);
+	assert(b.regs[A133_CODEC_REG][0x324 / 4] == 0x80808f8c);
+	assert((b.regs[A133_CODEC_REG][0x310 / 4] & 0x00ff0000) == 0x00150000);
+	a133_codec_restore(&io, &lease);
+	assert(b.resets == 0 && memcmp(b.regs, before.regs, sizeof(b.regs)) == 0);
 
 	fixture(&b); b.lock = false; before = b;
 	assert(a133_codec_prepare(&io, &lease) == ETIMEDOUT);
