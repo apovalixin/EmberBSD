@@ -1,4 +1,5 @@
 .\"	$NetBSD: canconfig.8,v 1.3 2017/05/29 08:46:23 wiz Exp $
+.\" Origin: EmberBSD; AI-assisted CAN FD and virtual-interface documentation.
 .\"
 .\" Copyright (c) 2017 Manuel Bouyer.
 .\"
@@ -22,7 +23,7 @@
 .\" (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 .\" THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd April 15, 2017
+.Dd October 7, 2026
 .Dt CANCONFIG 8
 .Os
 .Sh NAME
@@ -42,6 +43,11 @@ The
 .Nm
 utility is used to configure CAN network interface parameters and retrieve
 CAN network interface parameters and status from the kernel.
+Status includes the interface MTU, link-mode capabilities and enabled modes.
+The
+.Dv FD
+capability indicates that the interface can accept CAN FD frames when that
+mode is enabled.
 .Ss Timing
 The base time unit used to define the network bit rate is the time quanta (tq),
 its value is defined by the input clock frequency and the prescaler value
@@ -65,6 +71,13 @@ defines by how much the hardware can shorten these segments.
 .Pp
 Some hardware can use 3 sample points instead of one, and keep the majority as
 the final value.
+.Pp
+Virtual interfaces with no input clock, such as
+.Xr canloop 4 ,
+have no physical bit timing.
+Their status displays this explicitly, and timing commands are rejected.
+The timing commands describe the existing nominal timing parameters;
+they do not configure a separate CAN FD data-phase bit rate.
 .Ss Options
 The options are as follows:
 .Bl -tag -width indent
@@ -81,7 +94,7 @@ The following sub-commands are available:
 .Bl -tag -width indent
 .It Cm up
 Start network operations on the interface.
-Requires that all timing parameters have been set.
+Physical interfaces require that all timing parameters have been set.
 .It Cm down
 Stop network operations on the interface.
 .It Cm brp Ar value
@@ -108,10 +121,56 @@ Enable loopback mode.
 In this mode, the controller doesn't expect ACK from the bus.
 .It Cm -loopback
 Disable loopback mode.
+.It Cm fd
+Enable CAN FD mode on an interface advertising the
+.Dv FD
+capability.
+The interface must already be down.
+For
+.Xr canloop 4 ,
+this changes the MTU from 16 to 72 bytes.
+Applications must also enable the
+.Dv CAN_RAW_FD_FRAMES
+socket option described in
+.Xr can 4 .
+.It Cm -fd
+Disable CAN FD mode while the interface is down.
+For
+.Xr canloop 4 ,
+this restores the 16-byte classical CAN MTU.
 .El
-.\".Sh EXAMPLES
-.\"TODO
+.Pp
+The
+.Cm up
+and
+.Cm down
+commands apply interface flags at the end of an invocation.
+Use a separate
+.Cm down
+invocation before changing CAN FD mode on an active interface;
+combining
+.Cm down fd
+does not bring the interface down before the mode change.
+.Sh EXAMPLES
+Create and enable a virtual CAN FD interface:
+.Bd -literal -offset indent
+ifconfig canlo0 create
+canconfig canlo0 down
+canconfig canlo0 fd
+canconfig canlo0 up
+canconfig canlo0
+.Ed
+Return it to classical CAN mode:
+.Bd -literal -offset indent
+canconfig canlo0 down
+canconfig canlo0 -fd
+canconfig canlo0 up
+.Ed
+These commands exercise a software interface and do not configure physical
+CAN FD hardware or a data-phase bit rate.
 .Sh SEE ALSO
+.Xr can 4 ,
+.Xr canloop 4 ,
 .Xr ifconfig.if 5 ,
 .Xr ifconfig 8
 .Sh HISTORY

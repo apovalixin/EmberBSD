@@ -1,11 +1,12 @@
 # $NetBSD: Makefile,v 1.4 2024/12/11 19:57:13 andvar Exp $
+# Origin: EmberBSD; AI-assisted CAN FD rump test integration.
 #
 
 .include <bsd.own.mk>
 
 TESTSDIR=	${TESTSBASE}/net/can
 
-TESTS_C=	t_can t_canfilter
+TESTS_C=	t_can t_canfilter t_canfd
 
 SRCS.t_can=		t_can.c h_canutils.c
 

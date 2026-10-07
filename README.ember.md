@@ -30,6 +30,7 @@ The following accessory and protocol limits also apply:
 | AirPods | Connection confirmed; reliable audio quality and headset microphone operation have not been confirmed |
 | ELM327 | Testing with a physical adapter is still pending |
 | BLE | Not implemented in the added Bluetooth management tools |
+| CAN FD | Raw sockets, virtual canlo interfaces and canconfig mode control pass native rump checks; physical drivers and data-phase timing are not implemented ([guide](ember/can/README.md)) |
 
 The `bwfm` driver leaves roaming and WPA authentication to the host.
 It disables firmware WNM transitions as well as autonomous roaming:

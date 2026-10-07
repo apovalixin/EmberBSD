@@ -1,4 +1,5 @@
 /*	$NetBSD: canconfig.c,v 1.2 2017/05/27 21:02:55 bouyer Exp $	*/
+/* Origin: EmberBSD; AI-assisted CAN FD and virtual-interface configuration. */
 
 /*
  * Copyright 2001 Wasabi Systems, Inc.
@@ -54,6 +55,7 @@ __RCSID("$NetBSD: canconfig.c,v 1.2 2017/05/27 21:02:55 bouyer Exp $");
 #include <ctype.h>
 #include <err.h>
 #include <errno.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -68,6 +70,7 @@ struct command {
 };
 
 #define	CMD_INVERT	0x01	/* "invert" the sense of the command */
+#define	CMD_TIMING	0x02	/* requires physical bit timing */
 
 static void	cmd_up(const struct command *, int, const char *, char **);
 static void	cmd_down(const struct command *, int, const char *, char **);
@@ -79,16 +82,17 @@ static void	cmd_sjw(const struct command *, int, const char *, char **);
 static void	cmd_3samples(const struct command *, int, const char *, char **);
 static void	cmd_listenonly(const struct command *, int, const char *, char **);
 static void	cmd_loopback(const struct command *, int, const char *, char **);
+static void	cmd_fd(const struct command *, int, const char *, char **);
 
 static const struct command command_table[] = {
 	{ "up",			0,	0,		cmd_up },
 	{ "down",		0,	0,		cmd_down },
 
-	{ "brp",		1,	0,		cmd_brp },
-	{ "prop_seg",		1,	0,		cmd_prop_seg },
-	{ "phase_seg1",		1,	0,		cmd_phase_seg1 },
-	{ "phase_seg2",		1,	0,		cmd_phase_seg2 },
-	{ "sjw",		1,	0,		cmd_sjw },
+	{ "brp",		1,	CMD_TIMING,	cmd_brp },
+	{ "prop_seg",		1,	CMD_TIMING,	cmd_prop_seg },
+	{ "phase_seg1",		1,	CMD_TIMING,	cmd_phase_seg1 },
+	{ "phase_seg2",		1,	CMD_TIMING,	cmd_phase_seg2 },
+	{ "sjw",		1,	CMD_TIMING,	cmd_sjw },
 
 	{ "3samples",		0,	0,		cmd_3samples },
 	{ "-3samples",		0,	CMD_INVERT,	cmd_3samples },
@@ -98,6 +102,9 @@ static const struct command command_table[] = {
 
 	{ "loopback",		0,	0,		cmd_loopback },
 	{ "-loopback",		0,	CMD_INVERT,	cmd_loopback },
+
+	{ "fd",			0,	0,		cmd_fd },
+	{ "-fd",		0,	CMD_INVERT,	cmd_fd },
 
 	{ NULL,			0,	0,		NULL },
 };
@@ -202,6 +209,11 @@ main(int argc, char *argv[])
 			    cmd->cmd_keyword, cmd->cmd_argcnt,
 			    cmd->cmd_argcnt == 1 ? "" : "s");
 
+		if ((cmd->cmd_flags & CMD_TIMING) != 0 &&
+		    g_cltc.cltc_clock_freq == 0)
+			errx(1, "%s: virtual interface has no physical bit timing",
+			    canifname);
+
 		(*cmd->cmd_func)(cmd, sock, canifname, argv);
 
 		argc -= cmd->cmd_argcnt;
@@ -235,6 +247,7 @@ usage(void)
 		"<canif> 3samples | -3samples",
 		"<canif> listenonly | -listenonly",
 		"<canif> loopback | -loopback",
+		"<canif> fd | -fd",
 		NULL,
 	};
 	extern const char *__progname;
@@ -312,16 +325,20 @@ static void
 status(int sock, const char *canifname)
 {
 	struct ifreq ifr;
+	int flags;
 
 	memset(&ifr, 0, sizeof(ifr));
 
 	strlcpy(ifr.ifr_name, canifname, sizeof(ifr.ifr_name));
 	if (ioctl(sock, SIOCGIFFLAGS, &ifr) < 0)
 		err(1, "unable to get flags");
+	flags = ifr.ifr_flags;
+	if (ioctl(sock, SIOCGIFMTU, &ifr) < 0)
+		err(1, "unable to get MTU");
 
 	printf("%s: ", canifname);
-	printb("flags", ifr.ifr_flags, IFFBITS);
-	printf("\n");
+	printb("flags", flags, IFFBITS);
+	printf(" mtu %d\n", ifr.ifr_mtu);
 
 	show_timings(sock, canifname, "\t");
 
@@ -330,6 +347,11 @@ status(int sock, const char *canifname)
 static int
 valid_timings(struct can_link_timecaps *cltc, struct can_link_timings *clt)
 {
+	uint64_t ntq;
+
+	if (cltc->cltc_clock_freq == 0 || clt->clt_brp == 0)
+		return 0;
+
 	if (clt->clt_brp < cltc->cltc_brp_min ||
 	    clt->clt_brp > cltc->cltc_brp_max)
 		return 0;
@@ -344,6 +366,10 @@ valid_timings(struct can_link_timecaps *cltc, struct can_link_timings *clt)
 
 	if (clt->clt_ps2 < cltc->cltc_ps2_min ||
 	    clt->clt_ps2 > cltc->cltc_ps2_max)
+		return 0;
+
+	ntq = 1 + (uint64_t)clt->clt_prop + clt->clt_ps1 + clt->clt_ps2;
+	if (ntq > UINT64_MAX / clt->clt_brp)
 		return 0;
 
 	return 1;
@@ -368,6 +394,11 @@ show_timings(int sock, const char *canifname, const char *prefix)
 	    0) < 0)
 		err(1, "unable to get can link mode");
 
+	if (cltc.cltc_clock_freq == 0) {
+		printf("%svirtual interface: no physical bit timing\n", prefix);
+		goto modes;
+	}
+
 	humanize_number(hbuf, sizeof(hbuf), cltc.cltc_clock_freq, "Hz",
 	    HN_AUTOSCALE, HN_NOSPACE | HN_DIVISOR_1000);
 
@@ -381,18 +412,15 @@ show_timings(int sock, const char *canifname, const char *prefix)
 	    cltc.cltc_ps1_min, cltc.cltc_ps1_max,
 	    cltc.cltc_ps2_min, cltc.cltc_ps2_max,
 	    cltc.cltc_sjw_max);
-	printf("%s  ", prefix);
-	printb("capabilities", cltc.cltc_linkmode_caps, CAN_IFFBITS);
-	printf("\n");
 	printf("%soperational timings:", prefix);
 	if (valid_timings(&cltc, &clt)) {
-		uint32_t tq, ntq, bps;
+		uint64_t tq, ntq, bps;
 		tq = ((uint64_t)clt.clt_brp * (uint64_t)1000000000) /
 		    cltc.cltc_clock_freq;
-		ntq = 1 + clt.clt_prop + clt.clt_ps1 + clt.clt_ps2;
-		printf(" %d time quanta of %dns",
-		    1 + clt.clt_prop + clt.clt_ps1 + clt.clt_ps2, tq);
-		bps = 1000000000 / (tq * ntq); 
+		ntq = 1 + (uint64_t)clt.clt_prop + clt.clt_ps1 + clt.clt_ps2;
+		printf(" %ju time quanta of %juns", (uintmax_t)ntq,
+		    (uintmax_t)tq);
+		bps = cltc.cltc_clock_freq / ((uint64_t)clt.clt_brp * ntq);
 		humanize_number(hbuf, sizeof(hbuf), bps, "bps",
 		    HN_AUTOSCALE, HN_NOSPACE | HN_DIVISOR_1000);
 		printf(", %s", hbuf);
@@ -402,6 +430,10 @@ show_timings(int sock, const char *canifname, const char *prefix)
 	printf("%s  brp %d, prop_seg %d, phase_seg1 %d, phase_seg2 %d, sjw %d\n",
 	    prefix,
 	    clt.clt_brp, clt.clt_prop, clt.clt_ps1, clt.clt_ps2, clt.clt_sjw);
+modes:
+	printf("%s  ", prefix);
+	printb("capabilities", cltc.cltc_linkmode_caps, CAN_IFFBITS);
+	printf("\n");
 	printf("%s  ", prefix);
 	printb("mode", linkmode, CAN_IFFBITS);
 	printf("\n");
@@ -580,4 +612,27 @@ cmd_loopback(const struct command *cmd, int sock, const char *canifname,
 	    (cmd->cmd_flags & CMD_INVERT) ? 0 : 1) < 0)
 		err(1, "%s", cmd->cmd_keyword);
 
+}
+
+static void
+cmd_fd(const struct command *cmd, int sock, const char *canifname,
+    char **argv)
+{
+	struct ifreq ifr;
+
+	if ((g_cltc.cltc_linkmode_caps & CAN_LINKMODE_FD) == 0)
+		errx(1, "%s: interface does not support CAN FD", canifname);
+
+	/* up/down commands are deferred; check the current kernel state. */
+	memset(&ifr, 0, sizeof(ifr));
+	strlcpy(ifr.ifr_name, canifname, sizeof(ifr.ifr_name));
+	if (ioctl(sock, SIOCGIFFLAGS, &ifr) < 0)
+		err(1, "unable to get interface flags");
+	if ((ifr.ifr_flags & IFF_UP) != 0)
+		errx(1, "%s: run 'canconfig %s down' before changing CAN FD",
+		    canifname, canifname);
+
+	if (do_canflag(sock, canifname, CAN_LINKMODE_FD,
+	    (cmd->cmd_flags & CMD_INVERT) ? 0 : 1) < 0)
+		err(1, "%s", cmd->cmd_keyword);
 }

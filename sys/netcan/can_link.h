@@ -1,4 +1,5 @@
 /*	$NetBSD: can_link.h,v 1.2 2017/05/27 21:02:56 bouyer Exp $	*/
+/* Origin: EmberBSD; AI-assisted CAN FD link capability extension. */
 
 /*-
  * Copyright (c) 2017 The NetBSD Foundation, Inc.
@@ -69,12 +70,12 @@ struct can_link_timings {
 #define CAN_LINKMODE_LISTENONLY		0x02    /* Listen-only mode */
 #define CAN_LINKMODE_3SAMPLES		0x04    /* Triple sampling mode */
 #define CAN_LINKMODE_PRESUME_ACK	0x08    /* Ignore missing CAN ACKs */
+#define CAN_LINKMODE_FD			0x10    /* CAN FD frames enabled */
 #define CAN_IFFBITS \
-    "\020\1LOOPBACK\2LISTENONLY\3TRIPLESAMPLE\4PRESUMEACK"
+    "\020\1LOOPBACK\2LISTENONLY\3TRIPLESAMPLE\4PRESUMEACK\5FD"
 
 #define CANGLINKMODE	3 /* (uint32_t) get bits */
 #define CANSLINKMODE	4 /* (uint32_t) set bits */
 #define CANCLINKMODE	5 /* (uint32_t) clear bits */
 
 #endif /* _NETCAN_CAN_LINK_H */
-

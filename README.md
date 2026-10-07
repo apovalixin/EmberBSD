@@ -142,6 +142,14 @@ on every board in the hardware catalog.
   Ports provides [build instructions and bounded software tests](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/robotics-tools)
   using in-memory CAN frames, loopback TCP and pseudo-terminals. The DBC
   profile excludes KCD/XML; physical CAN/RS-485, ECUs and PLCs are unverified.
+- **CAN FD without a controller:** this OS tree extends raw CAN sockets and
+  `canlo` with 64-byte payloads, explicit FD opt-in and `canconfig` mode control.
+  Native AArch64 rump checks execute the kernel socket path: 15 existing CAN
+  cases and 11 new FD cases pass, including mixed Classical/FD traffic,
+  filters, invalid records and interface lifecycle. See the
+  [CAN FD guide and reproducible checks](ember/can/README.md).
+  This is software-stack validation; physical drivers, data-phase timing,
+  ISO-TP over FD and a booted kernel with this extension remain unverified.
 
 ### Graphical interfaces
 

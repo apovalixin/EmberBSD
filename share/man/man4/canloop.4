@@ -1,4 +1,5 @@
 .\"	$NetBSD: canloop.4,v 1.3 2017/05/29 08:42:33 wiz Exp $
+.\" Origin: EmberBSD; AI-assisted virtual CAN FD interface documentation.
 .\"
 .\" Copyright (c) 2017 Manuel Bouyer.
 .\" Redistribution and use in source and binary forms, with or without
@@ -20,7 +21,7 @@
 .\" (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 .\" THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd May 18, 2017
+.Dd October 7, 2026
 .Dt CANLOOP 4
 .Os
 .Sh NAME
@@ -36,16 +37,53 @@ It can be used as destination by a CAN application, when no CAN
 hardware is available.
 Other sockets bound to the same
 .Nm canloop
-interface (or not bound to any interface) will receive the frames.
+interface (or not bound to any interface) can receive the frames,
+subject to their filters and socket options.
+CAN FD records are delivered only to sockets that enable
+.Dv CAN_RAW_FD_FRAMES .
 .Pp
 .Nm canloop
 interfaces can be created by using the
 .Xr ifconfig 8
 .Cm create
 command.
+.Pp
+Each interface advertises the
+.Dv CAN_LINKMODE_FD
+capability, but starts in classical CAN mode with an MTU of 16 bytes.
+While it is down,
+.Xr canconfig 8
+.Cm fd
+enables CAN FD mode and changes the MTU to 72 bytes;
+.Cm -fd
+restores classical mode and its 16-byte MTU.
+Direct MTU changes accept only these two sizes and keep the mode consistent.
+Mode or MTU changes require the interface to be down.
+.Pp
+The interface has no physical clock or bit timing.
+CAN FD payload lengths from 0 through 64 bytes and the BRS, ESI and FDF
+flags are carried through the software stack as described in
+.Xr can 4 .
+No physical CAN controller, bit-rate switching, arbitration, electrical
+timing, or error-state behavior is simulated.
+.Sh EXAMPLES
+.Bd -literal -offset indent
+ifconfig canlo0 create
+canconfig canlo0 down
+canconfig canlo0 fd
+canconfig canlo0 up
+.Ed
+Applications must separately enable the
+.Dv CAN_RAW_FD_FRAMES
+socket option.
+Use separate invocations when bringing an active interface down before a
+mode change; interface flags are applied at the end of each
+.Xr canconfig 8
+invocation.
 .Sh SEE ALSO
 .Xr can 4 ,
 .Xr intro 4 ,
+.Xr canconfig 8 ,
 .Xr ifconfig 8
 .Sh HISTORY
 The
