@@ -55,7 +55,7 @@ TOOLCHAIN_BITS+= pcc
 
 .if ${TOOLCHAIN_MISSING} != "no" && defined(EXTERNAL_TOOLCHAIN)
 # dbsym and mdsetimage need build-host BFD, even with an external compiler.
-TOOLCHAIN_BITS+= binutils .WAIT
+TOOLCHAIN_BITS+= gmake .WAIT binutils .WAIT
 .endif
 
 .if ${TOOLCHAIN_MISSING} == "no" || defined(EXTERNAL_TOOLCHAIN)
