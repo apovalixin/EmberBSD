@@ -145,6 +145,10 @@ test "$(grep -c '^contract ' "$TEST_LOG")" -eq 6
 if EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$work/wrong-host" > "$work/run.log" 2>&1; then
     echo 'accepted native tools on Darwin' >&2; exit 1
 fi
+if NETBSD2_JOBS=00 sh "$work/src/ember/build-kernel.sh" "$work/zero-jobs" > "$work/run.log" 2>&1; then
+    echo 'accepted zero jobs' >&2; exit 1
+fi
+grep -q 'positive integer' "$work/run.log"
 rm "$work/src/tools/Makefile"
 if sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
     echo 'accepted incomplete cross source' >&2; exit 1

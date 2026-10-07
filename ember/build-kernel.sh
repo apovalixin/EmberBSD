@@ -55,7 +55,8 @@ esac
 python=${NETBSD2_PYTHON:-$(command -v python3 || true)}
 [ -n "$python" ] && [ -x "$python" ] || fail 'a host Python 3 is required for the existing source contracts; set NETBSD2_PYTHON'
 jobs=${NETBSD2_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)}
-case "$jobs" in ''|*[!0-9]*|0) fail 'NETBSD2_JOBS must be a positive integer' ;; esac
+case "$jobs" in ''|*[!0-9]*) jobs=0 ;; esac
+[ "$jobs" -gt 0 ] 2>/dev/null || fail 'NETBSD2_JOBS must be a positive integer'
 stage=$(mktemp -d "$out/.artifacts.XXXXXX")
 : > "$out/build.log"
 if [ "$mode" = cross ]; then
