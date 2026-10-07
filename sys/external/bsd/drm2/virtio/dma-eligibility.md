@@ -85,9 +85,14 @@ Allocation/map/pin/reference and PRE/POST counters verify conservation.
 `RESOURCE_SOURCE_ROOT=/absolute/baseline-export` selects older production
 integration bodies. The unchanged baseline fails seven integration groups;
 the new wrapper-only group is explicitly skipped because that helper did not
-exist. Host GREEN and ASan/UBSan pass the MD and integration groups. This is
-source/host evidence; native object compilation is a separate committed-export
-gate and actual native loaded-map inspection remains unperformed here.
+exist. Host GREEN and ASan/UBSan pass the MD and integration groups.
+
+The committed export also passes all 56 MD vectors and 11 integration groups
+on NetBSD/AArch64 with GCC 16.2, together with the 97 existing driver groups.
+Regenerated EMBERGPU configuration/dependencies and thirteen fresh VirtGPU
+objects pass with the base GCC 12.5 and the existing `-Werror` policy.
+This is native contract/compilation evidence: no complete kernel was linked,
+installed or booted, and actual native loaded-map inspection remains pending.
 
 Firmware coherence flags do not prove physical topology. Before feature-on,
 additional work must establish immutable negotiation/probe policy, inspect

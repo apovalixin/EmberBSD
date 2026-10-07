@@ -165,8 +165,11 @@ on every board in the hardware catalog.
   [Completion ordering and reset](sys/external/bsd/drm2/virtio/completion-lifetime.md)
   prevent a later reply from prematurely signaling an older command and
   drain accepted requests before publishing terminal reset results.
+  [Owned DMA backing checks](sys/external/bsd/drm2/virtio/dma-eligibility.md)
+  reject unsuitable ARM64 maps before a future 3D context can use them,
+  including resources shared through PRIME or duplicate handles.
   Native contracts and object builds pass; full kernel/runtime acceptance
-  remains pending.
+  and synchronization of all context-reachable backing remain pending.
   See the [VirtGPU implementation](sys/external/bsd/drm2/virtio/README.md),
   [DRM identity checks](ember/boot/drm-native-identity.md) and
   [graphics probes](https://github.com/neonix20b/EmberBSD-Examples/tree/main/desktop/wayland-utm).
