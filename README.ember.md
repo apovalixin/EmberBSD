@@ -52,7 +52,7 @@ sh ember/build-kernel.sh /absolute/output EMBER64
 
 The build produces an ELF kernel, a native kernel image, device trees for
 Zero 2 W, Orange Pi Zero 4 and Zero 3W, and Ethernet, Bluetooth UART, and WM8960
-modules. Validate new
+modules, plus the optional Pi 5 power-button fallback module. Validate new
 builds on the build environment before deployment. Building and booting
 all components of a complete release requires separate validation; the
 current installation recipe uses the official NetBSD 11.0 userland.

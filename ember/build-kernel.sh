@@ -32,7 +32,7 @@ for board in orangepi-zero4 orangepi-zero3w; do
     dtc -I dts -O dtb -o "$out/sun60i-a733-$board.dtb" \
         "$out/$board.dts" 2> "$out/$board-dtb.log"
 done
-for module in if_cemac_acpi bcm2712btcom rp1wmcodec; do
+for module in if_cemac_acpi bcm2712btcom rp1wmcodec rpi5button; do
     cd "$src/sys/modules/$module"
     make EMBER_KERNEL_CONFIG="$config" >> "$out/build.log" 2>&1
     cp "$module.kmod" "$out/"
@@ -45,5 +45,5 @@ done
     "$python" "$src/ember/tools/bluetooth-rc-contract.py"
     "$python" "$src/ember/tools/codec-contract.py" "$src"
 } > "$out/contracts.log" 2>&1
-echo "kernel and three modules built: $out"
+echo "kernel and four modules built: $out"
 cat "$out/contracts.log"
