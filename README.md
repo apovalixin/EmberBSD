@@ -346,14 +346,20 @@ on every board in the hardware catalog.
 - **Reproducible builds and development:** pinned kernel/UEFI inputs and
   checked firmware assets, pkgsrc overlays, versioned source probes and
   standalone examples. The [Ports development toolchain](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/development-toolchain)
-  provides a GCC 16.2 candidate built in the AArch64 VM and running there and
-  on physical Orange Pi Zero 3W. C11/C++20 threads, TLS and shared-library
+  provides GCC 16.2 built in the AArch64 VM and running there and on physical
+  Orange Pi Zero 3W. New [development sessions](https://github.com/neonix20b/EmberBSD-Ports/blob/main/profiles/common-build-tools/development-defaults.md)
+  and ordinary pkgsrc builds on Zero 3W select the repaired GCC16 nb1 package;
+  the base compiler remains explicit bootstrap/recovery support.
+  C11/C++20 threads, TLS and shared-library
   checks pass. On Zero 3W, current MPFR/MPC/libxml2 and actual pkgsrc wrapper
   compilation, package installation and loaded-runtime checks also pass;
   see the [native validation](https://github.com/neonix20b/EmberBSD-Ports/blob/main/profiles/development-toolchain/native-validation.md).
   The original atomic/binary128 LTO tests pass with its installed corrected libc.
-  C++ modules still require the separate allocation repair. The full
-  upstream suite has exposed platform compatibility failures. An upstream
+  A [Ports allocation repair](https://github.com/neonix20b/EmberBSD-Ports/blob/main/profiles/development-toolchain/modules-portability.md)
+  handles NetBSD's distinct EOPNOTSUPP value; the installed GCC16 nb1 package
+  passes the original crashing C++ module test and a module import/run check
+  on Zero 3W. The full upstream suite has exposed platform compatibility
+  failures. An upstream
   [TSVC allocator backport](https://github.com/neonix20b/EmberBSD-Ports/blob/main/profiles/development-toolchain/testsuite-portability.md)
   passes focused native plain/LTO checks; the full suite remains unaccepted.
   Remaining repairs and a coherent Qt/LLVM runtime rebuild are required before
