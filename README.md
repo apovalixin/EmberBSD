@@ -418,6 +418,10 @@ on every board in the hardware catalog.
   macro/selection and GCC16 metadata checks pass; they do not establish an
   installed LLVM23 compiler. Complete packages, ELF/JIT behavior and the
   Mesa26/TinyGo consumers remain pending. See the [LLVM family contract](https://github.com/neonix20b/EmberBSD-Ports/blob/main/profiles/common-build-tools/llvm-family.md).
+  Ports also owns the [Mac cross-package workflow](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/common-build-tools/cross):
+  pkgconf 3.0.7, GNU M4 1.4.21 and Libtool 2.6.2 pass normal package checks
+  and installed AArch64 VM consumers with GCC16. Regression checks cover
+  target ELF metadata, package replacement and extraction rollback on the host.
   [Developer skills](#connect-developer-skills) help
   AI coding assistants find the owning project, test changes and prepare
   contributions. A general validated installation image is not yet released.
