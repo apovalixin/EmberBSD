@@ -87,6 +87,12 @@ It records source, dependency, binary and runtime-library hashes plus build
 and test logs. Nothing is installed globally and the running kernel is not
 changed. Keep the evidence you need, then remove the chosen work directory.
 
+The CAN FD executable and its optional debug companion are also listed in
+the full system release sets. Run
+`sh ember/tools/canfd-sets-contract.sh /absolute/EmberBSD /new/absolute/set-check`
+to check the real set selector with ATF, rump and debug enabled or disabled.
+This packaging check does not exercise sockets or physical CAN hardware.
+
 Validation on 2026-10-07 used NetBSD 11.0/AArch64 and GCC 12.5.0:
 
 - 15 existing CAN/filter cases pass both before and after the extension.
