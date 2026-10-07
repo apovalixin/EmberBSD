@@ -122,6 +122,26 @@ on every board in the hardware catalog.
   are preserved in the [media port](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/media).
   This is a CPU file-processing profile; camera capture, network streaming
   and hardware codecs remain outside its verified scope.
+- **Recording experiments and finding visual markers:** MCAP C++ 2.1.3 records
+  timestamped messages with indexed replay and LZ4/Zstd compression. AprilTag
+  3.4.5 detects markers and estimates their pose. Installed AArch64 VM checks
+  verify message content, selection and damaged structures, plus known marker
+  geometry after image transformations. Ports owns the [source profiles and checks](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/robotics-tools);
+  camera hardware and real-world pose accuracy are unverified.
+- **Numerical estimation and behavior logic:** Ceres 2.2.0 uses the common
+  Eigen 5.0.1 for nonlinear fitting; BehaviorTree.CPP 4.9.0 coordinates
+  asynchronous actions. Nine installed AArch64 VM cases verify numerical
+  results, invalid inputs, cancellation, timeouts, restart and binary transition
+  logging. Ports owns these [source profiles](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/robotics-tools).
+  Physical calibration, complete robot integration and hard-real-time behavior
+  are unverified; optional Groot/ZeroMQ and SQLite logging are excluded.
+- **Vehicle and industrial protocol development:** dbcppp 3.2.6 decodes DBC
+  signals, iso14229 0.11.0 exchanges UDS messages through user-space ISO-TP,
+  and libmodbus 3.2.0 provides TCP and RTU. Installed AArch64 VM consumers
+  check exact data, fragmentation, error responses, timeouts and reconnection.
+  Ports provides [build instructions and bounded software tests](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/robotics-tools)
+  using in-memory CAN frames, loopback TCP and pseudo-terminals. The DBC
+  profile excludes KCD/XML; physical CAN/RS-485, ECUs and PLCs are unverified.
 
 ### Graphical interfaces
 
