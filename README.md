@@ -263,8 +263,9 @@ on every board in the hardware catalog.
   [Classic EXEC framing](sys/external/bsd/drm2/virtio/exec-framing.md) rejects
   misaligned or truncated packets before DMA or output-fence publication,
   preserving command bytes and Mesa transfer padding.
-  Native contracts and object builds pass. Complete request bounds, arbitrary
-  userspace CPU access, full kernel/runtime acceptance and live DMA qualification
+  Native contracts and object builds pass. A complete `EMBERGPU` kernel now
+  cross-builds on macOS; its exact runtime boundary is recorded in the driver guide.
+  Complete request bounds, arbitrary userspace CPU access and live DMA qualification
   remain pending.
   See the [VirtGPU implementation](sys/external/bsd/drm2/virtio/README.md),
   [DRM identity checks](ember/boot/drm-native-identity.md) and
@@ -273,8 +274,11 @@ on every board in the hardware catalog.
   with native DSO-lifetime/numeric regressions under GCC 16.2 and
   common-toolchain staging rules. A [common graphics source profile](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/common-graphics)
   supplies canonical MesaLib 26.2.4/libdrm 2.4.134nb1 recipes with checked
-  pkgsrc/Qt dependency selection; native packages, complete builds and
-  consumer migration remain pending. A Ports
+  pkgsrc/Qt dependency selection. Its complete core-only libdrm payload
+  cross-builds with GCC16 on macOS, matches the 26-entry PLIST and passes
+  upstream hash, skip-list and symbol checks in AArch64 UTM. Package
+  registration, complete Mesa/LLVM builds and consumer migration remain pending.
+  A Ports
   [host-side VirGL 1.3.0 adaptation](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/utm-virgl-host)
   preserves the upstream IOV-size correction and prevents resource publication
   after reported CREATE failures, with cleanup of owned partial allocations.
@@ -284,6 +288,9 @@ on every board in the hardware catalog.
   An opt-in [classic lifecycle barrier](https://github.com/neonix20b/EmberBSD-Ports/blob/main/probes/utm-virgl-host/LIFECYCLE.md)
   orders CPU producer shutdown and all-resource detach before mapping release;
   source tests cover fault/reset, blocked display and command handoff.
+  [Reported command and fence errors](https://github.com/neonix20b/EmberBSD-Ports/blob/main/probes/utm-virgl-host/COMPLETION.md)
+  now enter that barrier before guest completion, with 683 source assertions
+  passing in plain, sanitizer and NDEBUG runs.
   Focused macOS/arm64 source and sanitizer checks pass; full host builds,
   native lifetime qualification, remaining bounds and error propagation are pending.
   VirGL stays disabled; GPU rendering, reliable console recovery and Vulkan
