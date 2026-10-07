@@ -269,5 +269,17 @@ sun50i_a133_fdt_fixup(void *fdt)
 		A133_SET(SOC "/s_twi@0x07081400", "clocks", cells,
 		    sizeof(cells[0]));
 	}
+	/* Copy the provider value before any update can move its property. */
+	node = fdt_path_offset(fdt, "/interrupt-controller@03020000");
+	if (node >= 0) {
+		uint32_t gic = fdt_get_phandle(fdt, node);
+
+		if (gic != 0) {
+			A133_CELL("/", "interrupt-parent", gic);
+			if (fdt_path_offset(fdt, SOC "/uart@05000000") >= 0)
+				A133_CELL(SOC "/uart@05000000",
+				    "interrupt-parent", gic);
+		}
+	}
 	return a133_framebuffer(fdt);
 }

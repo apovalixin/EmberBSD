@@ -11,14 +11,20 @@ int sun50i_a133_fdt_fixup(void *);
 static void
 fixture(void *fdt, int size, const char *compat)
 {
-	int soc, pio, mmc, twi;
+	int soc, pio, mmc, twi, gic, uart;
 
 	assert(fdt_create_empty_tree(fdt, size) == 0);
 	assert(fdt_setprop_string(fdt, 0, "compatible", compat) == 0);
+	/* Subnodes are prepended: keep the GIC after the UART in the blob. */
+	gic = fdt_add_subnode(fdt, 0, "interrupt-controller@03020000");
+	assert(gic >= 0);
+	assert(fdt_setprop_u32(fdt, gic, "phandle", 42) == 0);
 	soc = fdt_add_subnode(fdt, 0, "soc@03000000");
 	assert(soc >= 0);
 	assert(fdt_setprop_u32(fdt, soc, "#address-cells", 2) == 0);
 	assert(fdt_setprop_u32(fdt, soc, "#size-cells", 2) == 0);
+	uart = fdt_add_subnode(fdt, soc, "uart@05000000");
+	assert(uart >= 0);
 	pio = fdt_add_subnode(fdt, soc, "pinctrl@0300b000");
 	assert(pio >= 0);
 	assert(fdt_setprop_string(fdt, pio, "compatible",
@@ -50,6 +56,13 @@ main(void)
 	assert(fdt != NULL && before != NULL);
 	fixture(fdt, 16384, "allwinner,a133");
 	assert(sun50i_a133_fdt_fixup(fdt) == 0);
+	cells = fdt_getprop(fdt, 0, "interrupt-parent", &len);
+	assert(cells != NULL && len == 4 && fdt32_to_cpu(*cells) == 42);
+	provider = fdt_path_offset(fdt, "/soc@03000000/uart@05000000");
+	cells = fdt_getprop(fdt, provider, "interrupt-parent", &len);
+	assert(cells != NULL && len == 4 && fdt32_to_cpu(*cells) == 42);
+	assert(fdt_node_offset_by_phandle(fdt, 42) ==
+	    fdt_path_offset(fdt, "/interrupt-controller@03020000"));
 	twi = fdt_path_offset(fdt, "/soc@03000000/s_twi@0x07081400");
 	assert(fdt_node_check_compatible(fdt, twi,
 	    "allwinner,sun6i-a31-i2c") == 0);
