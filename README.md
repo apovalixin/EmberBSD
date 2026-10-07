@@ -374,8 +374,9 @@ on every board in the hardware catalog.
   addresses lost subnormal values and NaN payloads on CPUs without AArch32.
   Production contracts and native object compilation pass. Three runtime
   modes also pass after booting the corrected kernel on Pi 5 Cortex-A76;
-  that board already passed the baseline. Boot verification on the
-  AArch64-only VM reproducing the original failure remains pending.
+  that board already passed the baseline. A new minimal AArch64 UTM guest
+  also passes all modes after cold-booting the GCC16-built kernel; the
+  removed VM's full failing compiler suite has not been repeated.
 - **AArch64 atomic correctness:** [narrow outlined CAS helpers](ember/boot/aarch64-outlined-cas.md)
   now normalize expected arguments so matching byte/halfword updates are
   not skipped. All 850 native production checks and an isolated unchanged
@@ -397,7 +398,9 @@ on every board in the hardware catalog.
   and ordinary pkgsrc builds on Zero 3W select the repaired GCC16 nb1 package;
   the base compiler remains explicit bootstrap/recovery support.
   The [cross-build wrapper](ember/boot/cross-build.md) builds an AArch64 kernel,
-  matched board modules and DTBs on Apple Silicon macOS. The
+  matched board modules and DTBs on Apple Silicon macOS with GCC16.2.
+  The resulting kernel cold-boots in AArch64 UTM and passes FP process,
+  signal and thread checks. The
   [Ports cross GCC16 recipe](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/development-toolchain/cross)
   also runs GCC16 on that host; cross-built C11 (plain/LTO) and C++20 DSO
   checks pass on Zero 3W with its installed GCC16 runtime. The

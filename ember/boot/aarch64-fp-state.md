@@ -76,9 +76,16 @@ The six production groups also pass natively on NetBSD 11/aarch64 with GCC
 The still-loaded recovery kernel returns real failures for fresh-exec defaults
 and exec reset, while fork, signal return and two-thread state preservation
 pass. The runtime runner retains exit 1; a separate build/check receipt is
-not runtime acceptance of the correction. That requires a matched kernel
-build and boot on that AArch64-only VM and remains pending. The existing
-GCC suite's results are not changed or replaced by these probes.
+not runtime acceptance of the correction. That historical VM was later
+removed. The existing GCC suite's results are not changed or replaced by
+these probes.
+
+On 2026-10-08, a new minimal AArch64 UTM guest cold-booted `EMBER64` from
+`21cd2464c720159bec0a3ba352e4dee940a58b02`, cross-built on macOS with GCC16.2.
+All three runtime modes passed with installed GCC16: fresh exec reports
+FPCR=0/FPSR=0, fork/signal/two-thread state is preserved, and exec resets
+deliberately changed parent state. This confirms the new guest; the removed
+VM's complete failing compiler suite has not been repeated.
 
 On 2026-10-07, physical Raspberry Pi 5 Cortex-A76 hardware booted a matching
 `EMBER64` kernel from `0108f0692febed373069b5b14bb5912015b2fd88` and passed

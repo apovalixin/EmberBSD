@@ -109,8 +109,27 @@ booted on a board as part of this cross-build check.
 
 Separately, Ports GCC16 built on macOS and cross-compiled C11 plain/LTO and
 C++20 shared-library probes. They pass on physical Orange Pi Zero 3W with
-its installed GCC16 runtime. That does not establish a GCC16-built kernel,
-a full userland or a cross-packaged Ports dependency closure.
+its installed GCC16 runtime.
+
+On 2026-10-08, the external GCC16.2 path built the full `EMBER64`, four
+matched modules and three DTBs from `21cd2464c720159bec0a3ba352e4dee940a58b02`.
+Kernel C objects retain GCC's default DWARF5 and the linked kernel contains
+CTF. Strict compiler warnings remain enabled. The kernel SHA256 is
+`d79c53a823855211c613245808c6f588d418c9e5bd83990ff3dc60cee643b54c`.
+It cold-booted in AArch64 UTM with network and disk access. The installed
+kernel passes fresh-exec FP defaults, fork/signal/thread state preservation
+and exec reset from altered FP state. The font ioctl ownership regression
+passes with GCC16 in that guest and with host ASan/UBSan; the original
+handler fails its pointer-preservation assertion. Run it with:
+
+```sh
+sh ember/tests/wsdisplay-font.sh /absolute/source /absolute/new-test-output
+```
+
+This accepts the GCC16 kernel build and VM boot, not a complete GCC16-built
+userland, a new physical-board deployment, board-module attachment or live
+DTrace. The four native Bluetooth/audio source contracts require the selected
+Python package in the new minimal guest and remain pending there.
 
 ## DWARF5 and CTF
 
