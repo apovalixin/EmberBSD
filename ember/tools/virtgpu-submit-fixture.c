@@ -535,7 +535,7 @@ static int virtqueue_add_sgs(struct netbsd_virtqueue *q,struct linux_virtio_sg *
 static const char *const cases[] = {
 	"accepted pending", "disabled", "unknown flags", "size zero",
 	"max zero", "max one", "max 255", "max 256", "minimum aligned request exact",
-	"max 257 overflow", "exact request boundary", "handle cap overflow",
+	"aligned request overflow", "exact request boundary", "handle cap overflow",
 	"handle cap exact lookup failure", "missing context", "zero context",
 	"invalid input fd", "input timeout", "input interrupted", "input failed",
 	"input successful", "input unexpectedly pending", "failed input array",
@@ -602,7 +602,7 @@ run_case(unsigned which)
 	case 6: native.max_request=255; expected=-EINVAL; break;
 	case 7: native.max_request=256; expected=-EINVAL; break;
 	case 8: native.max_request=260; args.size=4; break;
-	case 9: native.max_request=257; args.size=2; expected=-EINVAL; break;
+	case 9: native.max_request=260; args.size=8; expected=-EINVAL; break;
 	case 10: args.size=4096-256; break;
 	case 11: args.num_bo_handles=65537; expected=-EINVAL; break;
 	case 12: args.num_bo_handles=65536; fail_lookup=1; expected=-ENOENT; break;

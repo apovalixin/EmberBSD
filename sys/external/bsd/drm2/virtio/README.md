@@ -84,7 +84,8 @@ The [classic EXEC framing gate](exec-framing.md) rejects misaligned/truncated
 copied packets before PRE, submission or output-fd publication. Its 28 host
 contract groups and focused ASan/UBSan pass; format-aware access and truthful
 host errors remain [activation obligations](exec-framing.md#host-obligations-before-activation).
-Its 47 new and 132 prior contract groups pass natively with GCC 16.2;
+The whole-context EXEC contract's 47 new and 132 prior groups pass natively
+with GCC 16.2;
 fourteen fresh driver objects compile with base GCC 12.5 and normal
 `-Werror`. Full kernel, live DMA and graphics qualification remain pending.
 
