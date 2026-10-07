@@ -25,7 +25,9 @@ awk '
 ' "$production" > "$work/comparetf2-production.h"
 cat > "$work/host-bits.h" <<'EOF'
 #include <stdint.h>
-#ifndef TEST_NON_NETBSD
+#ifdef TEST_NON_NETBSD
+#undef __NetBSD__
+#else
 #define __NetBSD__ 1
 #endif
 #ifdef TEST_NON_AARCH64
