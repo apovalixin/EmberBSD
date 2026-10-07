@@ -195,7 +195,10 @@ on every board in the hardware catalog.
   with software rendering and tested keyboard input. Plasma Mobile 6.7.5
   builds and installs with checked library loading and QML components.
   Common [Qt 6.12 / Frameworks 6.30 source recipes](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit)
-  and export checks are available; native packages remain pending.
+  and [shared FFmpeg9 recipes](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/common-media)
+  have checked source/dependency selection. The FFmpeg audio API and device
+  registration pass in the AArch64 VM with GCC16; real metadata extraction
+  passes on the host. Complete native packages and Qt playback remain pending.
   A complete mobile shell workflow, native display and power management
   still need validation. See the [Plasma Mobile port](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/plasma-mobile).
 
