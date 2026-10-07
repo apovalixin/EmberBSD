@@ -295,10 +295,13 @@ on every board in the hardware catalog.
   also prevents failed waits from becoming successful fence callbacks;
   causal renderer-to-QEMU source checks pass in all three modes.
   A [full private renderer build](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/utm-virgl-host/host)
-  with current libepoxy 1.5.10 passes texture readback, decoded framebuffer clears, native fences
+  with current libepoxy 1.5.10 passes texture readback, decoded framebuffer clears,
+  shader triangle pixels, native fences
   and three cleanup/reinit cycles on Apple M3/ANGLE Metal. It also fixes a
   reproduced absent-context cleanup error and rejects truncated command payloads
   with EINVAL; full native decoder checks preserve valid-command behavior.
+  Reported surface/GL errors now reject classic submissions and poisoned contexts,
+  tested on Metal with upstream GL checking both enabled and disabled.
   The [full paired QEMU recipe](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/utm-virgl-host/qemu)
   builds and passes an isolated 2D guest boot on ANGLE Metal, including libdrm
   and 32 GEM/PRIME lifetimes. A separate [live 2D backing check](https://github.com/neonix20b/EmberBSD-Ports/blob/main/probes/utm-virgl-host/qemu/reset.md)
@@ -315,7 +318,10 @@ on every board in the hardware catalog.
   On NetBSD/AArch64 with GCC 16.2, 13 descriptor cases and 58 core-count
   cases pass against isolated production methods; a full runtime build and
   NPU execution remain unverified.
-  A733 PowerVR/Vivante integration is a separate investigation. These are
+  The [A733 Ports audit](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/a733-accelerators)
+  identifies its Vivante NPU's missing Mesa TP path and pins the exact PowerVR
+  firmware. On the available Zero 3W, accelerator drivers are not attached;
+  native power, DMA/MMU and command submission still require porting. These are
   porting targets, not available EmberBSD acceleration. Board bring-up,
   driver/DMA integration, compatible runtime and real model execution must
   all pass before an accelerated AI workflow is claimed.

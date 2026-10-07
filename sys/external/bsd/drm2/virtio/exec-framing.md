@@ -55,7 +55,10 @@ The Ports classic profile now propagates reported CREATE/transfer/EXEC results
 through its source-tested lifecycle barrier. The full
 [host renderer recipe](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/utm-virgl-host/host)
 also rejects the overlong-packet break-then-success path with EINVAL; native
-Metal decoder checks pass. Live error delivery through QEMU remains unqualified.
+Metal decoder checks pass. Its classic profile also propagates reported surface/GL
+errors and rejects poisoned current contexts; full native checks pass with and
+without upstream GL error checking. This does not cover unreported errors or
+delayed query writes. Live error delivery through QEMU remains unqualified.
 Partial command execution is not atomic rollback.
 Terminal errors must reach the guest fence/reset contract. Delayed query writes
 need bounds and lifetime checks at the eventual write; UNREF/reset must quiesce
