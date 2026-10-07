@@ -550,7 +550,7 @@ virtgpu_console_stop(struct virtio_gpu_device *d)
 {
 }
 static void
-virtio_gpu_fail_fences(struct virtio_gpu_device *d, int error)
+virtio_gpu_fence_stop(struct virtio_gpu_device *d, int error)
 {
 }
 static void
@@ -719,6 +719,8 @@ sg_free_table(struct sg_table *s)
 		bus_dmamap_destroy(s->sgl->sg_dmat, s->sgl->sg_dmamap);
 }
 static void virtio_gpu_stop(struct virtio_gpu_device *, int);
+/* Fence publication itself is exercised by the completion contract. */
+static void virtio_gpu_fence_complete(struct virtio_gpu_fence *f, int error) { }
 static void virtio_gpu_cancel_vbuf(void *);
 static void virtio_gpu_release_object(struct virtio_gpu_object *);
 static struct virtio_gpu_object_array *virtio_gpu_array_alloc(u32);

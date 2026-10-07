@@ -42,7 +42,7 @@ extract virtio_gpu_stop "$kms" 'static void' >> "$prod"
 for name in virtio_gpu_wait_put virtio_gpu_wait_done; do extract "$name" "$vq" 'static void' >> "$prod"; done
 extract virtio_gpu_get_vbuf "$vq" 'static struct virtio_gpu_vbuffer *' >> "$prod"
 extract virtio_gpu_alloc_cmd "$vq" 'static void *' >> "$prod"
-for name in free_vbuf virtio_gpu_cancel_vbuf; do extract "$name" "$vq" 'static void' >> "$prod"; done
+for name in free_vbuf virtio_gpu_finish_vbuf virtio_gpu_cancel_vbuf; do extract "$name" "$vq" 'static void' >> "$prod"; done
 for name in virtio_gpu_response_error virtio_gpu_queue_sync virtio_gpu_cmd_context_create \
     virtio_gpu_cmd_context_destroy virtio_gpu_cmd_context_attach_resource \
     virtio_gpu_cmd_context_detach_resource virtio_gpu_cmd_create_resource \

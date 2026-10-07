@@ -36,7 +36,7 @@ struct virtio_gpu_object_array { bool locked; };
 struct linux_virtio_sg { void *buffer; size_t length; struct linux_virtio_sg *next; };
 struct netbsd_virtqueue { unsigned int num_free; };
 struct virtio_gpu_vbuffer {
-    char *buf, *resp_buf; int size, resp_size;
+    char *buf, *resp_buf; int size, resp_size, error;
     void *data_buf; unsigned int data_size;
     struct virtio_gpu_fence *fence;
     struct virtio_gpu_object_array *objs;
@@ -44,9 +44,17 @@ struct virtio_gpu_vbuffer {
 };
 struct virtio_gpu_device {
     struct { struct netbsd_virtqueue *vq; struct mutex qlock; int ack_queue; } ctrlq;
-    struct mutex submit_lock;
+    struct mutex submit_lock; int submitters;
     bool vqs_ready; int submit_error;
 };
+#define jiffies 0
+static bool virtio_gpu_submit_begin(struct virtio_gpu_device *d) {
+    if (!d->vqs_ready) return false; d->submitters++; return true;
+}
+static void virtio_gpu_submit_done(struct virtio_gpu_device *d) {
+    assert(d->submitters == 1); d->submitters--;
+}
+static bool virtio_gpu_fence_space(struct virtio_gpu_device *d) { (void)d; return true; }
 static int attempts, canceled, stops, wait_calls;
 static int planned_error, first_enospc, progress;
 static unsigned int captured_out, captured_in;
@@ -57,9 +65,9 @@ static void mutex_unlock(struct mutex *m) { assert(m->held); m->held = 0; }
 #define spin_unlock mutex_unlock
 static void dma_fence_get(struct dma_fence *f) { f->refs++; }
 static void dma_fence_put(struct dma_fence *f) { assert(f->refs > 1); f->refs--; }
-static void virtio_gpu_fence_emit(struct virtio_gpu_device *v,
+static int virtio_gpu_fence_emit(struct virtio_gpu_device *v,
     struct virtio_gpu_ctrl_hdr *hdr, struct virtio_gpu_fence *f) {
-    assert(v->submit_lock.held); hdr->id = 1; dma_fence_get(&f->f);
+    assert(v->submit_lock.held); hdr->id = 1; dma_fence_get(&f->f); return 0;
 }
 static void virtio_gpu_array_add_fence(struct virtio_gpu_object_array *a,
     struct dma_fence *f) { (void)f; assert(a->locked); }
@@ -74,7 +82,10 @@ static void virtio_gpu_stop(struct virtio_gpu_device *v, int error) {
     stops++; v->vqs_ready = false; v->submit_error = error;
 }
 static void virtio_gpu_cancel_vbuf(struct virtio_gpu_vbuffer *b) {
-    canceled++; if (b->fence) dma_fence_put(&b->fence->f);
+    canceled++; if (b->fence) {
+        if (!b->fence->f.signaled) virtio_gpu_fence_fail(b->fence, b->error);
+        dma_fence_put(&b->fence->f);
+    }
     if (b->release) { assert(stops); b->release->alive = 0; }
 }
 static int virtqueue_add_sgs(struct netbsd_virtqueue *vq,
@@ -93,8 +104,9 @@ static int model_wait(struct netbsd_virtqueue *vq, unsigned int before) {
     wait_calls++; if (progress) { vq->num_free = before + 1; return 1; }
     return 0;
 }
-#define wait_event_timeout(q, cond, timeout) model_wait(vq, before)
+#define wait_event_timeout(q, cond, timeout) ((cond) ? (timeout) : model_wait(vq, vq->num_free))
 C
+extract virtio_gpu_queue_remaining "$vq" 'static long' >> "$work/queue.c"
 extract virtio_gpu_queue_fenced_ctrl_buffer "$vq" 'static int' >> "$work/queue.c"
 cat >> "$work/queue.c" <<'C'
 static void queue_case(int error, bool ready, bool pressure, bool wake,
@@ -121,7 +133,7 @@ static void queue_case(int error, bool ready, bool pressure, bool wake,
             captured_lengths[2] == 24);
     } else assert(attempts == 0);
     if (ret) {
-        assert(canceled == 1 && fence.f.refs == 1 && fence.f.error == ret);
+        assert(canceled == 1 && fence.f.refs == 1 && fence.f.error == (ready ? ret : 0));
         if (resource) assert(stops == 1 && bo.alive == 0);
     } else {
         assert(canceled == 0 && fence.f.refs == 3);
@@ -195,7 +207,7 @@ struct virtio_gpu_vbuffer {
     struct virtio_gpu_object *release;
     struct virtio_gpu_fence *fence;
     void *objs, *data_buf, *resp_buf;
-    int resp_size; char *buf; char payload[64];
+    int resp_size, error; char *buf; char payload[64];
 };
 static struct virtio_gpu_vbuffer *pending;
 static bool host_access;
@@ -248,6 +260,7 @@ static int virtio_gpu_queue_fenced_ctrl_buffer(struct virtio_gpu_device *v,
     }
     assert(!pending); pending = b; return 0;
 }
+static void virtio_gpu_fence_complete(struct virtio_gpu_fence *f, int error) { (void)f; (void)error; }
 static void virtio_gpu_wait_done(struct virtio_gpu_vbuffer *b, int error) {
     (void)b; assert(error == -ENODEV);
 }
@@ -268,6 +281,7 @@ obj="$src/sys/external/bsd/drm2/dist/drm/virtio/virtgpu_object.c"
 extract virtio_gpu_release_object "$obj" '' >> "$work/lifetime.c"
 extract virtio_gpu_free_object "$obj" '' >> "$work/lifetime.c"
 extract free_vbuf "$vq" '' >> "$work/lifetime.c"
+extract virtio_gpu_finish_vbuf "$vq" 'static void' >> "$work/lifetime.c"
 extract virtio_gpu_cancel_vbuf "$vq" 'void' >> "$work/lifetime.c"
 extract virtio_gpu_queue_unref "$vq" '' >> "$work/lifetime.c"
 cat >> "$work/lifetime.c" <<'C'

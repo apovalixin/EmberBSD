@@ -222,6 +222,8 @@ virtio_gpu_stop(struct virtio_gpu_device *d, int error)
 	d->vqs_ready = false;
 	virtio_gpu_fail_capsets(d, error);
 }
+/* Fence publication itself is exercised by the completion contract. */
+static void virtio_gpu_fence_complete(struct virtio_gpu_fence *f, int error) { }
 static void virtio_gpu_cancel_vbuf(void *);
 static int
 virtio_gpu_queue_fenced_ctrl_buffer(struct virtio_gpu_device *,

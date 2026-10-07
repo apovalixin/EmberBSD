@@ -76,9 +76,13 @@ cross-device SG imports explicitly fail with ENODEV.
 
 Native system work executes on one ordered worker. Control/cursor ACKs
 therefore use a separate completion workqueue, and fatal cleanup has its
-own workqueue. Reset stops DMA, fails fences and wakes submission/response
-waiters before draining workers and cancelling remaining request cookies.
-Normal live detach is rejected with EBUSY.
+own workqueue. Reset seals admission and stops transport DMA before cleanup
+joins producers and dequeue workers, then cancels outstanding cookies.
+Terminal fences publish only after that drain, before console/config/object
+worker joins. The bounded per-cookie timeline and teardown contract is
+documented in [completion lifetime](completion-lifetime.md). This foundation
+does not establish correct backing DMA. Normal live detach is rejected
+with EBUSY.
 
 ## Classic capset queries
 

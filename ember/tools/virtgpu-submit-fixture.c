@@ -14,6 +14,14 @@
 #include <linux/virtio_gpu.h>
 
 #define HZ 100
+static unsigned int fixture_ticks;
+#define jiffies fixture_ticks
+typedef int atomic_t;
+#define atomic_inc(p) (++*(p))
+#define atomic_dec(p) (--*(p))
+#define atomic_read(p) (*(p))
+#define atomic_set(p,v) (*(p)=(v))
+#define WARN_ON(c) (assert(!(c)), 0)
 #define GFP_KERNEL 0
 #define GFP_ATOMIC 0
 #define KM_SLEEP 0
@@ -36,7 +44,10 @@
 #define KASSERT(c) assert(c)
 #define KASSERTMSG(c,...) assert(c)
 #define BUG_ON(c) assert(!(c))
-#define DRM_ERROR(...) ((void)0)
+#define DRM_ERROR(...) do { if (0) fprintf(stderr, __VA_ARGS__); } while (0)
+#define DRM_DEBUG(...) ((void)0)
+#define le64_to_cpu(x) (x)
+#define max(a,b) ((a)>(b)?(a):(b))
 #define trace_dma_fence_emit(f) ((void)(f))
 #define FENCE_MAGIC_BAD 0
 #define FENCE_MAGIC_GOOD 42
@@ -46,10 +57,20 @@ typedef uint64_t u64;
 typedef uint64_t atomic64_t;
 #define atomic64_set(p,v) (*(p)=(v))
 struct mutex { int held; };
+#ifdef COMPLETION_CONTRACT
+static void completion_unlock(struct mutex *);
+#endif
 typedef struct mutex spinlock_t;
 typedef struct mutex kmutex_t;
+typedef struct { struct mutex lock; int cv; } wait_queue_head_t;
+#define DRM_WAKEUP_ALL(cv,lock) ((void)(cv),(void)(lock))
 static void mutex_lock(struct mutex *m) { assert(!m->held); m->held=1; }
-static void mutex_unlock(struct mutex *m) { assert(m->held); m->held=0; }
+static void mutex_unlock(struct mutex *m) {
+	assert(m->held); m->held=0;
+#ifdef COMPLETION_CONTRACT
+	completion_unlock(m);
+#endif
+}
 #define spin_lock(m) mutex_lock(m)
 #define spin_unlock(m) mutex_unlock(m)
 #define mutex_enter(m) mutex_lock(m)
@@ -65,6 +86,9 @@ struct list_head { struct list_head *next, *prev; };
 static void list_add_tail(struct list_head *p, struct list_head *h) {
 	p->prev=h->prev; p->next=h; h->prev->next=p; h->prev=p;
 }
+#define list_for_each_entry(p,h,m) \
+	for (p=container_of((h)->next,__typeof__(*p),m); &p->m!=(h); \
+	    p=container_of(p->m.next,__typeof__(*p),m))
 static void list_del(struct list_head *p) { p->prev->next=p->next; p->next->prev=p->prev; }
 static void list_del_init(struct list_head *p) { list_del(p); INIT_LIST_HEAD(p); }
 #define list_first_entry(h,t,m) container_of((h)->next,t,m)
@@ -89,15 +113,25 @@ struct virtio_gpu_vbuffer;
 struct virtio_gpu_object;
 typedef void (*virtio_gpu_resp_cb)(struct virtio_gpu_device *, struct virtio_gpu_vbuffer *);
 #include "submit-layout.h"
-struct virtio_device { size_t max_request; };
+struct virtio_device;
+struct submit_config_ops {
+	void (*reset)(struct virtio_device *);
+	void (*del_vqs)(struct virtio_device *);
+};
+struct virtio_device { size_t max_request; struct submit_config_ops *config; };
 struct netbsd_virtqueue { unsigned int num_free; };
 struct linux_virtio_sg { void *addr; size_t size; void *map; };
 struct virtio_gpu_device {
 	bool has_virgl_3d, vqs_ready;
 	int submit_error;
+	atomic_t submitters;
 	void *vbufs;
 	struct virtio_device *vdev;
-	struct { struct netbsd_virtqueue *vq; spinlock_t qlock; int ack_queue; } ctrlq;
+	struct { struct netbsd_virtqueue *vq; spinlock_t qlock; wait_queue_head_t ack_queue;
+		struct work_struct dequeue_work; } ctrlq, cursorq;
+	wait_queue_head_t resp_wq;
+	void *cleanup_wq;
+	struct work_struct reset_work, config_changed_work;
 	struct mutex submit_lock;
 	struct virtio_gpu_fence_driver fence_drv;
 	spinlock_t obj_free_lock;
@@ -189,10 +223,26 @@ static void virtio_gpu_array_put_free_work(struct work_struct *);
 static void schedule_work(struct work_struct *w) { virtio_gpu_array_put_free_work(w); }
 static void virtio_gpu_wait_done(struct virtio_gpu_vbuffer *b,int e) { assert(!b->wait); }
 static void virtio_gpu_release_object(struct virtio_gpu_object *o) { assert(!o); }
+#ifdef COMPLETION_CONTRACT
+static void virtio_gpu_stop(struct virtio_gpu_device *, int);
+static void virtgpu_console_stop(struct virtio_gpu_device *);
+static void virtgpu_console_drain(struct virtio_gpu_device *);
+static void virtio_gpu_fail_capsets(struct virtio_gpu_device *, int);
+static void wake_up_all(wait_queue_head_t *);
+static void queue_work(void *, struct work_struct *);
+static void flush_work(struct work_struct *);
+#else
 static void virtio_gpu_stop(struct virtio_gpu_device *d,int e) { stops++; }
+static void wake_up_all(wait_queue_head_t *q) { }
+#endif
 static int virtqueue_add_sgs(struct netbsd_virtqueue *,struct linux_virtio_sg **,unsigned,unsigned,void *,int);
-static int pressure_wait(long ticks) { assert(ticks==5*HZ); return pressure==2; }
-#define wait_event_timeout(q,c,t) ((void)(q),(void)sizeof(c),pressure_wait(t))
+static int __attribute__((unused)) pressure_wait(long ticks) { assert(ticks==5*HZ); return pressure==2; }
+#ifdef COMPLETION_CONTRACT
+static long completion_wait(long);
+#define wait_event_timeout(q,c,t) ((void)(q),(c)?(long)(t):completion_wait(t))
+#else
+#define wait_event_timeout(q,c,t) ((void)(q),(c)?(long)(t):pressure_wait(t))
+#endif
 
 /* Native descriptor boundary: allocation reserves f_count=0; affix publishes. */
 struct file;
@@ -251,11 +301,25 @@ static int close_private(struct file *fp) {
 }
 /* Transport scheduling can retire a cookie before queue acceptance returns. */
 static void retire(struct virtio_gpu_vbuffer *b,int error) {
+#ifdef COMPLETION_FOUNDATION
+	if (error)
+		virtio_gpu_fence_stop(&device, error);
+	virtio_gpu_finish_vbuf(b, error);
+	if (error)
+		virtio_gpu_fail_fences(&device, error);
+#else
 	if(error) virtio_gpu_fail_fences(&device,error);
 	else virtio_gpu_fence_event_process(&device,b->fence->f.seqno);
 	virtio_gpu_cancel_vbuf(b);
+#endif
 }
+#ifdef COMPLETION_CONTRACT
+static int completion_transport(struct netbsd_virtqueue *, void *);
+#endif
 static int virtqueue_add_sgs(struct netbsd_virtqueue *q,struct linux_virtio_sg **sgs,unsigned out,unsigned in,void *cookie,int flags) {
+#ifdef COMPLETION_CONTRACT
+	return completion_transport(q, cookie);
+#else
 	queue_calls++;
 	assert(out==2 && in==1 && !installs);
 	if(pressure && queue_calls==1) return -ENOSPC;
@@ -264,6 +328,7 @@ static int virtqueue_add_sgs(struct netbsd_virtqueue *q,struct linux_virtio_sg *
 	if(early_mode) retire(cookie,early_mode==2?-ENODEV:0);
 	else { assert(!pending); pending=cookie; }
 	return 0;
+#endif
 }
 
 static const char *const cases[] = {
@@ -287,7 +352,7 @@ static const char *const cases[] = {
 static void
 run_case(unsigned which)
 {
-	struct virtio_device native={4096};
+	struct virtio_device native={.max_request=4096};
 	struct netbsd_virtqueue queue={16};
 	struct virtio_gpu_fpriv priv={.ctx_id=3};
 	struct drm_device drm={&device};
@@ -309,6 +374,10 @@ run_case(unsigned which)
 	filedesc.fd_dt=&fdtable; process.p_fd=&filedesc;
 	device.has_virgl_3d=true; device.vqs_ready=true; device.vdev=&native;
 	device.ctrlq.vq=&queue;
+#ifdef COMPLETION_FOUNDATION
+	device.fence_drv.vgdev=&device;
+	device.fence_drv.limit=16;
+#endif
 	INIT_LIST_HEAD(&device.fence_drv.fences);
 	INIT_LIST_HEAD(&device.obj_free_list);
 	switch(which) {
@@ -425,7 +494,11 @@ run_case(unsigned which)
 }
 
 int
+#ifdef COMPLETION_CONTRACT
+submit_contract_main(void)
+#else
 main(void)
+#endif
 {
 	unsigned failed=0, count=sizeof(cases)/sizeof(cases[0]);
 	for(unsigned i=0;i<count;i++) {
@@ -440,3 +513,7 @@ main(void)
 	printf("%u groups, %u failed\n",count,failed);
 	return failed?1:0;
 }
+
+#ifdef COMPLETION_CONTRACT
+#include "virtgpu-completion-cases.h"
+#endif

@@ -63,22 +63,31 @@ static void virtio_gpu_reset_work(struct work_struct *work)
 	struct virtio_gpu_device *vgdev = container_of(work,
 	    struct virtio_gpu_device, reset_work);
 
-	virtgpu_console_drain(vgdev);
+	/* Join construction without holding the lock over worker drains. */
+	mutex_lock(&vgdev->submit_lock);
+	mutex_unlock(&vgdev->submit_lock);
+	/* An immediate rejection still owns its cookie after that barrier. */
+	while (!wait_event_timeout(vgdev->ctrlq.ack_queue,
+	    atomic_read(&vgdev->submitters) == 0, 5 * HZ))
+		continue;
 	flush_work(&vgdev->ctrlq.dequeue_work);
 	flush_work(&vgdev->cursorq.dequeue_work);
-	flush_work(&vgdev->config_changed_work);
 	vgdev->vdev->config->del_vqs(vgdev->vdev);
+	virtio_gpu_fail_fences(vgdev, vgdev->fence_drv.stop_error);
+	/* These workers may be waiting for one of the retired fences. */
+	virtgpu_console_drain(vgdev);
+	flush_work(&vgdev->config_changed_work);
 	flush_work(&vgdev->obj_free_work);
 }
 
 void virtio_gpu_stop(struct virtio_gpu_device *vgdev, int error)
 {
+	virtio_gpu_fence_stop(vgdev, error);
 	vgdev->vqs_ready = false;
 	virtgpu_console_stop(vgdev);
 	vgdev->submit_error = error;
 	virtio_gpu_fail_capsets(vgdev, error);
 	vgdev->vdev->config->reset(vgdev->vdev);
-	virtio_gpu_fail_fences(vgdev, error);
 	wake_up_all(&vgdev->ctrlq.ack_queue);
 	wake_up_all(&vgdev->cursorq.ack_queue);
 	wake_up_all(&vgdev->resp_wq);
@@ -215,6 +224,7 @@ int virtio_gpu_init(struct drm_device *dev, struct virtio_device *vdev,
 	vgdev->dev = dev->dev;
 
 	linux_mutex_init(&vgdev->submit_lock);
+	atomic_set(&vgdev->submitters, 0);
 	spin_lock_init(&vgdev->display_info_lock);
 	ida_init(&vgdev->ctx_id_ida);
 	ida_init(&vgdev->resource_ida);
@@ -222,6 +232,7 @@ int virtio_gpu_init(struct drm_device *dev, struct virtio_device *vdev,
 	virtio_gpu_init_vq(&vgdev->ctrlq, virtio_gpu_dequeue_ctrl_func);
 	virtio_gpu_init_vq(&vgdev->cursorq, virtio_gpu_dequeue_cursor_func);
 
+	vgdev->fence_drv.vgdev = vgdev;
 	vgdev->fence_drv.context = dma_fence_context_alloc(1);
 	spin_lock_init(&vgdev->fence_drv.lock);
 	INIT_LIST_HEAD(&vgdev->fence_drv.fences);
@@ -254,6 +265,7 @@ int virtio_gpu_init(struct drm_device *dev, struct virtio_device *vdev,
 		 vgdev->has_edid     ? '+' : '-');
 
 	vgdev->ctrlq.vq = vqs[0];
+	vgdev->fence_drv.limit = vqs[0]->size;
 	vgdev->cursorq.vq = vqs[1];
 	ret = virtio_gpu_alloc_vbufs(vgdev);
 	if (ret) {
@@ -333,21 +345,13 @@ void virtio_gpu_deinit(struct drm_device *dev)
 {
 	struct virtio_gpu_device *vgdev = dev->dev_private;
 
-	vgdev->vqs_ready = false;
-	virtio_gpu_fail_capsets(vgdev, -ENODEV);
-	vgdev->vdev->config->reset(vgdev->vdev);
-	virtio_gpu_fail_fences(vgdev, -ENODEV);
-	wake_up_all(&vgdev->ctrlq.ack_queue);
-	wake_up_all(&vgdev->cursorq.ack_queue);
-	wake_up_all(&vgdev->resp_wq);
+	virtio_gpu_stop(vgdev, -ENODEV);
 	flush_work(&vgdev->reset_work);
-	flush_work(&vgdev->ctrlq.dequeue_work);
-	flush_work(&vgdev->cursorq.dequeue_work);
-	flush_work(&vgdev->config_changed_work);
-	vgdev->vdev->config->del_vqs(vgdev->vdev);
-	flush_work(&vgdev->obj_free_work);
 
 	virtio_gpu_modeset_fini(vgdev);
+	/* Final modeset references can queue stopped-device UNREF cleanup. */
+	flush_work(&vgdev->obj_free_work);
+	flush_work(&vgdev->reset_work);
 	virtio_gpu_free_vbufs(vgdev);
 	virtio_gpu_cleanup_cap_cache(vgdev);
 	kfree(vgdev->capsets);

@@ -99,6 +99,10 @@ typedef void (*virtio_gpu_resp_cb)(struct virtio_gpu_device *vgdev,
 				   struct virtio_gpu_vbuffer *vbuf);
 
 struct virtio_gpu_fence_driver {
+	struct virtio_gpu_device *vgdev;
+	unsigned int pending, limit;
+	bool stopped, drained;
+	int stop_error;
 	atomic64_t       last_seq;
 	uint64_t         sync_seq;
 	uint64_t         context;
@@ -108,6 +112,8 @@ struct virtio_gpu_fence_driver {
 
 struct virtio_gpu_fence {
 	struct dma_fence f;
+	bool ready;
+	int result;
 	struct virtio_gpu_fence_driver *drv;
 	struct list_head node;
 };
@@ -122,6 +128,7 @@ struct virtio_gpu_vbuffer {
 	char *resp_buf;
 	int resp_size;
 	unsigned int resp_received;
+	int error;
 	virtio_gpu_resp_cb resp_cb;
 
 	struct virtio_gpu_object_array *objs;
@@ -205,6 +212,7 @@ struct virtio_gpu_device {
 	struct workqueue_struct *cleanup_wq;
 	struct work_struct reset_work;
 	int submit_error;
+	atomic_t submitters;
 
 	struct kmem_cache *vbufs;
 	bool vqs_ready;
@@ -273,7 +281,6 @@ void virtio_gpu_release_object(struct virtio_gpu_object *);
 void virtio_gpu_queue_unref(struct virtio_gpu_device *, struct virtio_gpu_object *);
 void virtio_gpu_fail_fences(struct virtio_gpu_device *, int);
 void virtio_gpu_stop(struct virtio_gpu_device *, int);
-void virtio_gpu_fence_fail(struct virtio_gpu_fence *, int);
 void virtio_gpu_fail_capsets(struct virtio_gpu_device *, int);
 
 /* virtio_kms.c */
@@ -417,11 +424,13 @@ struct drm_plane *virtio_gpu_plane_init(struct virtio_gpu_device *vgdev,
 /* virtio_gpu_fence.c */
 struct virtio_gpu_fence *virtio_gpu_fence_alloc(
 	struct virtio_gpu_device *vgdev);
-void virtio_gpu_fence_emit(struct virtio_gpu_device *vgdev,
+int virtio_gpu_fence_emit(struct virtio_gpu_device *vgdev,
 			  struct virtio_gpu_ctrl_hdr *cmd_hdr,
 			  struct virtio_gpu_fence *fence);
-void virtio_gpu_fence_event_process(struct virtio_gpu_device *vdev,
-				    u64 last_seq);
+bool virtio_gpu_fence_space(struct virtio_gpu_device *);
+bool virtio_gpu_submit_begin(struct virtio_gpu_device *);
+void virtio_gpu_fence_stop(struct virtio_gpu_device *, int);
+void virtio_gpu_fence_complete(struct virtio_gpu_fence *, int);
 
 /* virtio_gpu_object */
 struct drm_gem_object *virtio_gpu_create_object(struct drm_device *dev,

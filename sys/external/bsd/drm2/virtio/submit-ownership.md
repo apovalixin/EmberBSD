@@ -10,6 +10,9 @@ on every call. It returns the exact allocation or queue error. A zero
 return means transport acceptance, without waiting for GPU completion.
 Accepted cookies own their storage; queue cancellation owns rejected cookies.
 The caller retains its own fence reference throughout the call.
+The subsequent [completion foundation](completion-lifetime.md) bounds retained
+fences and delays terminal publication until their exact cookies retire.
+It preserves this asynchronous acceptance contract.
 
 EXECBUFFER finishes copies, handle lookup, reservations and private
 sync-file preparation before sending. After transport acceptance it sets

@@ -46,19 +46,6 @@ static const char *virtio_get_timeline_name(struct dma_fence *f)
 	return "controlq";
 }
 
-static bool virtio_fence_signaled(struct dma_fence *f)
-{
-	struct virtio_gpu_fence *fence = to_virtio_fence(f);
-
-	if (WARN_ON_ONCE(fence->f.seqno == 0))
-		/* leaked fence outside driver before completing
-		 * initialization with virtio_gpu_fence_emit */
-		return false;
-	if (atomic64_read(&fence->drv->last_seq) >= fence->f.seqno)
-		return true;
-	return false;
-}
-
 static void virtio_fence_value_str(struct dma_fence *f, char *str, int size)
 {
 	snprintf(str, size, "%llu", (unsigned long long)f->seqno);
@@ -74,7 +61,6 @@ static void virtio_timeline_value_str(struct dma_fence *f, char *str, int size)
 static const struct dma_fence_ops virtio_fence_ops = {
 	.get_driver_name     = virtio_get_driver_name,
 	.get_timeline_name   = virtio_get_timeline_name,
-	.signaled            = virtio_fence_signaled,
 };
 
 struct virtio_gpu_fence *virtio_gpu_fence_alloc(struct virtio_gpu_device *vgdev)
@@ -97,67 +83,129 @@ struct virtio_gpu_fence *virtio_gpu_fence_alloc(struct virtio_gpu_device *vgdev)
 	return fence;
 }
 
-void virtio_gpu_fence_emit(struct virtio_gpu_device *vgdev,
-			  struct virtio_gpu_ctrl_hdr *cmd_hdr,
-			  struct virtio_gpu_fence *fence)
+/* Only the contiguous ready prefix can leave the shared timeline. */
+static void
+virtio_gpu_fence_publish(struct virtio_gpu_fence_driver *drv)
 {
-	struct virtio_gpu_fence_driver *drv = &vgdev->fence_drv;
-	unsigned long irq_flags;
-
-	spin_lock_irqsave(&drv->lock, irq_flags);
-	fence->f.seqno = ++drv->sync_seq;
-	dma_fence_get(&fence->f);
-	list_add_tail(&fence->node, &drv->fences);
-	spin_unlock_irqrestore(&drv->lock, irq_flags);
-
-	trace_dma_fence_emit(&fence->f);
-
-	cmd_hdr->flags |= cpu_to_le32(VIRTIO_GPU_FLAG_FENCE);
-	cmd_hdr->fence_id = cpu_to_le64(fence->f.seqno);
-}
-
-void virtio_gpu_fence_event_process(struct virtio_gpu_device *vgdev,
-				    u64 last_seq)
-{
-	struct virtio_gpu_fence_driver *drv = &vgdev->fence_drv;
 	struct virtio_gpu_fence *fence, *tmp;
-	unsigned long irq_flags;
 
-	spin_lock_irqsave(&drv->lock, irq_flags);
-	atomic64_set(&vgdev->fence_drv.last_seq, last_seq);
+	if (drv->stopped && !drv->drained)
+		return;
 	list_for_each_entry_safe(fence, tmp, &drv->fences, node) {
-		if (last_seq < fence->f.seqno)
-			continue;
+		if (!fence->ready)
+			break;
+		if (fence->result)
+			dma_fence_set_error(&fence->f, fence->result);
 		dma_fence_signal_locked(&fence->f);
+		atomic64_set(&drv->last_seq, fence->f.seqno);
 		list_del_init(&fence->node);
+		(void)WARN_ON(!drv->pending);
+		drv->pending--;
 		dma_fence_put(&fence->f);
 	}
-	spin_unlock_irqrestore(&drv->lock, irq_flags);
 }
 
+bool
+virtio_gpu_fence_space(struct virtio_gpu_device *vgdev)
+{
+	struct virtio_gpu_fence_driver *drv = &vgdev->fence_drv;
+	bool space;
+
+	spin_lock(&drv->lock);
+	space = drv->stopped || (drv->limit && drv->pending < drv->limit);
+	spin_unlock(&drv->lock);
+	return space;
+}
+
+/* Stop seals registration under the same lock before cleanup can join it. */
+bool
+virtio_gpu_submit_begin(struct virtio_gpu_device *vgdev)
+{
+	bool admitted;
+
+	spin_lock(&vgdev->fence_drv.lock);
+	admitted = !vgdev->fence_drv.stopped;
+	if (admitted)
+		atomic_inc(&vgdev->submitters);
+	spin_unlock(&vgdev->fence_drv.lock);
+	return admitted;
+}
+
+int virtio_gpu_fence_emit(struct virtio_gpu_device *vgdev,
+			 struct virtio_gpu_ctrl_hdr *cmd_hdr,
+			 struct virtio_gpu_fence *fence)
+{
+	struct virtio_gpu_fence_driver *drv = &vgdev->fence_drv;
+	unsigned long irq_flags;
+	int ret = 0;
+
+	spin_lock_irqsave(&drv->lock, irq_flags);
+	if (drv->stopped)
+		ret = -ENODEV;
+	else if (!drv->limit || drv->pending >= drv->limit)
+		ret = -ENOSPC;
+	else if (fence->f.seqno != 0)
+		ret = -EINVAL;
+	else {
+		fence->f.seqno = ++drv->sync_seq;
+		dma_fence_get(&fence->f);
+		list_add_tail(&fence->node, &drv->fences);
+		drv->pending++;
+	}
+	spin_unlock_irqrestore(&drv->lock, irq_flags);
+	if (ret)
+		return ret;
+
+	trace_dma_fence_emit(&fence->f);
+	cmd_hdr->flags |= cpu_to_le32(VIRTIO_GPU_FLAG_FENCE);
+	cmd_hdr->fence_id = cpu_to_le64(fence->f.seqno);
+	return 0;
+}
+
+void
+virtio_gpu_fence_complete(struct virtio_gpu_fence *fence, int result)
+{
+	struct virtio_gpu_fence_driver *drv = fence->drv;
+
+	spin_lock(&drv->lock);
+	if (!list_empty(&fence->node) && !fence->ready) {
+		fence->result = result;
+		fence->ready = true;
+		virtio_gpu_fence_publish(drv);
+	}
+	spin_unlock(&drv->lock);
+	/* Do not nest the wait interlock inside the fence lock. */
+	wake_up_all(&drv->vgdev->ctrlq.ack_queue);
+}
+
+void
+virtio_gpu_fence_stop(struct virtio_gpu_device *vgdev, int error)
+{
+	struct virtio_gpu_fence_driver *drv = &vgdev->fence_drv;
+
+	spin_lock(&drv->lock);
+	if (!drv->stopped) {
+		drv->stopped = true;
+		drv->stop_error = error;
+	}
+	spin_unlock(&drv->lock);
+}
+
+/* Called only after submit/dequeue joins and transport cookie cancellation. */
 void virtio_gpu_fail_fences(struct virtio_gpu_device *vgdev, int error)
 {
 	struct virtio_gpu_fence_driver *drv = &vgdev->fence_drv;
 	struct virtio_gpu_fence *fence, *tmp;
 
 	spin_lock(&drv->lock);
+	drv->drained = true;
 	list_for_each_entry_safe(fence, tmp, &drv->fences, node) {
-		dma_fence_set_error(&fence->f, error);
-		dma_fence_signal_locked(&fence->f);
-		list_del_init(&fence->node);
-		dma_fence_put(&fence->f);
+		if (!fence->ready) {
+			fence->ready = true;
+			fence->result = error;
+		}
 	}
+	virtio_gpu_fence_publish(drv);
 	spin_unlock(&drv->lock);
-}
-
-void virtio_gpu_fence_fail(struct virtio_gpu_fence *fence, int error)
-{
-	spin_lock(&fence->drv->lock);
-	if (!list_empty(&fence->node)) {
-		dma_fence_set_error(&fence->f, error);
-		dma_fence_signal_locked(&fence->f);
-		list_del_init(&fence->node);
-		dma_fence_put(&fence->f);
-	}
-	spin_unlock(&fence->drv->lock);
+	wake_up_all(&vgdev->ctrlq.ack_queue);
 }

@@ -41,7 +41,7 @@ for name in virtio_gpu_wait_put virtio_gpu_wait_done; do
 done
 extract virtio_gpu_get_vbuf "$vq" 'static struct virtio_gpu_vbuffer *' >> "$work/capsets-production.h"
 extract virtio_gpu_alloc_cmd_resp "$vq" 'static void *' >> "$work/capsets-production.h"
-for name in free_vbuf virtio_gpu_cancel_vbuf; do
+for name in free_vbuf virtio_gpu_finish_vbuf virtio_gpu_cancel_vbuf; do
     extract "$name" "$vq" 'static void' >> "$work/capsets-production.h"
 done
 for name in virtio_gpu_response_error virtio_gpu_queue_sync; do

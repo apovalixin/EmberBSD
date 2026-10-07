@@ -36,6 +36,7 @@ __KERNEL_RCSID(0, "$NetBSD: virtgpu_vq.c,v 1.3 2021/12/18 23:45:45 riastradh Exp
 #include <linux/virtio.h>
 #include <linux/virtio_config.h>
 #include <linux/virtio_ring.h>
+#include <linux/jiffies.h>
 
 #include "virtgpu_drv.h"
 #include <linux/virtio_sg.h>
@@ -208,18 +209,29 @@ static void free_vbuf(struct virtio_gpu_device *vgdev,
 	kmem_cache_free(vgdev->vbufs, vbuf);
 }
 
+/* The cookie owns its fence reference until all local cleanup is complete. */
+static void
+virtio_gpu_finish_vbuf(struct virtio_gpu_vbuffer *vbuf, int error)
+{
+	struct virtio_gpu_device *vgdev = vbuf->vgdev;
+	struct virtio_gpu_fence *fence = vbuf->fence;
+
+	virtio_gpu_wait_done(vbuf, error);
+	if (vbuf->objs)
+		virtio_gpu_array_put_free_delayed(vgdev, vbuf->objs);
+	free_vbuf(vgdev, vbuf);
+	if (fence) {
+		virtio_gpu_fence_complete(fence, error);
+		dma_fence_put(&fence->f);
+	}
+}
+
 void
 virtio_gpu_cancel_vbuf(void *cookie)
 {
 	struct virtio_gpu_vbuffer *vbuf = cookie;
-	struct virtio_gpu_device *vgdev = vbuf->vgdev;
 
-	virtio_gpu_wait_done(vbuf, -ENODEV);
-	if (vbuf->fence)
-		dma_fence_put(&vbuf->fence->f);
-	if (vbuf->objs)
-		virtio_gpu_array_put_free_delayed(vgdev, vbuf->objs);
-	free_vbuf(vgdev, vbuf);
+	virtio_gpu_finish_vbuf(vbuf, vbuf->error ? vbuf->error : -ENODEV);
 }
 
 static void reclaim_vbufs(struct netbsd_virtqueue *vq, struct list_head *reclaim_list)
@@ -300,7 +312,6 @@ void virtio_gpu_dequeue_ctrl_func(struct work_struct *work)
 	struct list_head reclaim_list;
 	struct virtio_gpu_vbuffer *entry, *tmp;
 	struct virtio_gpu_ctrl_hdr *resp;
-	u64 fence_id = 0;
 
 	INIT_LIST_HEAD(&reclaim_list);
 	spin_lock(&vgdev->ctrlq.qlock);
@@ -319,32 +330,20 @@ void virtio_gpu_dequeue_ctrl_func(struct work_struct *work)
 			vgdev->submit_error = error;
 			DRM_ERROR("invalid GPU response (%u bytes, type 0x%x)\n",
 			    entry->resp_received, le32_to_cpu(resp->type));
-			if (entry->fence)
-				virtio_gpu_fence_fail(entry->fence, error);
 			virtio_gpu_stop(vgdev, error);
 		} else {
 			/* Complete DMA visibility before exposing the GPU fence. */
 			virtio_gpu_complete_transfer(vgdev, entry);
-			if (le32_to_cpu(resp->flags) & VIRTIO_GPU_FLAG_FENCE)
-				fence_id = max(fence_id, le64_to_cpu(resp->fence_id));
 			if (entry->resp_cb)
 				entry->resp_cb(vgdev, entry);
 		}
-		virtio_gpu_wait_done(entry, error);
-
+		entry->error = error;
 	}
 	wake_up(&vgdev->ctrlq.ack_queue);
 
-	if (fence_id)
-		virtio_gpu_fence_event_process(vgdev, fence_id);
-
 	list_for_each_entry_safe(entry, tmp, &reclaim_list, list) {
-		if (entry->objs)
-			virtio_gpu_array_put_free_delayed(vgdev, entry->objs);
 		list_del(&entry->list);
-		if (entry->fence)
-			dma_fence_put(&entry->fence->f);
-		free_vbuf(vgdev, entry);
+		virtio_gpu_finish_vbuf(entry, entry->error);
 	}
 }
 
@@ -373,6 +372,27 @@ void virtio_gpu_dequeue_cursor_func(struct work_struct *work)
 	wake_up(&vgdev->cursorq.ack_queue);
 }
 
+/* Includes rejected-cookie cleanup after submit_lock is released. */
+static void
+virtio_gpu_submit_done(struct virtio_gpu_device *vgdev)
+{
+	/* The joining waiter cannot pass zero before our last shared access. */
+	mutex_lock(&vgdev->ctrlq.ack_queue.lock);
+	atomic_dec(&vgdev->submitters);
+	DRM_WAKEUP_ALL(&vgdev->ctrlq.ack_queue.cv,
+	    &vgdev->ctrlq.ack_queue.lock);
+	mutex_unlock(&vgdev->ctrlq.ack_queue.lock);
+}
+
+/* One wrap-safe admission/descriptor-pressure budget, not one per wakeup. */
+static long
+virtio_gpu_queue_remaining(unsigned int started)
+{
+	unsigned int elapsed = (unsigned int)jiffies - started;
+
+	return elapsed < 5 * HZ ? 5 * HZ - elapsed : 0;
+}
+
 /* Serialize submitters across descriptor-pressure waits and fence emission. */
 static int
 virtio_gpu_queue_fenced_ctrl_buffer(struct virtio_gpu_device *vgdev,
@@ -384,16 +404,43 @@ virtio_gpu_queue_fenced_ctrl_buffer(struct virtio_gpu_device *vgdev,
 	struct linux_virtio_sg data = { vbuf->data_buf, vbuf->data_size, NULL };
 	struct linux_virtio_sg resp = { vbuf->resp_buf, vbuf->resp_size, NULL };
 	struct linux_virtio_sg *sgs[3];
-	unsigned int out = 1, before;
+	unsigned int out = 1, before, started;
+	bool registered, emitted = false, admission_timeout = false;
+	long remaining;
 	int ret;
 
 	sgs[0] = &cmd;
 	if (vbuf->data_size)
 		sgs[out++] = &data;
 	sgs[out] = &resp;
+	registered = virtio_gpu_submit_begin(vgdev);
+	if (!registered) {
+		ret = -ENODEV;
+		goto out_reject;
+	}
 	mutex_lock(&vgdev->submit_lock);
+	started = (unsigned int)jiffies;
+	if (!vgdev->vqs_ready) {
+		ret = -ENODEV;
+		goto out_unlock;
+	}
 	if (hdr && fence) {
-		virtio_gpu_fence_emit(vgdev, hdr, fence);
+		remaining = wait_event_timeout(vgdev->ctrlq.ack_queue,
+		    !vgdev->vqs_ready || virtio_gpu_fence_space(vgdev),
+		    virtio_gpu_queue_remaining(started));
+		if (remaining <= 0) {
+			ret = remaining < 0 ? remaining : -ETIMEDOUT;
+			admission_timeout = true;
+			goto out_unlock;
+		}
+		if (!vgdev->vqs_ready) {
+			ret = -ENODEV;
+			goto out_unlock;
+		}
+		ret = virtio_gpu_fence_emit(vgdev, hdr, fence);
+		if (ret)
+			goto out_unlock;
+		emitted = true;
 		vbuf->fence = fence;
 		dma_fence_get(&fence->f);
 		if (vbuf->objs) {
@@ -409,23 +456,29 @@ virtio_gpu_queue_fenced_ctrl_buffer(struct virtio_gpu_device *vgdev,
 		spin_unlock(&vgdev->ctrlq.qlock);
 		if (ret != -ENOSPC)
 			break;
-		/* The transport first bounds actual DMA descriptors. */
-		if (!wait_event_timeout(vgdev->ctrlq.ack_queue,
-		    !vgdev->vqs_ready || vq->num_free != before, 5 * HZ)) {
+		remaining = virtio_gpu_queue_remaining(started);
+		if (!remaining || !wait_event_timeout(vgdev->ctrlq.ack_queue,
+		    !vgdev->vqs_ready || vq->num_free != before, remaining)) {
 			ret = -ETIMEDOUT;
 			break;
 		}
 	}
+out_unlock:
+	/* A successful queue call may already have freed vbuf. */
 	mutex_unlock(&vgdev->submit_lock);
+out_reject:
 	if (ret) {
 		vgdev->submit_error = ret;
 		DRM_ERROR("control submission failed: %d\n", ret);
-		if (fence)
-			virtio_gpu_fence_fail(fence, ret);
-		if (vbuf->release)
+		if (fence && !emitted && vbuf->objs)
+			virtio_gpu_array_unlock_resv(vbuf->objs);
+		if (admission_timeout || vbuf->release)
 			virtio_gpu_stop(vgdev, ret);
+		vbuf->error = ret;
 		virtio_gpu_cancel_vbuf(vbuf);
 	}
+	if (registered)
+		virtio_gpu_submit_done(vgdev);
 	return ret;
 }
 
@@ -513,7 +566,13 @@ static void virtio_gpu_queue_cursor(struct virtio_gpu_device *vgdev,
 	struct linux_virtio_sg *sgs[] = { &cmd };
 	unsigned int before;
 	int ret;
+	bool registered;
 
+	registered = virtio_gpu_submit_begin(vgdev);
+	if (!registered) {
+		ret = -ENODEV;
+		goto out_reject;
+	}
 	mutex_lock(&vgdev->submit_lock);
 	for (;;) {
 		spin_lock(&vgdev->cursorq.qlock);
@@ -530,11 +589,15 @@ static void virtio_gpu_queue_cursor(struct virtio_gpu_device *vgdev,
 		}
 	}
 	mutex_unlock(&vgdev->submit_lock);
+out_reject:
 	if (ret) {
 		vgdev->submit_error = ret;
 		DRM_ERROR("cursor submission failed: %d\n", ret);
+		vbuf->error = ret;
 		virtio_gpu_cancel_vbuf(vbuf);
 	}
+	if (registered)
+		virtio_gpu_submit_done(vgdev);
 }
 
 /* just create gem objects for userspace and long lived objects,

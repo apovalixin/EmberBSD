@@ -232,7 +232,7 @@ virtio_gpu_array_put_free_delayed(struct virtio_gpu_device *d, struct virtio_gpu
 static void virtio_gpu_array_unlock_resv(struct virtio_gpu_object_array *a) { assert(!a); }
 static int virtio_gpu_array_lock_resv(struct virtio_gpu_object_array *a) { assert(!a); return 0; }
 static void virtgpu_console_stop(struct virtio_gpu_device *d) { }
-static void virtio_gpu_fail_fences(struct virtio_gpu_device *d, int error) { }
+static void virtio_gpu_fence_stop(struct virtio_gpu_device *d, int error) { }
 /* Actual capset failure wakes resp_wq before transport reset returns. */
 static void virtio_gpu_fail_capsets(struct virtio_gpu_device *d, int error) { wake_up_all(&d->resp_wq); }
 static void queue_work(void *wq, struct work_struct *w) { }
@@ -260,6 +260,8 @@ virtio_reset(void *native)
 	state_exit();
 }
 static void virtio_gpu_stop(struct virtio_gpu_device *, int);
+/* Fence publication itself is exercised by the completion contract. */
+static void virtio_gpu_fence_complete(struct virtio_gpu_fence *f, int error) { }
 static void virtio_gpu_cancel_vbuf(void *);
 static int virtio_gpu_queue_fenced_ctrl_buffer(struct virtio_gpu_device *,
     struct virtio_gpu_vbuffer *, struct virtio_gpu_ctrl_hdr *, struct virtio_gpu_fence *);
