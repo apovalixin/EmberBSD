@@ -144,6 +144,21 @@ if [ "${BACKING_CONTRACT:-0}" = 1 ]; then
     extract reclaim_vbufs "$vq" 'static void' >> "$work/backing-queue-production.h"
     extract virtio_gpu_dequeue_ctrl_func "$vq" 'static void' >> "$work/backing-queue-production.h"
 fi
+if [ "${FRAMEBUFFER_PUBLICATION_CONTRACT:-0}" = 1 ]; then
+    display="$drm/virtio/virtgpu_display.c"
+    for name in objects_lookup; do extract "$name" "$drm/drm_gem.c" 'static int' >> "$prod"; done
+    extract drm_gem_object_lookup "$drm/drm_gem.c" 'static struct drm_gem_object *' >> "$prod"
+    extract virtio_gpu_mode_dumb_mmap "$gem" 'static int' >> "$prod"
+    extract virtio_gpu_map_ioctl "$drm/virtio/virtgpu_ioctl.c" 'static int' >> "$prod"
+    extract drm_gem_mmap_object_locked "$src/sys/external/bsd/drm2/drm/drm_gem_vm.c" 'static int' >> "$prod"
+    extract drm_gem_fb_create_handle "$src/sys/external/bsd/drm2/drm/drm_gem_framebuffer_helper.c" 'static int' >> "$prod"
+    if grep -q '^virtio_gpu_fb_create_handle(' "$display"; then
+        extract virtio_gpu_fb_create_handle "$display" 'static int' >> "$prod"
+    fi
+    sed -n '/^static const struct drm_framebuffer_funcs virtio_gpu_fb_funcs = {/,/^};/p' "$display" >> "$prod"
+    extract virtio_gpu_framebuffer_init "$display" 'static int' >> "$prod"
+    extract drm_mode_getfb "$drm/drm_framebuffer.c" 'static int' >> "$prod"
+fi
 ${CC:-cc} -std=gnu11 -Wall -Wextra -Werror -Wno-unused-parameter -pthread \
     ${RESOURCE_TEST_CFLAGS:-} -I"$work" -I"$src/sys/external/bsd/drm2/include" \
     -I"$src/sys/external/bsd/drm2/virtio" \

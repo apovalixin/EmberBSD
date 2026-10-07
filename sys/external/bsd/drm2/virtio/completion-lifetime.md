@@ -29,11 +29,11 @@ transport pressure without allocating another ID.
 
 ## Ownership and teardown
 
-A successful response runs its callback and existing transfer completion
-step before retiring cookie storage and marking its exact fence ready.
-The legacy 2D transfer step is preserved, not certified as DMA-correct here.
-[Explicit 3D transfers](transfer-wait.md) now POST through common DMA finish,
-including errors and cancellation; the opcode-based helper handles only 2D.
+Common DMA finish POSTs prepared members before response callbacks, cookie
+retirement and exact fence readiness, including errors and cancellation.
+[Explicit 3D transfers](transfer-wait.md) and the linked
+[controlled console/2D stage](controlled-console.md) share this owner. The latter
+removes the success-only opcode helper and both caller compensation POSTs.
 A local queue rejection disposes its cookie before publishing its result.
 Malformed or failed responses stop/reset the transport before uncertain
 storage is released. Stop seals fence admission before reset; terminal
@@ -65,8 +65,9 @@ The [eligible backing lease](backing-lifetime.md) extends central finish with
 token POST and extends reset drain with lease POST before terminal fences.
 Its scope is ATTACH/UNREF. The [whole-context EXEC contract](exec-ownership.md)
 adds multiple per-cookie members and drains their POSTs before lease closure.
-Transfers and CPU access still need separate ownership work; software
-contracts do not establish live DMA correctness.
+[Transfers/WAIT](transfer-wait.md) and [private console/2D](controlled-console.md)
+add their scoped ownership. Host mapping qualification, arbitrary userspace mmap
+exclusion and live DMA correctness remain separate gates.
 
 ## Reproduction and evidence limits
 

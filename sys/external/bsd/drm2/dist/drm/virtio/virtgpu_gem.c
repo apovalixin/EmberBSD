@@ -125,7 +125,7 @@ int virtio_gpu_gem_object_open(struct drm_gem_object *obj,
 	struct virtio_gpu_attachment *entry;
 	int ret = 0;
 
-	/* Covers GETFB/new handles and same-device PRIME before fast return. */
+	/* Defense for new handles and same-device PRIME before fast return. */
 	if (virtio_gpu_object_private_console(vgdev, obj))
 		return -EACCES;
 	if (!vgdev->has_virgl_3d)

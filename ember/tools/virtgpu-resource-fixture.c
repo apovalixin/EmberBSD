@@ -143,8 +143,12 @@ struct drm_gem_object {
 	struct mutex *resv;
 	struct dma_buf *dma_buf;
 	void *import_attach;
-	struct { const void *pgops; } gemo_uvmobj;
+	struct fixture_uvm_object { const void *pgops; } gemo_uvmobj;
+#ifdef FRAMEBUFFER_PUBLICATION_CONTRACT
+	struct drm_vma_offset_node { int unused; } vma_node;
+#else
 	int vma_node;
+#endif
 };
 struct drm_gem_shmem_object {
 	struct drm_gem_object base;
@@ -234,11 +238,18 @@ struct virtio_gpu_device {
 	u64 next_context_key;
 };
 struct driver {
+#ifdef FRAMEBUFFER_PUBLICATION_CONTRACT
+	const void *gem_uvm_ops;
+#endif
 	int (*gem_open_object) (struct drm_gem_object *, struct drm_file *);
 	void (*gem_close_object) (struct drm_gem_object *, struct drm_file *);
 struct drm_gem_object *(*gem_prime_import) (struct drm_device *, struct dma_buf *);
 };
 struct drm_device {
+#ifdef FRAMEBUFFER_PUBLICATION_CONTRACT
+	struct mutex struct_mutex;
+	void *vma_offset_manager;
+#endif
 	struct virtio_gpu_device *dev_private;
 	struct mutex object_name_lock;
 	struct idr object_name_idr;
@@ -299,6 +310,14 @@ static struct drm_device dev;
 static atomic_int allocations, allocation_calls;
 static int allocation_fail_at, handle_error, vma_error, prime_error, reservation_error,
     dma_error;
+#ifdef FRAMEBUFFER_PUBLICATION_CONTRACT
+static bool publication_watch;
+static unsigned publication_idr, publication_allow;
+static void publication_interleave(struct drm_file *);
+typedef struct drm_vma_offset_node fixture_vma_node;
+#else
+typedef int fixture_vma_node;
+#endif
 static int resource_id_error;
 static struct virtio_gpu_object *last_bo;
 static unsigned int dma_nents;
@@ -424,6 +443,9 @@ idr_alloc(struct idr *id, void *p, int start, int end, int flags)
 		if (!id->used[i]) {
 			id->used[i] = true;
 			id->ptr[i] = p;
+#ifdef FRAMEBUFFER_PUBLICATION_CONTRACT
+			if (publication_watch) publication_idr++;
+#endif
 			return i;
 		}
 	return -ENOSPC;
@@ -467,15 +489,18 @@ idr_destroy(struct idr *id)
 	memset(id, 0, sizeof(*id));
 }
 static int
-drm_vma_node_allow(int *node, struct drm_file *file)
+drm_vma_node_allow(fixture_vma_node *node, struct drm_file *file)
 {
 	if (vma_error)
 		return vma_error;
 	file->vmas++;
+#ifdef FRAMEBUFFER_PUBLICATION_CONTRACT
+	if (publication_watch) { publication_allow++; publication_interleave(file); }
+#endif
 	return 0;
 }
 static void
-drm_vma_node_revoke(int *node, struct drm_file *file)
+drm_vma_node_revoke(fixture_vma_node *node, struct drm_file *file)
 {
 	assert(file->vmas);
 	file->vmas--;
@@ -883,6 +908,9 @@ static int virtio_gpu_queue_fenced_ctrl_buffer(struct virtio_gpu_device *, struc
 /* Compile the native core branches, after all host system headers. */
 #ifndef __NetBSD__
 #define __NetBSD__ 1
+#endif
+#ifdef FRAMEBUFFER_PUBLICATION_CONTRACT
+#include "virtgpu-framebuffer-publication-seams.h"
 #endif
 #include "resource-production.h"
 #ifdef BACKING_CONTRACT
@@ -1682,7 +1710,7 @@ boundary_tests(void)
 	puts("PASS resource ID/count/request arithmetic, exact releases and disabled VIRGL");
 }
 int
-#if defined(DMA_ELIGIBILITY_CONTRACT) || defined(BACKING_CONTRACT)
+#if defined(DMA_ELIGIBILITY_CONTRACT) || defined(BACKING_CONTRACT) || defined(FRAMEBUFFER_PUBLICATION_CONTRACT)
 resource_contract_main(void)
 #else
 main(void)
@@ -1712,4 +1740,8 @@ main(void)
 #else
 int main(void) { return backing_contract_main(); }
 #endif
+#endif
+
+#ifdef FRAMEBUFFER_PUBLICATION_CONTRACT
+#include "virtgpu-framebuffer-publication-cases.h"
 #endif

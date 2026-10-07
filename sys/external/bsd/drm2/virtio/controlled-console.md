@@ -65,10 +65,15 @@ before host backing exposure. Object attach clears the initial mapped BO, includ
 page padding, after vmap and before ATTACH PRE. The probe never writes exposed BO
 pixels afterward. Ordinary userspace dumb and cursor BOs do not inherit privacy.
 
-GEM open refuses the private BO before the non-VIRGL fast return, covering GETFB/
-new-handle creation and same-device PRIME import. The private test first whitelists
-the owned core object before container conversion. Context attach, DMA admission
-and whole-context snapshots also reject it. Privacy excludes encoded/query
+The VirtGPU framebuffer create_handle callback refuses an owned private BO before
+calling the generic helper, so GETFB cannot insert an IDR entry or grant VMA access.
+Generic core grants those rights before invoking GEM open; a concurrent MAP and
+native mmap could otherwise retain a mapping after the later refusal/master drop.
+GETFB2 is not wired in this source tree. GEM open still refuses the private BO
+before the non-VIRGL fast return as defense for new handles and same-device PRIME.
+The private test first whitelists the owned core object before container
+conversion. Context attach, DMA admission and whole-context snapshots also reject
+it. Privacy excludes encoded/query
 reachability; it does not remove C1 qualification or the C2 bidirectional lease
 for a VirGL-capable dumb BO, nor extend C1 overlap to arbitrary bus_dma backends.
 
@@ -80,7 +85,8 @@ producer protects copy-to-queue against reset; a readiness-only wake is not
 permission to copy. The BO reference and reservation survive through acceptance
 or rejection. Bounds, master/mode serialization and dirty retry remain in force.
 Concurrent shadow drawing may tear one snapshot; its final damage notification
-ensures another upload. This is not a generic DRM handle-publication race repair.
+ensures another upload. This narrowly guards private framebuffer publication and
+does not reorder generic DRM handle creation or provide arbitrary userspace mmap exclusion.
 
 ## Pinned host qualification boundary
 
@@ -120,20 +126,30 @@ This is source provenance, not installed-binary or live-mapping verification.
 ```sh
 sh ember/tools/virtgpu-controlled-2d-contract.sh
 sh ember/tools/virtgpu-console-private-contract.sh
+sh ember/tools/virtgpu-framebuffer-publication-contract.sh
 CONTROLLED_2D_TEST_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' \
     sh ember/tools/virtgpu-controlled-2d-contract.sh
 CONTROLLED_2D_TEST_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' \
     sh ember/tools/virtgpu-console-private-contract.sh
+PUBLICATION_TEST_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' \
+    sh ember/tools/virtgpu-framebuffer-publication-contract.sh
 ```
 
-The 51 focused host groups cover actual production copy/upload, queue, dependency,
-ledger, finite ATTACH/reset/free, GEM/PRIME/context/snapshot refusal and console
-probe functions. Earlier console/master/dirty retry and cursor status cases remain
+The original 51 focused host groups cover actual production copy/upload, queue,
+dependency, ledger, finite ATTACH/reset/free, GEM/PRIME/context/snapshot refusal and console
+probe functions. Six additional groups execute actual framebuffer init/GETFB,
+create_handle, core publication, MAP and native locked mmap functions, with an
+interleaving at VMA allow. Private refusal precedes any IDR/VMA side effect in both
+feature modes; ordinary and non-master behavior remains intact. The same fixture
+also runs eight existing full callback groups. Earlier console/master/dirty retry
+and cursor status cases remain
 in the affected existing contracts. Allocators, transport, host-class map reads,
 fence waits, low-level locks and bus sync remain controlled seams. Host checks and
 focused ASan/UBSan pass. The accepted C7a baseline compiles and exposes the absent
 ledger/private ownership, premature PRE and zero-reference retirement defects;
-its console probe separately fails the creation-flag assertion.
+its console probe separately fails the creation-flag assertion. The pre-guard C7b
+source returns EACCES but still allows transient IDR/VMA publication and persistent
+native GEM/UVM mapping in both modes; the new six-group regression fails on it.
 
 These checks do not establish native IRQ/SMP behavior, QEMU mappings, bus DMA,
 a complete kernel, live graphics or physical hardware. Full 3D packet, format,

@@ -127,8 +127,9 @@ with 67,412 KiB peak RSS and no swaps. No kernel was linked, installed or
 booted; the partial object directory is not a matched kernel artifact.
 
 [Explicit 3D transfer and WAIT](transfer-wait.md) now share this typed ledger
-and metadata budget. Legacy 2D ownership, console/cursor CPU copies, packet/cap
-enforcement and live loaded-map/host qualification remain separate.
+and metadata budget. The linked [controlled console/2D stage](controlled-console.md)
+adds finite legacy phases, private console copies and synchronous cursor status.
+Full packet/cap enforcement and live loaded-map/host qualification remain separate.
 [Classic wire-fence exhaustion](classic-fence-range.md) now has a separate
 native software/object contract preserving this ledger and rejection ownership.
 This stage does not enable acceleration or certify arbitrary bus_dma backends.

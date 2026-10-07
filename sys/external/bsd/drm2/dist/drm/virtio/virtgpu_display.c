@@ -62,8 +62,20 @@ static const struct drm_crtc_funcs virtio_gpu_crtc_funcs = {
 	.atomic_destroy_state   = drm_atomic_helper_crtc_destroy_state,
 };
 
+/* Refuse before generic handle creation publishes an IDR entry/VMA access. */
+static int
+virtio_gpu_fb_create_handle(struct drm_framebuffer *fb, struct drm_file *file,
+    unsigned *handlep)
+{
+	struct virtio_gpu_device *vgdev = fb->dev->dev_private;
+
+	if (virtio_gpu_object_private_console(vgdev, fb->obj[0]))
+		return -EACCES;
+	return drm_gem_fb_create_handle(fb, file, handlep);
+}
+
 static const struct drm_framebuffer_funcs virtio_gpu_fb_funcs = {
-	.create_handle = drm_gem_fb_create_handle,
+	.create_handle = virtio_gpu_fb_create_handle,
 	.destroy = drm_gem_fb_destroy,
 	.dirty = drm_atomic_helper_dirtyfb,
 };
