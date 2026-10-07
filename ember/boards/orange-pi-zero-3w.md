@@ -73,8 +73,17 @@ Vendor boot files, firmware, storage layout and network settings were
 preserved. The old kernel and module tree remain available for rollback;
 the active module directory contains the three modules from this build.
 
-Userland remains the NetBSD 11 release userland. This short boot, network
-and regression check does not establish a full release, sustained uptime,
+The NetBSD 11 userland now includes a complete rebuilt shared/static libc
+from `cffffd40`, with the [outlined CAS](../boot/aarch64-outlined-cas.md) and
+[binary128 comparison](../tools/aarch64-binary128.md) fixes. Native CAS 850,
+binary128 3,600-row/16-mode checks and 27 existing libc/thread cases pass;
+hardware IOE is unavailable, so trap cases skip. After installation, fresh
+processes pass smoke, CAS and the masked matrix through the default loader.
+The previous libraries are retained for rollback; other userland and headers
+were not rebuilt as a complete release.
+
+These short boot, network and regression checks do not establish a full release,
+sustained uptime,
 hardware GPU/NPU execution or a physical Wayland session. Accelerators and
 the newer common development packages still need their own acceptance.
 
