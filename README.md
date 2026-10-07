@@ -315,6 +315,13 @@ on every board in the hardware catalog.
   RP1 chip, Bluetooth, the power button, the fan, the watchdog, I2C
   and a WM8960 audio codec.
 - **Raspberry Pi Zero 2 W**: Wi-Fi on its BCM43436 chip.
+- **Headless base on Raspberry Pi 5:** the fork's kernel, matching board
+  modules and reduced base userland are built and installed through the
+  [base update procedure](ember/boot/aarch64-base-update.md). Kernel boot,
+  16 memfd cases, three FP-state modes and candidate libc checks passed.
+  The [board receipt](ember/boards/raspberry-pi-5.md#headless-base-update-2026-10-07)
+  records operator-reported Ethernet access after the final reboot;
+  Wi-Fi recovery and post-reboot library acceptance remain open.
 - **Kernel fixes found on these boards** that are not specific to
   them: the `bwfm` Wi-Fi driver stalling on large transfers and after
   an access point asks the client to change band, idle cores on
@@ -328,8 +335,10 @@ on every board in the hardware catalog.
   accelerator limits.
 - **AArch64 numerical correctness:** an [initial FP state correction](ember/boot/aarch64-fp-state.md)
   addresses lost subnormal values and NaN payloads on CPUs without AArch32.
-  Production contracts and native object compilation pass; verification
-  after booting the corrected kernel remains pending.
+  Production contracts and native object compilation pass. Three runtime
+  modes also pass after booting the corrected kernel on Pi 5 Cortex-A76;
+  that board already passed the baseline. Boot verification on the
+  AArch64-only VM reproducing the original failure remains pending.
 - **AArch64 atomic correctness:** [narrow outlined CAS helpers](ember/boot/aarch64-outlined-cas.md)
   now normalize expected arguments so matching byte/halfword updates are
   not skipped. All 850 native production checks and an isolated unchanged

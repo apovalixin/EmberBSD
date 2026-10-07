@@ -77,8 +77,14 @@ The still-loaded recovery kernel returns real failures for fresh-exec defaults
 and exec reset, while fork, signal return and two-thread state preservation
 pass. The runtime runner retains exit 1; a separate build/check receipt is
 not runtime acceptance of the correction. That requires a matched kernel
-build and boot and remains pending. The existing GCC suite's results are
-not changed or replaced by these probes.
+build and boot on that AArch64-only VM and remains pending. The existing
+GCC suite's results are not changed or replaced by these probes.
+
+On 2026-10-07, physical Raspberry Pi 5 Cortex-A76 hardware booted a matching
+`EMBER64` kernel from `0108f0692febed373069b5b14bb5912015b2fd88` and passed
+all three runtime modes. Fresh exec reported FPCR=0 and FPSR=0. Its previous
+kernel also passed these modes, so this is hardware regression coverage,
+not reproduction of the AArch64-only VM's original failure.
 
 The shared COMPAT_NETBSD32 save area maps FPSCR controls/status to FPCR/FPSR;
 zero initial state is compatible with this mapping. AArch32 execution on a

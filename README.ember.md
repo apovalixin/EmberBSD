@@ -53,9 +53,10 @@ sh ember/build-kernel.sh /absolute/output EMBER64
 The build produces an ELF kernel, a native kernel image, device trees for
 Zero 2 W, Orange Pi Zero 4 and Zero 3W, and Ethernet, Bluetooth UART, and WM8960
 modules, plus the optional Pi 5 power-button fallback module. Validate new
-builds on the build environment before deployment. Building and booting
-all components of a complete release requires separate validation; the
-current installation recipe uses the official NetBSD 11.0 userland.
+builds on the build environment before deployment. The
+[headless base update](ember/boot/aarch64-base-update.md) builds the fork's
+kernel, required board modules and base userland together. Its Pi 5 hardware
+receipt is separate from validation of a complete general release image.
 
 For an AArch64 desktop VM, see the [UTM framebuffer configuration](ember/boot/utm-framebuffer.md).
 It documents the PCI ownership fix, the `viogpu` boot override and the
