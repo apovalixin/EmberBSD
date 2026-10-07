@@ -301,7 +301,9 @@ on every board in the hardware catalog.
   with EINVAL; full native decoder checks preserve valid-command behavior.
   The [full paired QEMU recipe](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/utm-virgl-host/qemu)
   builds and passes an isolated 2D guest boot on ANGLE Metal, including libdrm
-  and 32 GEM/PRIME lifetimes. Native reset/display qualification and guest Mesa
+  and 32 GEM/PRIME lifetimes. A separate [live 2D backing check](https://github.com/neonix20b/EmberBSD-Ports/blob/main/probes/utm-virgl-host/qemu/reset.md)
+  passes three QMP resets and four Metal renderer initializations.
+  In-flight 3D reset/display qualification and guest Mesa
   remain pending. Guest VirGL stays disabled; an accelerated EmberBSD session,
   reliable console recovery and Vulkan Compute are not yet established.
 - **Physical GPU and NPU porting targets:** CIX P1 is the first selected
