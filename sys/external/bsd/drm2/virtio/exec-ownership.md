@@ -3,8 +3,8 @@
 
 VIRGL remains disabled. This source contract snapshots actual context
 attachments before EXEC, so empty or partial BO hints cannot omit backing
-reachable through encoded commands. Host software contracts pass; native
-compilation and live graphics qualification are separate gates.
+reachable through encoded commands. Host and native software contracts and
+object compilation pass; live graphics qualification remains a separate gate.
 
 ## Admission and dependencies
 
@@ -102,6 +102,28 @@ known errors behind the prefix, reused wire IDs, combined deadlines,
 WW errors, ENOSPC rearm, stop during PRE, immediate completion, multi-cookie
 cancellation and reference/pin/fence/budget conservation. Existing submit
 contracts retain fd zero, private-file unwind and malformed-response coverage.
+
+On 2026-10-07, NetBSD 11/AArch64 with GCC 16.2 passed all 47 EXEC groups
+and 132 prior groups. The first native run stopped before executing tests:
+GCC rejected an unused legacy helper extracted by the fixture. A narrow
+fixture correction passed 154 groups but omitted the same helper still
+used by completion cases. Both failures and their real exit statuses were
+retained. The final extraction condition includes it for the pre-C3 ioctl
+or completion mode, without suppressing warnings or changing production.
+The remaining 16 completion and nine legacy groups then passed; the 154
+unchanged groups were not rerun.
+
+Production is `386cf6ac8a4916e486d6ed391e94b72b33254b8e`; fixture corrections
+end at `f80823c2ef636ff2a60fde06939b1dc6b16781f0`. Its source export SHA256 is
+`4b5b6099f7884f716b5aac55f2b5843d3e8b3a3b9d84d96f04329558d2ec689e`.
+Native 154-group log SHA256:
+`38b890f7b1b8286dba8cf6e23d3ef4c473c6e7c4936f0d4e3c697b66b5113fb6`.
+Remaining contracts/object-build log SHA256:
+`6b4cf258dd75d85b382b6a5a06558bb1d457cbdff320fbf18dd18f86d0fd2654`.
+Configuration and dependencies were regenerated. Fourteen fresh driver
+objects built with base GCC 12.5 and normal `-Werror` in 2.39 seconds,
+with 67,412 KiB peak RSS and no swaps. No kernel was linked, installed or
+booted; the partial object directory is not a matched kernel artifact.
 
 Transfers, WAIT status, console/cursor CPU copies, packet/cap enforcement,
 wire-fence exhaustion and live loaded-map/host qualification remain separate.

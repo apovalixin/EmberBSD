@@ -60,15 +60,18 @@ under the lock, removes the registry entry, and frees outside the lock.
 A late zero-ref UNREF after the reset pass observes the closed lease and
 can finalize exactly once. The registry does not create a reference cycle.
 
-C2 has at most one operation member per BO: the ATTACH array keeps GEM alive
-until its token has finished, and UNREF is emitted only at zero references.
+The C2 ATTACH/UNREF subset has at most one operation member per BO: its
+ATTACH array keeps GEM alive until its token has finished, and UNREF is
+emitted only at zero references.
 Each operation POST uses one pin. Reset joins admitted producers, dequeue
 workers and cookie cancellation before claiming a lease pin. Successful
 UNREF closure runs inside those joined owners; rejected late callers never
 close a lease. Thus operation POST cannot overlap reset lease POST, and the
-pin count is at most one. A CLOSING entry at reset traversal is an invariant
-violation, not a condition to spin on. Extending membership beyond these two
-commands requires revisiting this bound.
+pin count in that subset is at most one. A CLOSING entry at reset traversal
+is an invariant violation, not a condition to spin on. The implemented
+[whole-context EXEC contract](exec-ownership.md) extends this to multiple
+members and bounds overlapping POST pins by active FINISHING members.
+Its reset path drains those members before claiming the lease pin.
 
 Reset closes the remaining leases before terminal fence publication, then
 keeps the existing console/config/object drains. Stopped kernel callers

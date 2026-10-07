@@ -56,7 +56,10 @@ this foundation does not restart queues or recover a renderer context.
 
 The [eligible backing lease](backing-lifetime.md) extends central finish with
 token POST and extends reset drain with lease POST before terminal fences.
-Its scope is ATTACH/UNREF; other DMA ownership remains unverified.
+Its scope is ATTACH/UNREF. The [whole-context EXEC contract](exec-ownership.md)
+adds multiple per-cookie members and drains their POSTs before lease closure.
+Transfers and CPU access still need separate ownership work; software
+contracts do not establish live DMA correctness.
 
 ## Reproduction and evidence limits
 

@@ -69,7 +69,9 @@ fourteen fresh native driver objects compile with the normal warnings.
 This source gate leaves feature negotiation disabled. The subsequent
 [whole-context EXEC contract](exec-ownership.md) snapshots actual attachments,
 retains independent operation ledgers and bounds dependency/storage ownership.
-Its host contracts pass; native and live qualification remain separate gates.
+Its 47 new and 132 prior contract groups pass natively with GCC 16.2;
+fourteen fresh driver objects compile with base GCC 12.5 and normal
+`-Werror`. Full kernel, live DMA and graphics qualification remain pending.
 
 All synchronous control operations request and validate a GPU fence,
 including create, attach, transfer, scanout and flush. A returned descriptor
