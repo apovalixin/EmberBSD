@@ -136,6 +136,10 @@ int virtio_gpu_gem_object_open(struct drm_gem_object *obj,
 		ret = -ENODEV;
 		goto out;
 	}
+	if (!virtio_gpu_object_dma_admitted(vgdev, obj)) {
+		ret = -EOPNOTSUPP;
+		goto out;
+	}
 	list_for_each_entry(entry, &vfpriv->attachments, node) {
 		if (entry->obj != obj)
 			continue;

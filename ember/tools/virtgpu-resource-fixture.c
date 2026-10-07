@@ -1,5 +1,7 @@
 /* Origin: EmberBSD; AI-assisted production VirtGPU resource lifetime fixtures. */
 /* SPDX-License-Identifier: BSD-2-Clause */
+#include <sys/wait.h>
+#include <unistd.h>
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -19,6 +21,7 @@
 #define GFP_NOWAIT 0
 #define TASK_COMM_LEN 16
 #define PAGE_SIZE 4096
+#define PAGE_SHIFT 12
 #define MAX_INLINE_CMD_SIZE 96
 #define MAX_INLINE_RESP_SIZE 24
 #define BUG_ON(c) assert(!(c))
@@ -126,11 +129,15 @@ struct drm_gem_object {
 	struct mutex reservation;
 	struct mutex *resv;
 	struct dma_buf *dma_buf;
+	void *import_attach;
+	struct { const void *pgops; } gemo_uvmobj;
 	int vma_node;
 };
 struct drm_gem_shmem_object {
 	struct drm_gem_object base;
-	unsigned int pins, vmaps;
+	unsigned int pin_count, vmap_count;
+	void *vaddr;
+	struct page **pages;
 };
 struct ww_acquire_ctx {
 	int unused;
@@ -594,6 +601,9 @@ virtio_reset(void *native)
 #define BUS_DMASYNC_POSTWRITE 2
 static int virtio_gpu_gem_object_open(struct drm_gem_object *, struct drm_file *);
 static void virtio_gpu_gem_object_close(struct drm_gem_object *, struct drm_file *);
+static const int drm_gem_shmem_uvm_ops;
+static struct page *owned_pages[2];
+#define virtio_gpu_gem_funcs object_ops
 static const struct object_funcs object_ops = {virtio_gpu_gem_object_open, virtio_gpu_gem_object_close};
 static struct drm_gem_shmem_object *
 drm_gem_shmem_create(struct drm_device *d, size_t n)
@@ -604,6 +614,8 @@ drm_gem_shmem_create(struct drm_device *d, size_t n)
 	bo->base.base.dev = d;
 	bo->base.base.size = n;
 	bo->base.base.funcs = &object_ops;
+	bo->base.base.gemo_uvmobj.pgops = &drm_gem_shmem_uvm_ops;
+	bo->base.pages = owned_pages;
 	bo->base.base.resv = &bo->base.base.reservation;
 	linux_mutex_init(bo->base.base.resv);
 	atomic_init(&bo->base.base.refs, 1);
@@ -614,7 +626,7 @@ static void
 drm_gem_shmem_free_object(struct drm_gem_object *o)
 {
 	struct virtio_gpu_object *bo = gem_to_virtio_gpu_obj(o);
-	assert(!bo->base.pins && !bo->base.vmaps && !bo->pages);
+	assert(!bo->base.pin_count && !bo->base.vmap_count && !bo->pages);
 	assert(pthread_mutex_trylock(&o->resv->value) == 0);
 	mutex_unlock(o->resv);
 	linux_mutex_destroy(o->resv);
@@ -628,15 +640,15 @@ drm_gem_shmem_pin(struct drm_gem_object *o)
 {
 	if (dma_error == 1)
 		return -ENOMEM;
-	gem_to_virtio_gpu_obj(o)->base.pins++;
+	gem_to_virtio_gpu_obj(o)->base.pin_count++;
 	pins++;
 	return 0;
 }
 static void
 drm_gem_shmem_unpin(struct drm_gem_object *o)
 {
-	assert(gem_to_virtio_gpu_obj(o)->base.pins && pins);
-	gem_to_virtio_gpu_obj(o)->base.pins--;
+	assert(gem_to_virtio_gpu_obj(o)->base.pin_count && pins);
+	gem_to_virtio_gpu_obj(o)->base.pin_count--;
 	pins--;
 }
 static struct sg_table *
@@ -676,15 +688,17 @@ drm_gem_shmem_vmap(struct drm_gem_object *o)
 	void *p = test_alloc(1);
 	if (!p)
 		return ERR_PTR(-ENOMEM);
-	gem_to_virtio_gpu_obj(o)->base.vmaps++;
+	gem_to_virtio_gpu_obj(o)->base.vaddr = p;
+	gem_to_virtio_gpu_obj(o)->base.vmap_count++;
 	vmaps++;
 	return p;
 }
 static void
 drm_gem_shmem_vunmap(struct drm_gem_object *o, void *p)
 {
-	assert(gem_to_virtio_gpu_obj(o)->base.vmaps && vmaps);
-	gem_to_virtio_gpu_obj(o)->base.vmaps--;
+	assert(gem_to_virtio_gpu_obj(o)->base.vmap_count && vmaps);
+	gem_to_virtio_gpu_obj(o)->base.vaddr = NULL;
+	gem_to_virtio_gpu_obj(o)->base.vmap_count--;
 	vmaps--;
 	test_free(p);
 }
@@ -707,10 +721,15 @@ bus_dmamap_unload(int tag, bus_dmamap_t m)
 	assert(m->loaded);
 	m->loaded = false;
 }
+static unsigned int backing_pre, backing_post, eligibility_checks;
 static void
 bus_dmamap_sync(int tag, bus_dmamap_t m, size_t start, size_t n, int flags)
 {
 	assert(m->loaded && (flags == BUS_DMASYNC_PREWRITE || flags == BUS_DMASYNC_POSTWRITE));
+	if (flags == BUS_DMASYNC_PREWRITE)
+		backing_pre++;
+	else
+		backing_post++;
 }
 static void
 sg_free_table(struct sg_table *s)
@@ -718,6 +737,22 @@ sg_free_table(struct sg_table *s)
 	if (s->sgl->sg_dmamap)
 		bus_dmamap_destroy(s->sgl->sg_dmat, s->sgl->sg_dmamap);
 }
+
+static int eligibility_error;
+#ifdef DMA_ELIGIBILITY_SOURCE
+/* Native MD arithmetic is exercised separately with the actual predicate. */
+static int
+virtio_gpu_dma_eligible(int tag, bus_dmamap_t map, void *kva, size_t size,
+    struct page **pages, unsigned int npages, unsigned int capacity)
+{
+	assert(map->loaded && kva && pages && npages == size / PAGE_SIZE);
+	assert(capacity == 2);
+	eligibility_checks++;
+	return eligibility_error;
+}
+static int virtio_gpu_object_dma_check(struct virtio_gpu_device *,
+    struct drm_gem_object *, bus_dmamap_t, unsigned int);
+#endif
 static void virtio_gpu_stop(struct virtio_gpu_device *, int);
 /* Fence publication itself is exercised by the completion contract. */
 static void virtio_gpu_fence_complete(struct virtio_gpu_fence *f, int error) { }
@@ -923,6 +958,8 @@ init(void)
 	memset(&dmabuf, 0, sizeof(dmabuf));
 	allocation_fail_at = handle_error = vma_error = prime_error = reservation_error = dma_error = 0;
 	resource_id_error = 0;
+	eligibility_error = 0;
+	backing_pre = backing_post = eligibility_checks = 0;
 	last_bo = NULL;
 	atomic_store(&allocation_calls, 0);
 	dma_nents = 2;
@@ -1382,7 +1419,8 @@ backing_tests(void)
 	fail_next(8);
 	set_fault(VIRTIO_GPU_CMD_RESOURCE_UNREF, HOLD);
 	assert(virtio_gpu_object_create(&gpu, &p, &bo, NULL) == -ENOMEM && !bo);
-	assert(pending && !ids_freed && !bos_freed && pins == 1 && maps == 1 && vmaps == 1 && host_resource[0]);
+	assert(pending && !ids_freed && !bos_freed && !pins && !maps && !vmaps && host_resource[0]);
+	assert(!backing_pre && !backing_post && !backing_commands);
 	finish_pending(false);
 	assert(ids_freed == 1 && bos_freed == 1);
 	fini();
@@ -1450,7 +1488,11 @@ boundary_tests(void)
 	puts("PASS resource ID/count/request arithmetic, exact releases and disabled VIRGL");
 }
 int
+#ifdef DMA_ELIGIBILITY_CONTRACT
+resource_contract_main(void)
+#else
 main(void)
+#endif
 {
 	duplicate_tests();
 	core_unwind_tests();
@@ -1462,3 +1504,7 @@ main(void)
 	boundary_tests();
 	return 0;
 }
+
+#ifdef DMA_ELIGIBILITY_CONTRACT
+#include "virtgpu-dma-integration-cases.h"
+#endif

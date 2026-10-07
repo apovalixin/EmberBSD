@@ -7,7 +7,9 @@ remains disabled. It does not establish an accelerated graphics session.
 DRM calls the GEM open/close callbacks for each handle. Repeated GEM_OPEN of
 one flink name can create multiple handles in one file; PRIME's cache does
 not eliminate this case. VirtGPU keeps one attachment entry per file and BO,
-with a bounded handle count and one retained GEM reference. The first open
+with a bounded handle count and one retained GEM reference.
+[Owned backing eligibility](dma-eligibility.md) is checked before duplicate
+counting or new context attachment. The first open
 publishes that entry after fenced ATTACH; duplicate opens only increment its
 count. Only the final close sends fenced DETACH.
 
@@ -33,8 +35,10 @@ ioctl output follows a failed CREATE. Resource IDs use defined unsigned
 addition, including an allocator handle of INT_MAX.
 
 Backing setup retains its pin, SG table, virtual mapping and native DMA map.
-After successful resource creation, a later backing failure tears these down
-through acknowledged RESOURCE_UNREF or completed reset. Entry-count checks
+Eligibility, wire checks and entry allocation precede PRE and publication;
+early failures release local backing without POST. The created host ID still
+retires through acknowledged RESOURCE_UNREF or completed reset. After PRE,
+backing itself remains retained through that retirement. Entry-count checks
 bound command data size and avoid subtracting headers from an undersized
 request capacity. This does not add transfer/readback coherency or resource
 shape/format validation.

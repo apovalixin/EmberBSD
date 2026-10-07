@@ -78,6 +78,7 @@ struct virtio_gpu_object {
 	struct sg_table *pages;
 	uint32_t mapped;
 	void *dma_vaddr;
+	bool dma_eligible;
 	bool dumb;
 	bool created;
 };
@@ -350,7 +351,7 @@ int virtio_gpu_cmd_set_scanout(struct virtio_gpu_device *vgdev,
 				uint32_t x, uint32_t y);
 int virtio_gpu_object_attach(struct virtio_gpu_device *vgdev,
 			     struct virtio_gpu_object *obj,
-			     struct virtio_gpu_fence *fence);
+			     struct virtio_gpu_fence *fence, bool required);
 void virtio_gpu_object_detach(struct virtio_gpu_device *vgdev,
 			      struct virtio_gpu_object *obj);
 int virtio_gpu_attach_status_page(struct virtio_gpu_device *vgdev);
@@ -431,6 +432,14 @@ bool virtio_gpu_fence_space(struct virtio_gpu_device *);
 bool virtio_gpu_submit_begin(struct virtio_gpu_device *);
 void virtio_gpu_fence_stop(struct virtio_gpu_device *, int);
 void virtio_gpu_fence_complete(struct virtio_gpu_fence *, int);
+
+/* Native owned-map eligibility; does not enable feature negotiation. */
+int virtio_gpu_dma_eligible(bus_dma_tag_t, bus_dmamap_t, void *, size_t,
+    struct page **, unsigned int, unsigned int);
+int virtio_gpu_object_dma_check(struct virtio_gpu_device *,
+    struct drm_gem_object *, bus_dmamap_t, unsigned int);
+bool virtio_gpu_object_dma_admitted(struct virtio_gpu_device *,
+    struct drm_gem_object *);
 
 /* virtio_gpu_object */
 struct drm_gem_object *virtio_gpu_create_object(struct drm_device *dev,

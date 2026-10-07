@@ -8,6 +8,7 @@ makeoptions virtiodrm "CPPFLAGS.virtiodrm"+="-I$S/external/bsd/drm2/dist/drm/vir
 makeoptions virtiodrm "COPTS.virtiodrm"+="-fwrapv"
 makeoptions virtiodrm "CWARNFLAGS.virtiodrm"+="-Wno-unused-function -Wno-cast-qual -Wno-pointer-arith"
 file external/bsd/drm2/virtio/virtgpu_autoconf.c virtiodrm
+file external/bsd/drm2/virtio/virtgpu_dma_arm64.c virtiodrm
 file external/bsd/drm2/linux/linux_virtio.c virtiodrm
 file external/bsd/drm2/drm/drm_gem_shmem_helper.c virtiodrm
 file external/bsd/drm2/dist/drm/virtio/virtgpu_drv.c virtiodrm

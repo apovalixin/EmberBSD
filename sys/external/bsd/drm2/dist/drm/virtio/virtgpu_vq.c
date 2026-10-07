@@ -1446,7 +1446,7 @@ int virtio_gpu_cmd_submit(struct virtio_gpu_device *vgdev,
 }
 
 int virtio_gpu_object_attach(struct virtio_gpu_device *vgdev,
-    struct virtio_gpu_object *obj, struct virtio_gpu_fence *fence)
+    struct virtio_gpu_object *obj, struct virtio_gpu_fence *fence, bool required)
 {
 	struct virtio_gpu_mem_entry *ents;
 	struct sg_table *sgt;
@@ -1462,6 +1462,10 @@ int virtio_gpu_object_attach(struct virtio_gpu_device *vgdev,
 		ret = PTR_ERR(sgt);
 		goto unpin;
 	}
+	if (!sgt->nents || sgt->nents > INT_MAX) {
+		ret = -EINVAL;
+		goto free_sg;
+	}
 	/* Native DMA map retains all pinned pages until RESOURCE_UNREF. */
 	ret = bus_dmamap_create(vgdev->vdev->dmat, obj->base.base.size,
 	    sgt->nents, UINT32_MAX, 0, BUS_DMA_WAITOK, &map);
@@ -1473,45 +1477,63 @@ int virtio_gpu_object_attach(struct virtio_gpu_device *vgdev,
 	if (IS_ERR(obj->dma_vaddr)) {
 		ret = PTR_ERR(obj->dma_vaddr);
 		obj->dma_vaddr = NULL;
-	} else {
-		ret = -bus_dmamap_load(vgdev->vdev->dmat, map, obj->dma_vaddr,
-		    obj->base.base.size, NULL,
-		    BUS_DMA_WAITOK | BUS_DMA_WRITE | BUS_DMA_READ);
+		goto destroy_map;
 	}
-	if (ret) {
-		if (obj->dma_vaddr) {
-			drm_gem_shmem_vunmap(&obj->base.base, obj->dma_vaddr);
-			obj->dma_vaddr = NULL;
-		}
-		bus_dmamap_destroy(vgdev->vdev->dmat, map);
-		goto free_sg;
+	ret = -bus_dmamap_load(vgdev->vdev->dmat, map, obj->dma_vaddr,
+	    obj->base.base.size, NULL,
+	    BUS_DMA_WAITOK | BUS_DMA_WRITE | BUS_DMA_READ);
+	if (ret)
+		goto unmap;
+	if (required) {
+		ret = virtio_gpu_object_dma_check(vgdev, &obj->base.base, map,
+		    sgt->nents);
+		if (ret)
+			goto unload;
 	}
-	sgt->sgl->sg_dmat = vgdev->vdev->dmat;
-	sgt->sgl->sg_dmamap = map;
-	obj->pages = sgt;
-	obj->mapped = map->dm_nsegs;
+	/* All local validation/allocation failures precede PRE and publication. */
 	nents = map->dm_nsegs;
-	if (!nents || vgdev->vdev->max_request <
+	if (!nents || nents > sgt->nents || vgdev->vdev->max_request <
 	    MAX_INLINE_CMD_SIZE + MAX_INLINE_RESP_SIZE ||
 	    nents > UINT32_MAX / sizeof(*ents) ||
 	    nents > (vgdev->vdev->max_request - MAX_INLINE_CMD_SIZE -
-	    MAX_INLINE_RESP_SIZE) / sizeof(*ents))
-		return -EMSGSIZE;
+	    MAX_INLINE_RESP_SIZE) / sizeof(*ents)) {
+		ret = -EMSGSIZE;
+		goto unload;
+	}
 	ents = kcalloc(nents, sizeof(*ents), GFP_KERNEL);
-	if (!ents)
-		return -ENOMEM;
+	if (!ents) {
+		ret = -ENOMEM;
+		goto unload;
+	}
 	for (i = 0; i < nents; i++) {
-		if (map->dm_segs[i].ds_len > UINT32_MAX) {
+		if (!map->dm_segs[i].ds_len || map->dm_segs[i].ds_len > UINT32_MAX) {
 			kfree(ents);
-			return -EMSGSIZE;
+			ret = -EMSGSIZE;
+			goto unload;
 		}
 		ents[i].addr = cpu_to_le64(map->dm_segs[i].ds_addr);
 		ents[i].length = cpu_to_le32(map->dm_segs[i].ds_len);
 	}
+	/* sg_free_table owns map destruction only after this publication. */
+	sgt->sgl->sg_dmat = vgdev->vdev->dmat;
+	sgt->sgl->sg_dmamap = map;
+	obj->pages = sgt;
+	obj->mapped = nents;
 	bus_dmamap_sync(vgdev->vdev->dmat, map, 0, obj->base.base.size,
 	    BUS_DMASYNC_PREWRITE);
-	return virtio_gpu_cmd_resource_attach_backing(vgdev,
+	ret = virtio_gpu_cmd_resource_attach_backing(vgdev,
 	    obj->hw_res_handle, ents, nents, NULL);
+	if (!ret)
+		obj->dma_eligible = required;
+	/* After PRE, all errors retain backing for acknowledged UNREF/reset. */
+	return ret;
+unload:
+	bus_dmamap_unload(vgdev->vdev->dmat, map);
+unmap:
+	drm_gem_shmem_vunmap(&obj->base.base, obj->dma_vaddr);
+	obj->dma_vaddr = NULL;
+destroy_map:
+	bus_dmamap_destroy(vgdev->vdev->dmat, map);
 free_sg:
 	sg_free_table(sgt);
 	kfree(sgt);
@@ -1524,6 +1546,7 @@ void virtio_gpu_object_detach(struct virtio_gpu_device *vgdev,
     struct virtio_gpu_object *obj)
 {
 	/* Only after host unref acknowledgement, or a device reset. */
+	obj->dma_eligible = false;
 	if (obj->pages) {
 		bus_dmamap_sync(vgdev->vdev->dmat, obj->pages->sgl->sg_dmamap,
 		    0, obj->base.base.size,

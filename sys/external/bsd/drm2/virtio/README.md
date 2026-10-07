@@ -59,7 +59,10 @@ Backing entries come from a retained linear `bus_dmamap_load` map's
 with POSTWRITE; they do not invalidate or copy back CPU memory with POSTREAD.
 The DMA map and wire outlive a GPU-fenced RESOURCE_UNREF response. A failed
 UNREF allocation/submission or invalid response resets the device before
-local backing release. Disabling submissions alone never permits release.
+local backing release. Disabling submissions alone never permits release. The
+[owned ARM64 backing gate](dma-eligibility.md) checks loaded maps before PRE
+when 3D admission is required; early local failures perform no POST.
+This source gate leaves feature negotiation disabled.
 
 All synchronous control operations request and validate a GPU fence,
 including create, attach, transfer, scanout and flush. A returned descriptor

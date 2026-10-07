@@ -86,6 +86,49 @@ static const struct drm_gem_object_funcs virtio_gpu_gem_funcs = {
 	.vunmap = drm_gem_shmem_vunmap,
 };
 
+/* Whitelist the core object before any VirtGPU/shmem container conversion. */
+static bool
+virtio_gpu_object_owned(struct virtio_gpu_device *vgdev,
+    struct drm_gem_object *obj)
+{
+	return vgdev != NULL && obj != NULL && obj->dev == vgdev->ddev &&
+	    obj->dev != NULL && obj->dev->dev_private == vgdev &&
+	    obj->funcs == &virtio_gpu_gem_funcs && obj->import_attach == NULL &&
+	    obj->gemo_uvmobj.pgops == &drm_gem_shmem_uvm_ops;
+}
+
+int
+virtio_gpu_object_dma_check(struct virtio_gpu_device *vgdev,
+    struct drm_gem_object *obj, bus_dmamap_t map, unsigned int capacity)
+{
+	struct virtio_gpu_object *bo;
+
+	if (!virtio_gpu_object_owned(vgdev, obj))
+		return -EOPNOTSUPP;
+	bo = gem_to_virtio_gpu_obj(obj);
+	if (!bo->base.pin_count || !bo->base.vmap_count ||
+	    bo->dma_vaddr == NULL || bo->dma_vaddr != bo->base.vaddr ||
+	    bo->base.pages == NULL || (obj->size >> PAGE_SHIFT) > UINT_MAX)
+		return -EOPNOTSUPP;
+	return virtio_gpu_dma_eligible(vgdev->vdev->dmat, map, bo->dma_vaddr,
+	    obj->size, bo->base.pages, obj->size >> PAGE_SHIFT, capacity);
+}
+
+bool
+virtio_gpu_object_dma_admitted(struct virtio_gpu_device *vgdev,
+    struct drm_gem_object *obj)
+{
+	struct virtio_gpu_object *bo;
+
+	if (!virtio_gpu_object_owned(vgdev, obj))
+		return false;
+	bo = gem_to_virtio_gpu_obj(obj);
+	/* This immutable backing remains pinned/mapped until final retirement. */
+	return bo->dma_eligible && bo->pages != NULL && bo->mapped != 0 &&
+	    bo->base.pin_count != 0 && bo->base.vmap_count != 0 &&
+	    bo->dma_vaddr != NULL && bo->dma_vaddr == bo->base.vaddr;
+}
+
 struct drm_gem_object *virtio_gpu_create_object(struct drm_device *dev,
 						size_t size)
 {
@@ -157,7 +200,8 @@ int virtio_gpu_object_create(struct virtio_gpu_device *vgdev,
 		goto err_put_id;
 	}
 
-	ret = virtio_gpu_object_attach(vgdev, bo, NULL);
+	ret = virtio_gpu_object_attach(vgdev, bo, NULL,
+	    params->virgl || vgdev->has_virgl_3d);
 	if (ret != 0) {
 		drm_gem_object_put_unlocked(&shmem_obj->base);
 		return ret;

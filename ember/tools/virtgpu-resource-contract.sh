@@ -2,7 +2,8 @@
 # Origin: EmberBSD; AI-assisted production VirtGPU resource ownership regressions.
 # SPDX-License-Identifier: BSD-2-Clause
 set -eu
-src=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+tools=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+src=${RESOURCE_SOURCE_ROOT:-$(CDPATH= cd -- "$tools/../.." && pwd)}
 work=$(mktemp -d "${TMPDIR:-/tmp}/virtgpu-resource.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 extract() {
@@ -36,6 +37,9 @@ for name in virtio_gpu_vbuffer virtio_gpu_attachment virtio_gpu_fpriv \
 done
 sed -n '/^struct drm_virtgpu_resource_create {/,/^};/p' \
     "$src/sys/external/bsd/drm2/dist/include/uapi/drm/virtgpu_drm.h" >> "$work/resource-layout.h"
+if grep -q '^virtio_gpu_object_dma_check(' "$obj"; then
+    printf '#define DMA_ELIGIBILITY_SOURCE 1\n' >> "$work/resource-layout.h"
+fi
 prod="$work/resource-production.h"
 extract linux_virtio_reset "$src/sys/external/bsd/drm2/linux/linux_virtio.c" 'static void' > "$prod"
 extract virtio_gpu_stop "$kms" 'static void' >> "$prod"
@@ -55,6 +59,11 @@ for name in virtio_gpu_array_free virtio_gpu_array_add_obj virtio_gpu_array_unlo
 extract virtio_gpu_array_lock_resv "$gem" 'static int' >> "$prod"
 extract virtio_gpu_resource_id_get "$obj" 'static int' >> "$prod"
 for name in virtio_gpu_resource_id_put virtio_gpu_release_object virtio_gpu_free_object; do extract "$name" "$obj" 'static void' >> "$prod"; done
+if grep -q '^virtio_gpu_object_dma_check(' "$obj"; then
+    extract virtio_gpu_object_owned "$obj" 'static bool' >> "$prod"
+    extract virtio_gpu_object_dma_check "$obj" 'static int' >> "$prod"
+    extract virtio_gpu_object_dma_admitted "$obj" 'static bool' >> "$prod"
+fi
 extract virtio_gpu_object_create "$obj" 'static int' >> "$prod"
 extract virtio_gpu_gem_object_open "$gem" 'static int' >> "$prod"
 extract virtio_gpu_gem_object_close "$gem" 'static void' >> "$prod"
@@ -76,5 +85,5 @@ extract virtio_gpu_resource_create_ioctl "$drm/virtio/virtgpu_ioctl.c" 'static i
 ${CC:-cc} -std=gnu11 -Wall -Wextra -Werror -Wno-unused-parameter -pthread \
     ${RESOURCE_TEST_CFLAGS:-} -I"$work" -I"$src/sys/external/bsd/drm2/include" \
     -I"$src/sys/external/bsd/drm2/virtio" \
-    "$src/ember/tools/virtgpu-resource-fixture.c" -o "$work/test"
+    -I"$tools" "$tools/virtgpu-resource-fixture.c" -o "$work/test"
 "$work/test"
