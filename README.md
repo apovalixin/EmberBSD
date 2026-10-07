@@ -237,10 +237,13 @@ on every board in the hardware catalog.
   upstream suite has exposed platform compatibility failures; their repair
   and a coherent Qt/LLVM runtime rebuild remain required before adopting
   it as the default compiler in new images. The [common build-tools profile](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/common-build-tools)
-  prepares Python 3.14.8 and Meson 1.12.1 with checked portability patches
-  and explicit interpreter/LLVM selection. Source checks and focused native
-  macro/selection contracts pass; complete packages, installed consumers
-  and the LLVM 23/Mesa 26 stack remain pending. [Developer skills](#connect-developer-skills) help
+  prepares Python 3.14.8, Meson 1.12.1 and matching LLVM/Clang/LLD 23.1.2
+  with upstream lit. Portability patches, generated-header declarations and
+  explicit interpreter/LLVM selection have source checks. Focused native
+  macro/selection and GCC16 metadata checks pass; they do not establish an
+  installed LLVM23 compiler. Complete packages, ELF/JIT behavior and the
+  Mesa26/TinyGo consumers remain pending. See the [LLVM family contract](https://github.com/neonix20b/EmberBSD-Ports/blob/main/profiles/common-build-tools/llvm-family.md).
+  [Developer skills](#connect-developer-skills) help
   AI coding assistants find the owning project, test changes and prepare
   contributions. A general validated installation image is not yet released.
 
