@@ -154,3 +154,24 @@ native GEM/UVM mapping in both modes; the new six-group regression fails on it.
 These checks do not establish native IRQ/SMP behavior, QEMU mappings, bus DMA,
 a complete kernel, live graphics or physical hardware. Full 3D packet, format,
 mip/box/stride validation and host error forwarding remain separate stages.
+
+## Native contract and object gate
+
+On 2026-10-07, source `647875172ceb243903994f48aef24f9cd5a0c78b`
+(finite phases plus the prepublication privacy repair) passed all 325 distinct
+groups on NetBSD 11/AArch64 with GCC 16.2: 57 new and 268 existing. The publication
+wrapper includes eight existing resource groups; they were not counted or run
+twice. Configuration and dependencies were regenerated, and fourteen fresh driver
+objects compiled with base GCC 12.5 and normal `-Werror` in 3.33 seconds,
+with 68,228 KiB maximum RSS and zero swaps. The bounded native guard returned 0.
+
+The exact 379-path source export SHA256 is
+`9196dee689eea6f9a15b315e52a1aecd44fdd287ba4f12767785e590054b851f`.
+Native contract/object log SHA256:
+`a35046a427d32ebbd14fb4d2a925df69002bd56a3a00af93edbf4a145c2e107c`.
+Receipt SHA256:
+`c9cf9f17b745e6fbff023eb002d46d9bbf91a9133936944fec8c62b7f120d179`.
+Source and the focused privacy repair passed independent review. These are native
+software/object checks: the partial object directory is not a matched kernel.
+No kernel was linked, installed or booted; VIRGL remains disabled. Actual SMP/IRQ,
+host mappings and the restored visible console still need runtime acceptance.

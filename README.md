@@ -139,9 +139,11 @@ on every board in the hardware catalog.
   [awesomeWM 4.3](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/awesome)
   also builds and passes the same workflow with system Lua and patched LGI.
   [Xfce 4.20](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/xfce)
-  has a source recipe and checked session profile; native build and runtime
-  remain pending. These checks do not validate physical input, touch or GPU
-  acceleration.
+  also passes a [NetBSD 11/AArch64 UTM workflow](https://github.com/neonix20b/EmberBSD-Ports/blob/main/probes/xfce/VALIDATION.md),
+  including Thunar navigation, Mousepad save/reopen/edit, application launch
+  through its panel menu and clean exit. Ports owns the source recipes and
+  isolated Xvfb session checks. Physical input, touch and GPU acceleration
+  are unverified; shared C++ toolchain migration remains separate.
 - **Current KDE/Qt integration:** KWin 6.7.5 runs a nested Qt Wayland window
   with software rendering and tested keyboard input. Plasma Mobile 6.7.5
   builds and installs with checked library loading and QML components.
@@ -179,8 +181,12 @@ on every board in the hardware catalog.
   [Explicit transfers and WAIT](sys/external/bsd/drm2/virtio/transfer-wait.md)
   retain per-buffer operations through completion and report their exact errors,
   even when a later reservation replaces the visible fence.
-  Native contracts and object builds pass; legacy 2D/CPU ownership, complete
-  request bounds, full kernel/runtime acceptance and live DMA qualification
+  [Controlled console and 2D uploads](sys/external/bsd/drm2/virtio/controlled-console.md)
+  now pair finite DMA phases, retain host resources through failed cleanup,
+  and reject private framebuffer handles before publication. Kernel copies
+  wait for prior operations while retaining the buffer and its reservation.
+  Native contracts and object builds pass. Complete request bounds, arbitrary
+  userspace CPU access, full kernel/runtime acceptance and live DMA qualification
   remain pending.
   See the [VirtGPU implementation](sys/external/bsd/drm2/virtio/README.md),
   [DRM identity checks](ember/boot/drm-native-identity.md) and
@@ -188,9 +194,12 @@ on every board in the hardware catalog.
   Ports owns the [current Mesa 26.2.4 source adaptation](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/wayland-utm),
   with native DSO-lifetime/numeric regressions under GCC 16.2 and
   common-toolchain staging rules;
-  its complete build and consumer migration remain pending. VirGL remains
-  disabled; GPU rendering, reliable console recovery and Vulkan Compute
-  are not yet established.
+  its complete build and consumer migration remain pending. A Ports
+  [host-side VirGL 1.3.0 backport](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/utm-virgl-host)
+  preserves the upstream IOV-size correction and passes focused macOS/arm64
+  arithmetic checks. Complete host bounds and error propagation remain pending.
+  VirGL stays disabled; GPU rendering, reliable console recovery and Vulkan
+  Compute are not yet established.
 - **Physical GPU and NPU porting targets:** CIX P1 is the first selected
   direction: Mali-G720 through Panthor/[Mesa PanVK](https://docs.mesa3d.org/drivers/panfrost.html),
   and Zhouyi v3/X2 through the [Compass driver/runtime sources](https://github.com/Arm-China/Compass_NPU_Driver).
@@ -238,9 +247,11 @@ on every board in the hardware catalog.
   standalone examples. The [Ports development toolchain](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/development-toolchain)
   provides a GCC 16.2 candidate built and installed on the AArch64 VM, with
   native C11/C++20 thread, TLS and shared-library checks passing. The full
-  upstream suite has exposed platform compatibility failures; their repair
-  and a coherent Qt/LLVM runtime rebuild remain required before adopting
-  it as the default compiler in new images. The [common build-tools profile](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/common-build-tools)
+  upstream suite has exposed platform compatibility failures. An upstream
+  [TSVC allocator backport](https://github.com/neonix20b/EmberBSD-Ports/blob/main/profiles/development-toolchain/testsuite-portability.md)
+  passes focused native plain/LTO checks; the full suite remains unaccepted.
+  Remaining repairs and a coherent Qt/LLVM runtime rebuild are required before
+  adopting it as the default compiler in new images. The [common build-tools profile](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/common-build-tools)
   prepares Python 3.14.8, Meson 1.12.1 and matching LLVM/Clang/LLD 23.1.2
   with upstream lit. Portability patches, generated-header declarations and
   explicit interpreter/LLVM selection have source checks. Focused native

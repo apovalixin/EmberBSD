@@ -29,9 +29,12 @@ request phases and exact tracked errors. Its 59 new and 204 prior contract group
 pass on NetBSD/AArch64 with GCC 16.2; fourteen fresh driver objects compile with
 base GCC 12.5 and normal `-Werror`. The linked
 [controlled console and finite 2D contract](controlled-console.md) now pairs
-legacy ATTACH/uploads and orders private kernel copies; 51 focused host groups
-and ASan/UBSan pass. This subsequent stage has not yet passed a fresh native
-object gate. Stable writable ordinary host RAM must be qualified separately;
+legacy ATTACH/uploads and orders private kernel copies. Private GETFB refusal
+precedes handle/VMA publication. All 57 new and 268 existing contract groups
+pass natively with GCC 16.2, and fourteen fresh objects pass with base GCC 12.5
+and normal `-Werror`. Focused host ASan/UBSan also passes. No full kernel has
+been linked or booted for this stage. Stable writable ordinary host RAM must
+be qualified separately;
 retained host bounce mappings remain unsupported. Complete 3D request bounds
 and live qualification remain required before VIRGL can be enabled and tested.
 
