@@ -28,8 +28,10 @@ access attachment entries. Normal file GEM release empties the list before
 context postclose. Defensive leftover cleanup follows CTX_DESTROY/reset.
 
 Both CREATE_2D and CREATE_3D return direct status and publish `created` after
-a matching GPU-fence response. Their common object-creation failure path
-joins reset before releasing a possibly host-owned ID. Merely observing
+a matching GPU-fence response. Their common object-creation producer now
+retains a registry guard before possible CREATE exposure. The
+[controlled console/2D contract](controlled-console.md) retires that guard only
+after acknowledged UNREF or joined reset, including ATTACH/cleanup metadata OOM. Merely observing
 `vqs_ready=false` is insufficient. No backing submission or successful create
 ioctl output follows a failed CREATE. Resource IDs use defined unsigned
 addition, including an allocator handle of INT_MAX.
@@ -40,8 +42,8 @@ early failures release local backing without POST. The created host ID still
 retires through acknowledged RESOURCE_UNREF or completed reset. After PRE,
 backing itself remains retained through that retirement. Entry-count checks
 bound command data size and avoid subtracting headers from an undersized
-request capacity. This does not add transfer/readback coherency or resource
-shape/format validation.
+request capacity. Resource shape/format validation and live mapping qualification remain
+separate gates. The linked controlled console stage owns finite 2D phases.
 
 ## Checks and limits
 

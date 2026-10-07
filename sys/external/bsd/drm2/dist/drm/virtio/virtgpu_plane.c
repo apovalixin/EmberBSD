@@ -123,7 +123,8 @@ static int virtio_gpu_update_dumb_bo(struct virtio_gpu_device *vgdev,
 	uint32_t off = x * state->fb->format->cpp[0] +
 		y * state->fb->pitches[0];
 
-	objs = virtio_gpu_array_alloc(1);
+	objs = virtio_gpu_operation_array_alloc(vgdev, 1,
+	    VIRTGPU_OPERATION_TO_HOST);
 	if (!objs) {
 		vgdev->submit_error = -ENOMEM;
 		return -ENOMEM;
@@ -134,8 +135,6 @@ static int virtio_gpu_update_dumb_bo(struct virtio_gpu_device *vgdev,
 					   objs, NULL);
 	if (error) {
 		vgdev->submit_error = error;
-		bus_dmamap_sync(vgdev->vdev->dmat, bo->pages->sgl->sg_dmamap,
-		    0, bo->base.base.size, BUS_DMASYNC_POSTWRITE);
 	}
 	return error;
 }
@@ -277,10 +276,15 @@ static void virtio_gpu_cursor_plane_update(struct drm_plane *plane,
 		/* new cursor -- update & wait */
 		struct virtio_gpu_object_array *objs;
 
-		objs = virtio_gpu_array_alloc(1);
+		objs = virtio_gpu_operation_array_alloc(vgdev, 1,
+		    VIRTGPU_OPERATION_TO_HOST);
 		if (!objs)
 			return;
 		virtio_gpu_array_add_obj(objs, vgfb->base.obj[0]);
+		if (!vgfb->fence) {
+			virtio_gpu_array_put_free(objs);
+			return;
+		}
 		if (virtio_gpu_array_lock_resv(objs)) {
 			virtio_gpu_array_put_free(objs);
 			return;
@@ -291,7 +295,6 @@ static void virtio_gpu_cursor_plane_update(struct drm_plane *plane,
 			 plane->state->crtc_h,
 			 0, 0, objs, vgfb->fence))
 			return;
-		dma_fence_wait(&vgfb->fence->f, true);
 		dma_fence_put(&vgfb->fence->f);
 		vgfb->fence = NULL;
 	}

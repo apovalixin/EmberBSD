@@ -9,7 +9,8 @@ static bool
 virtgpu_dma_finalize_claim(struct virtio_gpu_object *bo)
 {
 	if (!bo->release_pending || bo->dma_finalizing || bo->dma_members ||
-	    bo->dma_retire_refs || bo->operation_pending || bo->dma_lease == VIRTGPU_LEASE_OPEN ||
+	    bo->dma_retire_refs || bo->operation_pending || bo->dma_resource_retained ||
+	    bo->dma_lease == VIRTGPU_LEASE_OPEN ||
 	    bo->dma_lease == VIRTGPU_LEASE_CLOSING)
 		return false;
 	bo->dma_finalizing = true;
@@ -60,7 +61,9 @@ virtgpu_operation_prepare(struct virtio_gpu_vbuffer *vbuf)
 	KASSERT(!objs->prepared);
 	for (i = 0; i < objs->nents; i++) {
 		bo = gem_to_virtio_gpu_obj(objs->objs[i]);
-		if (bo->dma_lease != VIRTGPU_LEASE_OPEN || bo->release_pending) {
+		if (bo->release_pending ||
+		    (bo->dma_required ? bo->dma_lease != VIRTGPU_LEASE_OPEN :
+		    objs->operation != VIRTGPU_OPERATION_TO_HOST)) {
 			ret = -ENODEV;
 			goto out;
 		}
@@ -122,7 +125,7 @@ virtgpu_operation_post(struct virtio_gpu_vbuffer *vbuf)
 	spin_lock(&vgdev->dma_lock);
 	for (i = 0; i < objs->nents; i++) {
 		bo = objs->members[i].bo;
-		KASSERT(bo->dma_lease == VIRTGPU_LEASE_OPEN);
+		KASSERT(!bo->dma_required || bo->dma_lease == VIRTGPU_LEASE_OPEN);
 		bo->dma_members--;
 		bo->dma_retire_refs--;
 	}
@@ -252,6 +255,19 @@ virtio_gpu_exec_dependencies(struct virtio_gpu_device *vgdev,
 }
 
 
+/* Registered creation producer: even metadata OOM must retire the host ID. */
+void
+virtio_gpu_dma_resource_retain(struct virtio_gpu_object *bo)
+{
+	struct virtio_gpu_device *vgdev = bo->base.base.dev->dev_private;
+
+	spin_lock(&vgdev->dma_lock);
+	KASSERT(!bo->dma_resource_retained && bo->dma_lease == VIRTGPU_LEASE_NONE);
+	bo->dma_resource_retained = true;
+	list_add_tail(&bo->dma_registry, &vgdev->dma_leases);
+	spin_unlock(&vgdev->dma_lock);
+}
+
 void
 virtio_gpu_dma_stop(struct virtio_gpu_device *vgdev)
 {
@@ -275,11 +291,30 @@ virtio_gpu_dma_prepare(struct virtio_gpu_vbuffer *vbuf)
 	if (bo == NULL)
 		return 0;
 	spin_lock(&vgdev->dma_lock);
-	KASSERT(bo->dma_required && op->state == VIRTGPU_DMA_IDLE);
+	KASSERT(op->state == VIRTGPU_DMA_IDLE);
 	if (vgdev->dma_stopped || bo->release_pending ||
 	    bo->dma_lease == VIRTGPU_LEASE_CLOSING) {
 		ret = -ENODEV;
 		goto out;
+	}
+	if (!bo->dma_required) {
+		/* UNREF ends address retention, but opens no artificial DMA phase. */
+		if (op->kind == VIRTGPU_DMA_UNREF)
+			goto out;
+		KASSERT(op->kind == VIRTGPU_DMA_ATTACH);
+		if (bo->dma_members == UINT_MAX) {
+			ret = -EOVERFLOW;
+			goto out;
+		}
+		if (!bo->dma_resource_retained) {
+			bo->dma_resource_retained = true;
+			list_add_tail(&bo->dma_registry, &vgdev->dma_leases);
+		}
+		bo->dma_members++;
+		op->state = VIRTGPU_DMA_PREPARED;
+		spin_unlock(&vgdev->dma_lock);
+		virtgpu_dma_sync(vgdev, bo, BUS_DMASYNC_PREWRITE);
+		return 0;
 	}
 	/* A never-exposed or already reset backing needs no UNREF DMA phase. */
 	if (op->kind == VIRTGPU_DMA_UNREF &&
@@ -292,7 +327,10 @@ virtio_gpu_dma_prepare(struct virtio_gpu_vbuffer *vbuf)
 	if (bo->dma_lease == VIRTGPU_LEASE_NONE) {
 		KASSERT(op->kind == VIRTGPU_DMA_ATTACH);
 		bo->dma_lease = VIRTGPU_LEASE_OPEN;
-		list_add_tail(&bo->dma_registry, &vgdev->dma_leases);
+		if (bo->dma_resource_retained)
+			bo->dma_resource_retained = false; /* Same registry, C2 takes over. */
+		else
+			list_add_tail(&bo->dma_registry, &vgdev->dma_leases);
 		lease = true;
 	}
 	KASSERT(bo->dma_lease == VIRTGPU_LEASE_OPEN);
@@ -333,12 +371,12 @@ virtio_gpu_dma_post(struct virtio_gpu_vbuffer *vbuf)
 	op->state = VIRTGPU_DMA_FINISHING;
 	bo->dma_retire_refs++;
 	spin_unlock(&vgdev->dma_lock);
-	virtgpu_dma_sync(vgdev, bo,
-	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+	virtgpu_dma_sync(vgdev, bo, bo->dma_required ?
+	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE : BUS_DMASYNC_POSTWRITE);
 	spin_lock(&vgdev->dma_lock);
 	KASSERT(bo->dma_members && bo->dma_retire_refs);
 	/* The cookie still owns the BO; lease closure follows this token. */
-	KASSERT(bo->dma_lease == VIRTGPU_LEASE_OPEN);
+	KASSERT(!bo->dma_required || bo->dma_lease == VIRTGPU_LEASE_OPEN);
 	bo->dma_members--;
 	bo->dma_retire_refs--;
 	op->state = VIRTGPU_DMA_IDLE;
@@ -379,8 +417,15 @@ virtio_gpu_dma_finish(struct virtio_gpu_vbuffer *vbuf, int error)
 	virtio_gpu_dma_post(vbuf);
 	if (bo == NULL || op->kind != VIRTGPU_DMA_UNREF || error)
 		return;
-	/* Only verified fenced UNREF success closes here; errors use reset. */
 	spin_lock(&vgdev->dma_lock);
+	if (bo->dma_resource_retained) {
+		KASSERT(!bo->dma_members && !bo->operation_pending && !bo->dma_retire_refs);
+		bo->dma_resource_retained = false;
+		list_del_init(&bo->dma_registry);
+		spin_unlock(&vgdev->dma_lock);
+		return;
+	}
+	/* Only verified fenced UNREF success closes here; errors use reset. */
 	if (bo->dma_lease == VIRTGPU_LEASE_OPEN) {
 		KASSERT(!bo->dma_members && !bo->operation_pending && !bo->dma_retire_refs);
 		bo->dma_lease = VIRTGPU_LEASE_CLOSING;
@@ -397,11 +442,21 @@ void
 virtio_gpu_dma_reset(struct virtio_gpu_device *vgdev)
 {
 	struct virtio_gpu_object *bo, *chosen;
+	bool finalize;
 
 	for (;;) {
 		chosen = NULL;
 		spin_lock(&vgdev->dma_lock);
 		list_for_each_entry(bo, &vgdev->dma_leases, dma_registry) {
+			if (bo->dma_resource_retained) {
+				KASSERT(bo->dma_lease == VIRTGPU_LEASE_NONE && !bo->dma_members &&
+				    !bo->operation_pending && !bo->dma_retire_refs);
+				bo->dma_retire_refs++; /* Raw pin covers registry removal. */
+				bo->dma_resource_retained = false;
+				list_del_init(&bo->dma_registry);
+				chosen = bo;
+				break;
+			}
 			/* All successful UNREF closers were joined above. */
 			KASSERT(bo->dma_lease != VIRTGPU_LEASE_CLOSING);
 			if (bo->dma_lease != VIRTGPU_LEASE_OPEN)
@@ -415,7 +470,17 @@ virtio_gpu_dma_reset(struct virtio_gpu_device *vgdev)
 		spin_unlock(&vgdev->dma_lock);
 		if (chosen == NULL)
 			break;
-		virtgpu_dma_close_claimed(vgdev, chosen);
+		if (chosen->dma_lease == VIRTGPU_LEASE_CLOSING) {
+			virtgpu_dma_close_claimed(vgdev, chosen);
+		} else {
+			spin_lock(&vgdev->dma_lock);
+			KASSERT(chosen->dma_retire_refs);
+			chosen->dma_retire_refs--;
+			finalize = virtgpu_dma_finalize_claim(chosen);
+			spin_unlock(&vgdev->dma_lock);
+			if (finalize)
+				virtio_gpu_finalize_object(chosen);
+		}
 	}
 }
 

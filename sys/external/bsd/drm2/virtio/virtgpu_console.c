@@ -68,6 +68,7 @@ virtgpu_console_probe(struct drm_fb_helper *helper,
 	params.height = sizes->surface_height;
 	params.size = vc->size;
 	params.dumb = true;
+	params.private_console = true;
 	params.format = virtio_gpu_translate_format(DRM_FORMAT_HOST_XRGB8888);
 	error = virtio_gpu_object_create(vc->vgdev, &params, &bo, NULL);
 	if (error)
@@ -86,8 +87,6 @@ virtgpu_console_probe(struct drm_fb_helper *helper,
 		kfree(fb);
 		goto fail_bo;
 	}
-	/* object_attach retains the wired pages, vmap and bus_dma map. */
-	memset(bo->dma_vaddr, 0, vc->size);
 	helper->fb = &fb->base;
 	sizes->surface_bpp = 32;
 	sizes->surface_depth = 24;
@@ -210,7 +209,6 @@ virtgpu_console_upload(struct virtgpu_console *vc, bool restore)
 {
 	struct virtio_gpu_object *bo =
 	    gem_to_virtio_gpu_obj(vc->helper.fb->obj[0]);
-	struct virtio_gpu_object_array *objs;
 	int error;
 
 	/*
@@ -221,20 +219,10 @@ virtgpu_console_upload(struct virtgpu_console *vc, bool restore)
 	if (!atomic_swap_uint(&vc->dirty, 0) && !restore)
 		return 0;
 	membar_consumer();
-	memcpy(bo->dma_vaddr, vc->shadow, vc->size);
-	objs = virtio_gpu_array_alloc(1);
-	if (objs == NULL)
-		return -ENOMEM;
-	virtio_gpu_array_add_obj(objs, &bo->base.base);
-	error = virtio_gpu_cmd_transfer_to_host_2d(vc->vgdev, 0,
-	    bo->width, bo->height, 0, 0, objs, NULL);
-	if (error) {
-		/* Submission failed or reset ended host access; close PREWRITE. */
-		bus_dmamap_sync(vc->vgdev->vdev->dmat,
-		    bo->pages->sgl->sg_dmamap, 0, bo->base.base.size,
-		    BUS_DMASYNC_POSTWRITE);
+	error = virtio_gpu_console_copy_upload(vc->vgdev, bo,
+	    vc->shadow, vc->size);
+	if (error)
 		return error;
-	}
 	if (restore) {
 		error = virtio_gpu_cmd_set_scanout(vc->vgdev, 0,
 		    bo->hw_res_handle, bo->width, bo->height, 0, 0);

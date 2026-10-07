@@ -20,6 +20,7 @@ static unsigned int fixture_ticks;
 typedef int atomic_t;
 #define atomic_inc(p) (++*(p))
 #define atomic_dec(p) (--*(p))
+#define atomic_dec_and_test(p) (--*(p)==0)
 #define atomic_read(p) (*(p))
 #define atomic_set(p,v) (*(p)=(v))
 #define WARN_ON_ONCE(c) WARN_ON(c)
@@ -194,12 +195,16 @@ struct virtio_gpu_object {
 	u32 hw_res_handle;
 	enum virtgpu_dma_lease dma_lease;
 	bool release_pending;
+	bool dma_required, dma_eligible, private_console;
+	void *dma_vaddr;
+	u32 mapped, width, height;
 	unsigned int dma_members, dma_retire_refs, exec_pending;
 	struct list_head exec_members;
 	int pre, post, pre_read, pre_write, post_read, post_write;
 };
 static struct virtio_gpu_object backing[2];
 static struct virtio_gpu_object *gem_to_virtio_gpu_obj(struct drm_gem_object *o) {
+	for(unsigned i=0;i<2;i++) if(o==&backing[i].base.base) return &backing[i];
 	assert(o >= bos && o < bos + 2); return &backing[o - bos];
 }
 static bool virtio_gpu_object_dma_admitted(struct virtio_gpu_device *d, struct drm_gem_object *o) {
@@ -342,8 +347,13 @@ static void schedule_work(struct work_struct *w) {
 #endif
 	virtio_gpu_array_put_free_work(w);
 }
+#ifdef CONTROLLED_2D_CONTRACT
+static void virtio_gpu_wait_done(struct virtio_gpu_vbuffer *,int);
+static void virtio_gpu_wait_put(struct virtio_gpu_wait *);
+#else
 static void virtio_gpu_wait_done(struct virtio_gpu_vbuffer *b,int e) { assert(!b->wait); }
-#if defined(COMPLETION_CONTRACT) || defined(TRANSFER_CONTRACT)
+#endif
+#if (defined(COMPLETION_CONTRACT) || defined(TRANSFER_CONTRACT)) && !defined(CONTROLLED_2D_FOUNDATION)
 static void virtio_gpu_complete_transfer(struct virtio_gpu_device *, struct virtio_gpu_vbuffer *);
 #endif
 #ifdef DMA_LEASE_SOURCE
@@ -356,7 +366,7 @@ static void virtio_gpu_dma_finish(struct virtio_gpu_vbuffer *b, int error) {
 static void virtio_gpu_dma_stop(struct virtio_gpu_device *d) { d->dma_stopped=true; }
 #ifdef COMPLETION_CONTRACT
 static void virtio_gpu_dma_reset(struct virtio_gpu_device *d) { }
-#elif !defined(TRANSFER_CONTRACT)
+#elif !defined(TRANSFER_CONTRACT) && !defined(CONTROLLED_2D_FOUNDATION)
 static void virtio_gpu_complete_transfer(struct virtio_gpu_device *d, struct virtio_gpu_vbuffer *b) { }
 #endif
 static int virtio_gpu_dma_prepare(struct virtio_gpu_vbuffer *b) {
@@ -385,7 +395,13 @@ static void virtio_gpu_stop(struct virtio_gpu_device *d,int e) { stops++; }
 static void wake_up_all(wait_queue_head_t *q) { }
 #endif
 static int virtqueue_add_sgs(struct netbsd_virtqueue *,struct linux_virtio_sg **,unsigned,unsigned,void *,int);
+#ifdef CONTROLLED_2D_CONTRACT
+static long (*controlled_pressure_hook)(long);
+#endif
 static int __attribute__((unused)) pressure_wait(long ticks) {
+#ifdef CONTROLLED_2D_CONTRACT
+	if(controlled_pressure_hook) return controlled_pressure_hook(ticks);
+#endif
 	assert(ticks==5*HZ);
 #if defined(EXEC_CONTRACT) && defined(EXEC_FOUNDATION)
 	if(advanced) {
@@ -487,7 +503,7 @@ static int virtqueue_add_sgs(struct netbsd_virtqueue *q,struct linux_virtio_sg *
 		struct virtio_gpu_vbuffer *b = cookie;
 		queue_calls++;
 #ifdef TRANSFER_CONTRACT
-		assert(transfer_attachment && transfer_attachment->held);
+		assert(!transfer_attachment || transfer_attachment->held);
 #endif
 		#if !defined(TRANSFER_CONTRACT) || defined(TRANSFER_FOUNDATION)
 		assert(b->objs->registered && b->objs->prepared);
@@ -550,6 +566,7 @@ run_case(unsigned which)
 		attachments[i].obj=&bos[i]; attachments[i].handles=1;
 		list_add_tail(&attachments[i].node,&priv.attachments);
 		backing[i].dma_lease=VIRTGPU_LEASE_OPEN;
+		backing[i].dma_required=true; backing[i].dma_eligible=true;
 		INIT_LIST_HEAD(&backing[i].exec_members);
 	}
 #endif
@@ -707,6 +724,10 @@ run_case(unsigned which)
 #include "virtgpu-transfer-cases.h"
 #endif
 
+#ifdef CONTROLLED_2D_CONTRACT
+#include "virtgpu-controlled-2d-cases.h"
+#endif
+
 int
 #ifdef COMPLETION_CONTRACT
 submit_contract_main(void)
@@ -714,6 +735,9 @@ submit_contract_main(void)
 main(void)
 #endif
 {
+#ifdef CONTROLLED_2D_CONTRACT
+	return controlled_2d_main();
+#endif
 #ifdef TRANSFER_CONTRACT
 	return transfer_contract_main();
 #endif

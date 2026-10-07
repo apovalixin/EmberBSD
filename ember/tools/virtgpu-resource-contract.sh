@@ -47,6 +47,11 @@ C
 else
     printf '#define operation exec\n' >> "$work/resource-layout.h"
 fi
+if grep -q 'bool private_console;' "$hdr"; then
+    printf '#define CONTROLLED_2D_FOUNDATION 1\n' >> "$work/resource-layout.h"
+else
+    printf '#define private_console dumb\n' >> "$work/resource-layout.h"
+fi
 sed -n '/^enum virtgpu_dma_lease /,/^};/p' "$hdr" >> "$work/resource-layout.h"
 sed -n '/^#define VIRTGPU_CLASSIC_FENCE_MAX /p; /^#define VIRTGPU_EXEC_/p; /^struct virtgpu_exec_member {/,/^};/p' "$hdr" >> "$work/resource-layout.h"
 for name in virtio_gpu_vbuffer virtio_gpu_attachment virtio_gpu_fpriv \
@@ -90,8 +95,21 @@ fi
 for name in virtio_gpu_resource_id_put virtio_gpu_release_object virtio_gpu_free_object; do extract "$name" "$obj" 'static void' >> "$prod"; done
 if grep -q '^virtio_gpu_object_dma_check(' "$obj"; then
     extract virtio_gpu_object_owned "$obj" 'static bool' >> "$prod"
+    if grep -q '^virtio_gpu_object_private_console(' "$obj"; then
+        extract virtio_gpu_object_private_console "$obj" 'static bool' >> "$prod"
+    fi
     extract virtio_gpu_object_dma_check "$obj" 'static int' >> "$prod"
     extract virtio_gpu_object_dma_admitted "$obj" 'static bool' >> "$prod"
+fi
+if [ "${BACKING_CONTRACT:-0}" != 1 ]; then
+    extract virtio_gpu_submit_begin "$drm/virtio/virtgpu_fence.c" 'static bool' >> "$prod"
+    extract virtio_gpu_submit_done "$vq" 'static void' >> "$prod"
+fi
+if [ "${LEGACY_BACKING_CONTRACT:-0}" = 1 ]; then
+    extract virtio_gpu_exec_charge "$gem" 'static int' >> "$prod"
+    extract virtio_gpu_operation_array_alloc "$gem" 'static struct virtio_gpu_object_array *' >> "$prod"
+    extract virtgpu_exec_sift "$gem" 'static void' >> "$prod"
+    extract virtio_gpu_exec_snapshot "$gem" 'static int' >> "$prod"
 fi
 extract virtio_gpu_object_create "$obj" 'static int' >> "$prod"
 extract virtio_gpu_gem_object_open "$gem" 'static int' >> "$prod"

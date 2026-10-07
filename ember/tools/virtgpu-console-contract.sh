@@ -69,15 +69,9 @@ struct virtio_gpu_object {
     struct { struct { void *sg_dmamap; } *sgl; } *pages;
 };
 #define gem_to_virtio_gpu_obj(x) ((struct virtio_gpu_object *)(x))
-struct virtio_gpu_object_array { int unused; };
-static struct virtio_gpu_object_array array;
 static struct virtgpu_console *current;
 static unsigned restores, transfers, flushes, queued, stops, cancels;
-static unsigned scanouts, retry_delay, posts;
-#define BUS_DMASYNC_POSTWRITE 1
-static void bus_dmamap_sync(void *t, void *m, int off, size_t size, int op) {
-    (void)t; (void)m; (void)off; (void)size; assert(op==1); posts++;
-}
+static unsigned scanouts, retry_delay;
 static bool inject_damage, fail_alloc;
 static int transfer_error;
 static void virtgpu_console_stop(struct virtio_gpu_device *);
@@ -96,21 +90,16 @@ static void queue_delayed_work(void *q, struct delayed_work *w, int delay) {
 static void cancel_delayed_work_sync(struct delayed_work *w) {
     assert(w == &current->work && current->stopped); cancels++;
 }
-static struct virtio_gpu_object_array *virtio_gpu_array_alloc(int n) {
-    assert(n == 1); return fail_alloc ? NULL : &array;
-}
-static void virtio_gpu_array_add_obj(struct virtio_gpu_object_array *a, void *o) {
-    assert(a == &array && o != NULL);
-}
-static int virtio_gpu_cmd_transfer_to_host_2d(struct virtio_gpu_device *v,
-    uint64_t off, uint32_t w, uint32_t h, uint32_t x, uint32_t y,
-    struct virtio_gpu_object_array *a, void *f) {
+/* The real controlled DMA helper is extracted in controlled-2d-contract.sh. */
+static int virtio_gpu_console_copy_upload(struct virtio_gpu_device *v,
+    struct virtio_gpu_object *bo, const void *shadow, size_t bytes) {
     assert(v == current->vgdev && current->lock.held);
-    assert(!current->master && current->emul && a == &array && !f);
-    assert(off == 0 && x == 0 && y == 0 && w == 32 && h == 32);
+    assert(!current->master && current->emul && bo==current->helper.fb->obj[0]);
+    assert(bytes==current->size && shadow==current->shadow);
+    if(fail_alloc) return -ENOMEM;
+    memcpy(bo->dma_vaddr,shadow,bytes);
     transfers++;
     if (inject_damage) {
-        struct virtio_gpu_object *bo=current->helper.fb->obj[0];
         unsigned char before=((unsigned char *)bo->dma_vaddr)[0];
         memset(current->shadow, 0x7b, current->size);
         atomic_swap_uint(&current->dirty, 1);
@@ -189,7 +178,7 @@ int main(void) {
     assert(virtgpu_console_master_set(&dev,NULL,true)==-ENOMEM);
     fail_alloc=false; virtgpu_console_work(&vc.work.work);
     assert(!vc.error && !vc.restore && transfers==5 && flushes==4);
-    assert(scanouts==2 && posts==1 && retry_delay==20);
+    assert(scanouts==2 && retry_delay==20);
     assert(!virtgpu_console_master_set(&dev,NULL,true));
     puts("VirtGPU production console geometry, damage/upload, ownership and stop contracts passed");
 }
@@ -449,8 +438,10 @@ static int virtio_gpu_queue_sync(struct virtio_gpu_device *v,
     assert(b->cmd.flush.hdr.type==VIRTIO_GPU_CMD_RESOURCE_FLUSH);
     flushes++; return 0;
 }
-static struct virtio_gpu_object_array *virtio_gpu_array_alloc(unsigned n) {
-    assert(n==1); return fail_array ? NULL : &array;
+#define VIRTGPU_OPERATION_TO_HOST 2
+static struct virtio_gpu_object_array *virtio_gpu_operation_array_alloc(
+    struct virtio_gpu_device *v,unsigned n,int kind) {
+    assert(v && n==1 && kind==VIRTGPU_OPERATION_TO_HOST); return fail_array ? NULL : &array;
 }
 static void virtio_gpu_array_add_obj(struct virtio_gpu_object_array *a, void *o) {
     assert(a==&array && o);
@@ -461,9 +452,7 @@ static int virtio_gpu_cmd_transfer_to_host_2d(struct virtio_gpu_device *v,
     (void)v; assert(!off && w==32 && h==32 && !x && !y && a==&array && !f);
     transfers++; return transfer_error;
 }
-static void bus_dmamap_sync(void *t, void *m, unsigned off, size_t size, int op) {
-    (void)t; (void)m; (void)size; assert(!off && op==BUS_DMASYNC_POSTWRITE); posts++;
-}
+
 C
 vq="$src/sys/external/bsd/drm2/dist/drm/virtio/virtgpu_vq.c"
 plane="$src/sys/external/bsd/drm2/dist/drm/virtio/virtgpu_plane.c"
@@ -499,7 +488,7 @@ int main(void) {
     assert(v.submit_error==-ENOMEM && !transfers && !scanouts && !flushes);
     assert(v.notify && virtgpu_console_fallback_safe(&v));
     reset(&v); transfer_error=-ENOMEM; virtio_gpu_primary_plane_update(&p,&old);
-    assert(transfers==1 && posts==1 && !scanouts && !flushes && !allocations);
+    assert(transfers==1 && posts==0 && !scanouts && !flushes && !allocations);
     assert(v.submit_error==-ENOMEM && v.notify && virtgpu_console_fallback_safe(&v));
     reset(&v); fail_allocation=1; virtio_gpu_primary_plane_update(&p,&old);
     assert(transfers==1 && !scanouts && !flushes && virtgpu_console_fallback_safe(&v));

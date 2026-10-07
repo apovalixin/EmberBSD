@@ -327,11 +327,18 @@ resource_slot(uint32_t id)
 	assert((id >= 1 && id <= 8) || id == UINT32_C(0x80000000));
 	return id == UINT32_C(0x80000000) ? 15 : id - 1;
 }
+#ifdef LEGACY_BACKING_CONTRACT
+static int allocation_fail_again;
+#endif
 static void *
 test_alloc(size_t n)
 {
 	int c = atomic_fetch_add(&allocation_calls, 1) + 1;
-	if (c == allocation_fail_at)
+	if (c == allocation_fail_at
+#ifdef LEGACY_BACKING_CONTRACT
+	    || c == allocation_fail_again
+#endif
+	    )
 		return NULL;
 	void *p = calloc(1, n);
 	assert(p);
@@ -670,6 +677,7 @@ drm_gem_shmem_create(struct drm_device *d, size_t n)
 	struct virtio_gpu_object *bo = test_alloc(sizeof(*bo));
 	if (!bo)
 		return ERR_PTR(-ENOMEM);
+	INIT_LIST_HEAD(&bo->operation_members);
 	bo->base.base.dev = d;
 	bo->base.base.size = n;
 	bo->base.base.funcs = &object_ops;
@@ -744,9 +752,10 @@ drm_gem_shmem_vmap(struct drm_gem_object *o)
 {
 	if (dma_error == 4)
 		return ERR_PTR(-ENOMEM);
-	void *p = test_alloc(1);
+	void *p = test_alloc(o->size);
 	if (!p)
 		return ERR_PTR(-ENOMEM);
+	memset(p, 0xa5, o->size);
 	gem_to_virtio_gpu_obj(o)->base.vaddr = p;
 	gem_to_virtio_gpu_obj(o)->base.vmap_count++;
 	vmaps++;
@@ -815,6 +824,7 @@ bus_dmamap_sync(int tag, bus_dmamap_t m, size_t start, size_t n, int flags)
 		backing_pre++;
 	else
 		backing_post++;
+	if (sync_hook) sync_hook(flags);
 }
 static void
 sg_free_table(struct sg_table *s)
@@ -843,7 +853,7 @@ static void virtio_gpu_stop(struct virtio_gpu_device *, int);
 static void virtio_gpu_finalize_object(struct virtio_gpu_object *);
 static void virtio_gpu_resource_id_put(struct virtio_gpu_device *, uint32_t);
 #endif
-#if defined(DMA_LEASE_SOURCE) || defined(BACKING_CONTRACT)
+#if (defined(DMA_LEASE_SOURCE) || defined(BACKING_CONTRACT)) && !defined(CONTROLLED_2D_FOUNDATION)
 static void virtio_gpu_complete_transfer(struct virtio_gpu_device *d,
     struct virtio_gpu_vbuffer *b) { }
 #endif
@@ -867,6 +877,8 @@ static struct virtio_gpu_object_array *virtio_gpu_array_alloc(u32);
 static void virtio_gpu_array_add_obj(struct virtio_gpu_object_array *, struct drm_gem_object *);
 static int virtio_gpu_array_lock_resv(struct virtio_gpu_object_array *);
 static void virtio_gpu_array_unlock_resv(struct virtio_gpu_object_array *);
+static bool virtio_gpu_submit_begin(struct virtio_gpu_device *);
+static void virtio_gpu_submit_done(struct virtio_gpu_device *);
 static int virtio_gpu_queue_fenced_ctrl_buffer(struct virtio_gpu_device *, struct virtio_gpu_vbuffer *, struct virtio_gpu_ctrl_hdr *, struct virtio_gpu_fence *);
 /* Compile the native core branches, after all host system headers. */
 #ifndef __NetBSD__
@@ -895,6 +907,9 @@ static int submission_error;
 static uint64_t next_fence;
 #endif
 static struct virtio_gpu_vbuffer *pending;
+#ifdef LEGACY_BACKING_CONTRACT
+static void (*legacy_map_read)(void);
+#endif
 static void
 host_accept(struct virtio_gpu_ctrl_hdr *c)
 {
@@ -933,6 +948,9 @@ host_accept(struct virtio_gpu_ctrl_hdr *c)
 	if (c->type == VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING) {
 		struct virtio_gpu_resource_attach_backing *p = (void *)c;
 		assert(host_resource[resource_slot(p->resource_id)]);
+#ifdef LEGACY_BACKING_CONTRACT
+		if (legacy_map_read) legacy_map_read();
+#endif
 		host_backing[resource_slot(p->resource_id)] = true;
 		backing_commands++;
 	}
@@ -1444,7 +1462,7 @@ reset_overlap_tests(void)
 		assert(pthread_join(resetter, NULL) == 0 && pthread_join(worker, NULL) == 0);
 		assert(resets == 1 && op.ret == (i == 1 ? 0 : -ENODEV));
 		if (i >= 2)
-			assert(!op.bo && ids_freed == (i == 4 ? 0u : 1u));
+			assert(!op.bo && !ids_freed); /* all host IDs await joined reset */
 		finish_pending(true);
 		file_fini(&f);
 		if (existing)
@@ -1505,6 +1523,10 @@ creation_tests(void)
 				assert(virtio_gpu_object_create(&gpu, &p, &bo, f) == -ENOMEM && !bo);
 				if (f)
 					dma_fence_put(&f->f);
+				if (!gpu.vqs_ready) {
+					assert(!pending && !atomic_read(&gpu.submitters));
+					virtio_gpu_dma_reset(&gpu);
+				}
 				assert(bos_freed == (n == 1 ? 0u : 1u) && ids_freed == (n == 1 ? 0u : 1u));
 				fini();
 			}
@@ -1520,9 +1542,12 @@ creation_tests(void)
 			if (m == HOLD)
 				wait_msec = 40;
 			assert(virtio_gpu_object_create(&gpu, &p, &bo, NULL) == (m == SUBMIT_FAIL ? -ENOSPC : m == HOLD ? -ETIMEDOUT : -EIO));
-			assert(!bo && !backing_commands && ids_freed == 1 && resets == 1);
+			assert(!bo && !backing_commands && !ids_freed && resets == 1);
 			if (m == HOLD)
 				finish_pending(false);
+			assert(!pending && !atomic_read(&gpu.submitters));
+			virtio_gpu_dma_reset(&gpu);
+			assert(ids_freed == 1);
 			fini();
 		}
 	init();
@@ -1679,5 +1704,12 @@ main(void)
 #endif
 
 #ifdef BACKING_CONTRACT
+#define main backing_contract_main
 #include "virtgpu-backing-cases.h"
+#undef main
+#ifdef LEGACY_BACKING_CONTRACT
+#include "virtgpu-legacy-backing-cases.h"
+#else
+int main(void) { return backing_contract_main(); }
+#endif
 #endif

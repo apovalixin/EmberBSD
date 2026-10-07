@@ -68,6 +68,7 @@ struct virtio_gpu_object_params {
 	uint32_t last_level;
 	uint32_t nr_samples;
 	uint32_t flags;
+	bool private_console; /* Kernel-only, not a userspace resource flag. */
 };
 
 enum virtgpu_dma_lease { VIRTGPU_LEASE_NONE, VIRTGPU_LEASE_OPEN,
@@ -91,12 +92,16 @@ struct virtio_gpu_object {
 	void *dma_vaddr;
 	bool dma_eligible;
 	bool dma_required;
+	/* Host resource/ID retention, distinct from an OPEN C2 backing lease. */
+	bool dma_resource_retained;
 	enum virtgpu_dma_lease dma_lease;
 	struct list_head dma_registry, operation_members;
 	unsigned int operation_pending;
 	unsigned int dma_members, dma_retire_refs;
 	bool release_pending, dma_finalizing;
 	bool dumb;
+	/* Immutable: only kernel console creation sets this before exposure. */
+	bool private_console;
 	bool created;
 };
 #define gem_to_virtio_gpu_obj(gobj) \
@@ -405,12 +410,16 @@ int virtio_gpu_cmd_create_resource(struct virtio_gpu_device *vgdev,
 				    struct virtio_gpu_object_params *params,
 				    struct virtio_gpu_object_array *objs,
 				    struct virtio_gpu_fence *fence);
+/* Consumes a TO_HOST array on every return; fence implies held resv. */
 int virtio_gpu_cmd_transfer_to_host_2d(struct virtio_gpu_device *vgdev,
 					uint64_t offset,
 					uint32_t width, uint32_t height,
 					uint32_t x, uint32_t y,
 					struct virtio_gpu_object_array *objs,
 					struct virtio_gpu_fence *fence);
+/* Retains the private BO through reservation/dependencies, copy and upload. */
+int virtio_gpu_console_copy_upload(struct virtio_gpu_device *,
+    struct virtio_gpu_object *, const void *, size_t);
 int virtio_gpu_cmd_resource_flush(struct virtio_gpu_device *vgdev,
 				   uint32_t resource_id,
 				   uint32_t x, uint32_t y,
@@ -504,6 +513,8 @@ void virtio_gpu_fence_stop(struct virtio_gpu_device *, int);
 void virtio_gpu_fence_complete(struct virtio_gpu_fence *, int);
 
 /* Single-BO backing lease and operation retirement, separate from GEM refs. */
+void virtio_gpu_submit_done(struct virtio_gpu_device *);
+void virtio_gpu_dma_resource_retain(struct virtio_gpu_object *);
 void virtio_gpu_dma_stop(struct virtio_gpu_device *);
 int virtio_gpu_dma_prepare(struct virtio_gpu_vbuffer *);
 void virtio_gpu_dma_post(struct virtio_gpu_vbuffer *);
@@ -515,6 +526,8 @@ void virtio_gpu_finalize_object(struct virtio_gpu_object *);
 /* Native owned-map eligibility; does not enable feature negotiation. */
 int virtio_gpu_dma_eligible(bus_dma_tag_t, bus_dmamap_t, void *, size_t,
     struct page **, unsigned int, unsigned int);
+bool virtio_gpu_object_private_console(struct virtio_gpu_device *,
+    struct drm_gem_object *);
 int virtio_gpu_object_dma_check(struct virtio_gpu_device *,
     struct drm_gem_object *, bus_dmamap_t, unsigned int);
 bool virtio_gpu_object_dma_admitted(struct virtio_gpu_device *,

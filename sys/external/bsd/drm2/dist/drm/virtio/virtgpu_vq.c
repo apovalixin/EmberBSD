@@ -209,9 +209,6 @@ static void free_vbuf(struct virtio_gpu_device *vgdev,
 	kmem_cache_free(vgdev->vbufs, vbuf);
 }
 
-static void virtio_gpu_complete_transfer(struct virtio_gpu_device *,
-    struct virtio_gpu_vbuffer *);
-
 /* The cookie owns its fence reference until all local cleanup is complete. */
 static void
 virtio_gpu_finish_vbuf(struct virtio_gpu_vbuffer *vbuf, int error)
@@ -221,7 +218,6 @@ virtio_gpu_finish_vbuf(struct virtio_gpu_vbuffer *vbuf, int error)
 
 	virtio_gpu_dma_finish(vbuf, error);
 	if (!error) {
-		virtio_gpu_complete_transfer(vgdev, vbuf);
 		if (vbuf->resp_cb)
 			vbuf->resp_cb(vgdev, vbuf);
 	}
@@ -289,25 +285,6 @@ virtio_gpu_response_error(struct virtio_gpu_vbuffer *entry)
 	return 0;
 }
 
-static void
-virtio_gpu_complete_transfer(struct virtio_gpu_device *vgdev,
-    struct virtio_gpu_vbuffer *entry)
-{
-	struct virtio_gpu_ctrl_hdr *cmd = (void *)entry->buf;
-	u32 type = le32_to_cpu(cmd->type);
-	unsigned int i;
-
-	if (!entry->objs ||
-	    type != VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D)
-		return;
-	for (i = 0; i < entry->objs->nents; i++) {
-		struct virtio_gpu_object *bo =
-		    gem_to_virtio_gpu_obj(entry->objs->objs[i]);
-		bus_dmamap_sync(vgdev->vdev->dmat, bo->pages->sgl->sg_dmamap,
-		    0, bo->base.base.size, BUS_DMASYNC_POSTWRITE);
-	}
-}
-
 void virtio_gpu_dequeue_ctrl_func(struct work_struct *work)
 {
 	struct virtio_gpu_device *vgdev =
@@ -372,7 +349,7 @@ void virtio_gpu_dequeue_cursor_func(struct work_struct *work)
 }
 
 /* Includes rejected-cookie cleanup after submit_lock is released. */
-static void
+void
 virtio_gpu_submit_done(struct virtio_gpu_device *vgdev)
 {
 	/* The joining waiter cannot pass zero before our last shared access. */
@@ -503,7 +480,10 @@ virtio_gpu_queue_sync(struct virtio_gpu_device *vgdev,
 	bool own_fence = fence == NULL;
 	int ret;
 
-	wait = kzalloc(sizeof(*wait), GFP_KERNEL);
+	/* Controlled 2D allocated this metadata before its CPU copy. */
+	wait = vbuf->wait;
+	if (!wait)
+		wait = kzalloc(sizeof(*wait), GFP_KERNEL);
 	if (!wait) {
 		if (fence && vbuf->objs)
 			virtio_gpu_array_unlock_resv(vbuf->objs);
@@ -666,10 +646,8 @@ void virtio_gpu_queue_unref(struct virtio_gpu_device *vgdev,
 	cmd->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_RESOURCE_UNREF);
 	cmd->resource_id = cpu_to_le32(bo->hw_res_handle);
 	vbuf->release = bo;
-	if (bo->dma_required) {
-		vbuf->dma_op.bo = bo;
-		vbuf->dma_op.kind = VIRTGPU_DMA_UNREF;
-	}
+	vbuf->dma_op.bo = bo;
+	vbuf->dma_op.kind = VIRTGPU_DMA_UNREF;
 	fence = virtio_gpu_fence_alloc(vgdev);
 	if (!fence) {
 		virtio_gpu_stop(vgdev, -ENOMEM);
@@ -744,49 +722,146 @@ int virtio_gpu_cmd_resource_flush(struct virtio_gpu_device *vgdev,
 	return error;
 }
 
-int virtio_gpu_cmd_transfer_to_host_2d(struct virtio_gpu_device *vgdev,
-					uint64_t offset,
-					uint32_t width, uint32_t height,
-					uint32_t x, uint32_t y,
-					struct virtio_gpu_object_array *objs,
-					struct virtio_gpu_fence *fence)
+/*
+ * Consumes the array on every exit. A supplied fence means the caller holds
+ * its reservation; the caller retains its fence reference. The NULL route
+ * acquires the reservation exactly once before dependency waits and copy.
+ */
+static int
+virtio_gpu_transfer_2d(struct virtio_gpu_device *vgdev, uint64_t offset,
+    uint32_t width, uint32_t height, uint32_t x, uint32_t y,
+    struct virtio_gpu_object_array *objs, struct virtio_gpu_fence *fence,
+    const void *shadow, size_t bytes)
 {
-	struct virtio_gpu_object *bo = gem_to_virtio_gpu_obj(objs->objs[0]);
-	struct virtio_gpu_transfer_to_host_2d *cmd_p;
-	struct virtio_gpu_vbuffer *vbuf;
+	struct virtio_gpu_object *bo;
+	struct virtio_gpu_transfer_to_host_2d *cmd;
+	struct virtio_gpu_vbuffer *vbuf = NULL;
+	struct virtio_gpu_wait *wait = NULL;
+	struct dma_fence **scratch = NULL;
+	size_t scratch_bytes = 0;
+	unsigned int started = (unsigned int)jiffies;
+	bool locked = fence != NULL, own_fence = fence == NULL;
+	bool registered = false;
+	int ret;
 
-	if (!virtgpu_transfer_valid(bo->width, bo->height,
-	    bo->base.base.size, x, y, width, height, offset)) {
-		if (fence)
-			virtio_gpu_array_unlock_resv(objs);
-		virtio_gpu_array_put_free(objs);
-		return -EINVAL;
+	if (objs->nents != 1 || !objs->objs[0] ||
+	    objs->operation != VIRTGPU_OPERATION_TO_HOST) {
+		ret = -EINVAL;
+		goto out;
 	}
-	bus_dmamap_sync(vgdev->vdev->dmat, bo->pages->sgl->sg_dmamap,
-	    0, bo->base.base.size, BUS_DMASYNC_PREWRITE);
-
-	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
-	if (IS_ERR(cmd_p)) {
-		if (objs) {
-			if (fence)
-				virtio_gpu_array_unlock_resv(objs);
-			virtio_gpu_array_put_free(objs);
+	bo = gem_to_virtio_gpu_obj(objs->objs[0]);
+	if (!virtgpu_transfer_valid(bo->width, bo->height, bo->base.base.size,
+	    x, y, width, height, offset) || !bo->pages || !bo->mapped ||
+	    !bo->dma_vaddr || (shadow && (!bo->private_console || offset || x || y ||
+	    width != bo->width || height != bo->height ||
+	    (uint64_t)width * height * 4 != bytes || bytes > bo->base.base.size))) {
+		ret = -EINVAL;
+		goto out;
+	}
+	cmd = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd));
+	if (IS_ERR(cmd)) {
+		ret = PTR_ERR(cmd);
+		vbuf = NULL;
+		goto out;
+	}
+	wait = kzalloc(sizeof(*wait), GFP_KERNEL);
+	if (!wait) {
+		ret = -ENOMEM;
+		goto out;
+	}
+	scratch = virtio_gpu_dependency_alloc(vgdev, false, &scratch_bytes);
+	if (IS_ERR(scratch)) {
+		ret = PTR_ERR(scratch);
+		scratch = NULL;
+		goto out;
+	}
+	if (own_fence) {
+		fence = virtio_gpu_fence_alloc(vgdev);
+		if (!fence) {
+			ret = -ENOMEM;
+			goto out;
 		}
-		vgdev->submit_error = PTR_ERR(cmd_p);
-		return PTR_ERR(cmd_p);
+		ret = virtio_gpu_array_lock_resv(objs);
+		if (ret)
+			goto out;
+		locked = true;
 	}
-	memset(cmd_p, 0, sizeof(*cmd_p));
+	ret = virtio_gpu_object_dependencies(vgdev, objs->objs[0], scratch,
+	    vgdev->fence_drv.limit, 0, started, false, false, false);
+	if (ret)
+		goto out;
+	/* A reset readiness wakeup is not authorization for a CPU copy. */
+	registered = virtio_gpu_submit_begin(vgdev);
+	if (!registered) {
+		ret = -ENODEV;
+		goto out;
+	}
+	spin_lock(&vgdev->dma_lock);
+	ret = vgdev->dma_stopped || !vgdev->vqs_ready || bo->release_pending ||
+	    (bo->dma_required && (!bo->dma_eligible ||
+	    bo->dma_lease != VIRTGPU_LEASE_OPEN)) ? -ENODEV : 0;
+	spin_unlock(&vgdev->dma_lock);
+	if (ret)
+		goto out;
+	/* The producer join, GEM reference and reservation cover copy to queue. */
+	if (shadow)
+		memcpy(bo->dma_vaddr, shadow, bytes);
+	memset(cmd, 0, sizeof(*cmd));
+	cmd->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D);
+	cmd->resource_id = cpu_to_le32(bo->hw_res_handle);
+	cmd->offset = cpu_to_le64(offset);
+	cmd->r.width = cpu_to_le32(width);
+	cmd->r.height = cpu_to_le32(height);
+	cmd->r.x = cpu_to_le32(x);
+	cmd->r.y = cpu_to_le32(y);
 	vbuf->objs = objs;
+	vbuf->wait = wait;
+	/* No allocations or implicit relocking remain on this explicit route. */
+	ret = virtio_gpu_queue_sync(vgdev, vbuf, &cmd->hdr, fence);
+	objs = NULL;
+	vbuf = NULL;
+	wait = NULL;
+	locked = false;
+out:
+	if (registered)
+		virtio_gpu_submit_done(vgdev);
+	if (locked)
+		virtio_gpu_array_unlock_resv(objs);
+	if (vbuf)
+		free_vbuf(vgdev, vbuf);
+	kfree(wait);
+	if (objs)
+		virtio_gpu_array_put_free(objs);
+	if (own_fence && fence)
+		dma_fence_put(&fence->f);
+	kvfree(scratch);
+	virtio_gpu_exec_uncharge(vgdev, scratch_bytes);
+	return ret;
+}
 
-	cmd_p->hdr.type = cpu_to_le32(VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D);
-	cmd_p->resource_id = cpu_to_le32(bo->hw_res_handle);
-	cmd_p->offset = cpu_to_le64(offset);
-	cmd_p->r.width = cpu_to_le32(width);
-	cmd_p->r.height = cpu_to_le32(height);
-	cmd_p->r.x = cpu_to_le32(x);
-	cmd_p->r.y = cpu_to_le32(y);
+int virtio_gpu_cmd_transfer_to_host_2d(struct virtio_gpu_device *vgdev,
+    uint64_t offset, uint32_t width, uint32_t height, uint32_t x, uint32_t y,
+    struct virtio_gpu_object_array *objs, struct virtio_gpu_fence *fence)
+{
+	return virtio_gpu_transfer_2d(vgdev, offset, width, height, x, y,
+	    objs, fence, NULL, 0);
+}
 
-	return virtio_gpu_queue_sync(vgdev, vbuf, &cmd_p->hdr, fence);
+int
+virtio_gpu_console_copy_upload(struct virtio_gpu_device *vgdev,
+    struct virtio_gpu_object *bo, const void *shadow, size_t bytes)
+{
+	struct virtio_gpu_object_array *objs;
+
+	if (!bo->private_console || !shadow)
+		return -EACCES;
+	objs = virtio_gpu_operation_array_alloc(vgdev, 1,
+	    VIRTGPU_OPERATION_TO_HOST);
+	if (!objs)
+		return -ENOMEM;
+	virtio_gpu_array_add_obj(objs, &bo->base.base);
+	return virtio_gpu_transfer_2d(vgdev, 0, bo->width, bo->height, 0, 0,
+	    objs, NULL, shadow, bytes);
 }
 
 static int
@@ -813,7 +888,8 @@ virtio_gpu_cmd_resource_attach_backing(struct virtio_gpu_device *vgdev,
 
 	vbuf->data_buf = ents;
 	vbuf->data_size = sizeof(*ents) * nents;
-	if (bo->dma_required) {
+	{
+		/* ATTACH can read at map time on either pinned host class. */
 		vbuf->objs = virtio_gpu_array_alloc(1);
 		if (!vbuf->objs) {
 			virtio_gpu_cancel_vbuf(vbuf);
@@ -1243,6 +1319,10 @@ int virtio_gpu_cmd_context_attach_resource(struct virtio_gpu_device *vgdev,
 	struct virtio_gpu_ctx_resource *cmd_p;
 	struct virtio_gpu_vbuffer *vbuf;
 
+	if (bo->private_console) {
+		virtio_gpu_array_put_free(objs);
+		return -EACCES;
+	}
 	cmd_p = virtio_gpu_alloc_cmd(vgdev, &vbuf, sizeof(*cmd_p));
 	if (IS_ERR(cmd_p)) {
 		if (objs) {
@@ -1463,6 +1543,8 @@ int virtio_gpu_object_attach(struct virtio_gpu_device *vgdev,
 		obj->dma_vaddr = NULL;
 		goto destroy_map;
 	}
+	if (obj->private_console)
+		memset(obj->dma_vaddr, 0, obj->base.base.size);
 	ret = -bus_dmamap_load(vgdev->vdev->dmat, map, obj->dma_vaddr,
 	    obj->base.base.size, NULL,
 	    BUS_DMA_WAITOK | BUS_DMA_WRITE | BUS_DMA_READ);
@@ -1504,9 +1586,6 @@ int virtio_gpu_object_attach(struct virtio_gpu_device *vgdev,
 	obj->pages = sgt;
 	obj->mapped = nents;
 	obj->dma_required = required;
-	if (!required)
-		bus_dmamap_sync(vgdev->vdev->dmat, map, 0, obj->base.base.size,
-		    BUS_DMASYNC_PREWRITE);
 	ret = virtio_gpu_cmd_resource_attach_backing(vgdev,
 	    obj, ents, nents, NULL);
 	if (!ret)
@@ -1534,9 +1613,6 @@ void virtio_gpu_object_detach(struct virtio_gpu_device *vgdev,
 	/* Only after host unref acknowledgement, or a device reset. */
 	obj->dma_eligible = false;
 	if (obj->pages) {
-		if (!obj->dma_required)
-			bus_dmamap_sync(vgdev->vdev->dmat, obj->pages->sgl->sg_dmamap,
-			    0, obj->base.base.size, BUS_DMASYNC_POSTWRITE);
 		bus_dmamap_unload(vgdev->vdev->dmat, obj->pages->sgl->sg_dmamap);
 		drm_gem_shmem_vunmap(&obj->base.base, obj->dma_vaddr);
 		obj->dma_vaddr = NULL;

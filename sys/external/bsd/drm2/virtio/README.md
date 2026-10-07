@@ -27,9 +27,13 @@ The retained 3D code passes native contracts and object compilation for
 The [explicit 3D transfer and WAIT contract](transfer-wait.md) adds directional
 request phases and exact tracked errors. Its 59 new and 204 prior contract groups
 pass on NetBSD/AArch64 with GCC 16.2; fourteen fresh driver objects compile with
-base GCC 12.5 and normal `-Werror`. Legacy 2D
-DMA/CPU ownership and complete 3D request bounds remain required before VIRGL
-can be enabled and tested.
+base GCC 12.5 and normal `-Werror`. The linked
+[controlled console and finite 2D contract](controlled-console.md) now pairs
+legacy ATTACH/uploads and orders private kernel copies; 51 focused host groups
+and ASan/UBSan pass. This subsequent stage has not yet passed a fresh native
+object gate. Stable writable ordinary host RAM must be qualified separately;
+retained host bounce mappings remain unsupported. Complete 3D request bounds
+and live qualification remain required before VIRGL can be enabled and tested.
 
 ## Provenance
 
@@ -59,7 +63,7 @@ Its pager takes ordinary GEM references and maps those pages. Native
 the helper separately frees that allocation, including its error unwind.
 
 Backing entries come from a retained linear `bus_dmamap_load` map's
-`dm_segs`, rather than raw physical addresses. 2D host reads pair PREWRITE
+`dm_segs`, rather than raw physical addresses. Finite ATTACH and each 2D upload pair PREWRITE
 with POSTWRITE; they do not invalidate or copy back CPU memory with POSTREAD.
 The DMA map and wire outlive a GPU-fenced RESOURCE_UNREF response. A failed
 UNREF allocation/submission or invalid response resets the device before
@@ -98,7 +102,9 @@ Qualified backing leases close after that drain. Terminal fences publish
 only after lease retirement, before console/config/object
 worker joins. The bounded per-cookie timeline and teardown contract is
 documented in [completion lifetime](completion-lifetime.md). This foundation
-does not qualify the remaining legacy 2D/CPU-copy paths or live graphics.
+does not qualify host memory mappings or live graphics. The
+[controlled console contract](controlled-console.md) covers source ownership of
+legacy 2D and private copies subject to that host qualification boundary.
 Normal live detach is rejected
 with EBUSY.
 

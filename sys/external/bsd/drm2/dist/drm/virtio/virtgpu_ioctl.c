@@ -442,15 +442,23 @@ static int virtio_gpu_transfer_to_host_ioctl(struct drm_device *dev, void *data,
 {
 	struct virtio_gpu_device *vgdev = dev->dev_private;
 	struct drm_virtgpu_3d_transfer_to_host *args = data;
+	struct drm_gem_object *obj;
 	struct virtio_gpu_object_array *objs;
 
 	if (vgdev->has_virgl_3d)
 		return virtio_gpu_transfer_3d_ioctl(dev, file, args->bo_handle,
 		    args->offset, args->level, &args->box, false);
-	/* Legacy 2D ownership is unchanged by the explicit 3D contract. */
-	objs = virtio_gpu_array_from_handles(file, &args->bo_handle, 1);
-	if (!objs)
+	obj = drm_gem_object_lookup(file, args->bo_handle);
+	if (!obj)
 		return -ENOENT;
+	objs = virtio_gpu_operation_array_alloc(vgdev, 1,
+	    VIRTGPU_OPERATION_TO_HOST);
+	if (!objs) {
+		drm_gem_object_put_unlocked(obj);
+		return -ENOMEM;
+	}
+	objs->objs[0] = obj;
+	objs->nents = 1;
 	return virtio_gpu_cmd_transfer_to_host_2d(vgdev, args->offset,
 	    args->box.w, args->box.h, args->box.x, args->box.y, objs, NULL);
 }

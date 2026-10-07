@@ -114,8 +114,9 @@ The zero-reference case checks POST before the final array put; actual map/ID
 retirement is covered separately by the backing contracts. These checks do not
 prove native IRQ races, cache behavior or hardware execution.
 
-Legacy 2D lifetime/PRE/POST, console/private-BO CPU access, plane manual POST and
-cursor ordering are intentionally unchanged and require the next ownership stage.
-The legacy opcode completion helper now handles only 2D; 3D POST has one common
-owner. Full 3D format/mip/box/stride bounds, arbitrary user mmap exclusion, delayed
-query completion, live host behavior and acceleration remain separate gates.
+The subsequent [controlled console and 2D stage](controlled-console.md) uses this
+same ledger for 2D uploads, replaces legacy lifetime ATTACH phases, removes both
+manual compensation POSTs and the success-only opcode helper, and rejects private
+console GEM/context reachability. Its host qualification boundary remains explicit.
+Full 3D format/mip/box/stride bounds, arbitrary user mmap exclusion, delayed query
+completion, live host behavior and acceleration remain separate gates.

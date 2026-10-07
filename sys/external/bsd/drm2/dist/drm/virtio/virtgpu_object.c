@@ -56,7 +56,8 @@ void virtio_gpu_finalize_object(struct virtio_gpu_object *bo)
 	struct drm_gem_object *obj = &bo->base.base;
 	struct virtio_gpu_device *vgdev = obj->dev->dev_private;
 
-	KASSERT(bo->dma_finalizing && bo->release_pending);
+	KASSERT(bo->dma_finalizing && bo->release_pending &&
+	    !bo->dma_resource_retained);
 	KASSERT(!bo->dma_members && !bo->dma_retire_refs);
 	KASSERT(bo->dma_lease == VIRTGPU_LEASE_NONE ||
 	    bo->dma_lease == VIRTGPU_LEASE_CLOSED);
@@ -106,6 +107,14 @@ virtio_gpu_object_owned(struct virtio_gpu_device *vgdev,
 	    obj->gemo_uvmobj.pgops == &drm_gem_shmem_uvm_ops;
 }
 
+bool
+virtio_gpu_object_private_console(struct virtio_gpu_device *vgdev,
+    struct drm_gem_object *obj)
+{
+	return virtio_gpu_object_owned(vgdev, obj) &&
+	    gem_to_virtio_gpu_obj(obj)->private_console;
+}
+
 int
 virtio_gpu_object_dma_check(struct virtio_gpu_device *vgdev,
     struct drm_gem_object *obj, bus_dmamap_t map, unsigned int capacity)
@@ -133,7 +142,8 @@ virtio_gpu_object_dma_admitted(struct virtio_gpu_device *vgdev,
 		return false;
 	bo = gem_to_virtio_gpu_obj(obj);
 	/* This immutable backing remains pinned/mapped until final retirement. */
-	return bo->dma_eligible && bo->pages != NULL && bo->mapped != 0 &&
+	return !bo->private_console && bo->dma_eligible && bo->pages != NULL &&
+	    bo->mapped != 0 &&
 	    bo->base.pin_count != 0 && bo->base.vmap_count != 0 &&
 	    bo->dma_vaddr != NULL && bo->dma_vaddr == bo->base.vaddr;
 }
@@ -161,6 +171,7 @@ int virtio_gpu_object_create(struct virtio_gpu_device *vgdev,
 	struct drm_gem_shmem_object *shmem_obj;
 	struct virtio_gpu_object *bo;
 	int ret;
+	bool registered = false;
 
 	*bo_ptr = NULL;
 
@@ -181,6 +192,7 @@ int virtio_gpu_object_create(struct virtio_gpu_device *vgdev,
 		goto err_free_gem;
 
 	bo->dumb = params->dumb;
+	bo->private_console = params->private_console;
 	bo->width = params->width;
 	bo->height = params->height;
 	bo->format = params->format;
@@ -197,6 +209,15 @@ int virtio_gpu_object_create(struct virtio_gpu_device *vgdev,
 			goto err_put_objs;
 	}
 
+	/* Reset joins creation through ATTACH and its failure unwind. */
+	registered = virtio_gpu_submit_begin(vgdev);
+	if (!registered) {
+		ret = -ENODEV;
+		if (objs)
+			virtio_gpu_array_unlock_resv(objs);
+		goto err_put_objs;
+	}
+	virtio_gpu_dma_resource_retain(bo);
 	if (params->virgl) {
 		ret = virtio_gpu_cmd_resource_create_3d(vgdev, bo, params,
 						  objs, fence);
@@ -214,16 +235,21 @@ int virtio_gpu_object_create(struct virtio_gpu_device *vgdev,
 	    params->virgl || vgdev->has_virgl_3d);
 	if (ret != 0) {
 		drm_gem_object_put_unlocked(&shmem_obj->base);
+		virtio_gpu_submit_done(vgdev);
 		return ret;
 	}
 
 	*bo_ptr = bo;
+	virtio_gpu_submit_done(vgdev);
 	return 0;
 
 err_put_objs:
-	virtio_gpu_array_put_free(objs);
+	if (objs)
+		virtio_gpu_array_put_free(objs);
 err_put_id:
 	drm_gem_object_put_unlocked(&shmem_obj->base);
+	if (registered)
+		virtio_gpu_submit_done(vgdev);
 	return ret;
 err_free_gem:
 	drm_gem_shmem_free_object(&shmem_obj->base);

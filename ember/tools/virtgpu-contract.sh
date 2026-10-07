@@ -196,7 +196,12 @@ C
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror \
     -I"$src/sys/external/bsd/drm2/virtio" "$work/queue.c" -o "$work/queue"
 "$work/queue"
-cat > "$work/lifetime.c" <<'C'
+if ! grep -q '^virtio_gpu_complete_transfer(' "$vq"; then
+    printf '#define CONTROLLED_2D_FOUNDATION 1\n' > "$work/lifetime.c"
+else
+    : > "$work/lifetime.c"
+fi
+cat >> "$work/lifetime.c" <<'C'
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -220,7 +225,7 @@ struct virtio_gpu_device { bool vqs_ready; void *vbufs; };
 struct virtio_gpu_object {
     struct { struct drm_gem_object base; } base;
     bool created; unsigned int hw_res_handle; bool mapped, pinned;
-    bool dma_required, dma_finalizing, release_pending;
+    bool dma_required, dma_finalizing, release_pending, dma_resource_retained;
     unsigned int dma_members, dma_retire_refs, dma_lease;
 };
 struct dma_fence { int refs; };
@@ -252,10 +257,12 @@ static void virtio_gpu_dma_release(struct virtio_gpu_object *bo) {
     virtio_gpu_finalize_object(bo);
 }
 static void virtio_gpu_dma_finish(struct virtio_gpu_vbuffer *b, int error) {
-    (void)error; assert(!b->dma_op.bo);
+    (void)error; assert(!b->dma_op.bo || !b->dma_op.bo->dma_required);
 }
+#ifndef CONTROLLED_2D_FOUNDATION
 static void virtio_gpu_complete_transfer(struct virtio_gpu_device *d,
     struct virtio_gpu_vbuffer *b) { (void)d; (void)b; }
+#endif
 static void virtio_gpu_release_object(struct virtio_gpu_object *);
 static void virtio_gpu_queue_unref(struct virtio_gpu_device *, struct virtio_gpu_object *);
 static void virtio_gpu_cancel_vbuf(void *);
@@ -627,7 +634,7 @@ struct drm_plane_state {
 struct drm_plane { struct drm_device *dev; struct drm_plane_state *state; };
 struct virtio_gpu_object_array { struct drm_gem_object *objs[1]; bool locked; };
 struct virtio_gpu_vbuffer { void *buf; struct virtio_gpu_object_array *objs; };
-static int mode, arrays_freed, waited, pings, cmd_frees, prewrite;
+static int mode, arrays_freed, waited, pings, cmd_frees;
 static struct virtio_gpu_fence fence;
 static struct virtio_gpu_object_array *virtio_gpu_array_alloc(int n) {
     assert(n == 1); return calloc(1, sizeof(struct virtio_gpu_object_array));
@@ -643,27 +650,19 @@ static void virtio_gpu_array_unlock_resv(struct virtio_gpu_object_array *a) {
 static void virtio_gpu_array_put_free(struct virtio_gpu_object_array *a) {
     assert(!a->locked); arrays_freed++; free(a);
 }
-static void bus_dmamap_sync(void *d, void *map, int off, size_t size, int ops) {
-    (void)d; (void)map; assert(off == 0 && size == 16384 && ops == BUS_DMASYNC_PREWRITE);
-    prewrite++;
+#define VIRTGPU_OPERATION_TO_HOST 2
+static struct virtio_gpu_object_array *virtio_gpu_operation_array_alloc(
+    struct virtio_gpu_device *v,int n,int kind) {
+    assert(v && kind==VIRTGPU_OPERATION_TO_HOST); return virtio_gpu_array_alloc(n);
 }
-static void *virtio_gpu_alloc_cmd(struct virtio_gpu_device *v,
-    struct virtio_gpu_vbuffer **bp, size_t bytes) {
-    (void)v; if (mode == 1) return (void *)(intptr_t)-ENOMEM;
-    *bp = calloc(1, sizeof(**bp)); assert(*bp);
-    (*bp)->buf = calloc(1, bytes); assert((*bp)->buf); return (*bp)->buf;
-}
-static int virtio_gpu_queue_sync(struct virtio_gpu_device *v,
-    struct virtio_gpu_vbuffer *b, struct virtio_gpu_ctrl_hdr *h,
-    struct virtio_gpu_fence *f) {
-    (void)v; assert(h == b->buf && f == &fence);
-    virtio_gpu_array_unlock_resv(b->objs); virtio_gpu_array_put_free(b->objs);
-    free(b->buf); free(b); cmd_frees++;
-    if (mode == 2) return -ENOMEM; /* production queue_sync wait allocation failure */
-    f->f.emitted = true; return 0;
-}
-static int dma_fence_wait(struct dma_fence *f, bool intr) {
-    assert(intr && f->emitted); waited++; return 0;
+static int virtio_gpu_cmd_transfer_to_host_2d(struct virtio_gpu_device *v,
+    uint64_t offset,uint32_t w,uint32_t h,uint32_t x,uint32_t y,
+    struct virtio_gpu_object_array *a,struct virtio_gpu_fence *f) {
+    assert(f==&fence && !offset && !x && !y && w==64 && h==64);
+    (void)v; virtio_gpu_array_unlock_resv(a); virtio_gpu_array_put_free(a);
+    cmd_frees++;
+    if(mode) return mode==1?-ENOMEM:mode==2?-EIO:mode==3?-EINTR:-ETIMEDOUT;
+    f->f.emitted=true;return 0;
 }
 static void dma_fence_put(struct dma_fence *f) { assert(f->refs == 1); f->refs--; }
 static void virtio_gpu_cursor_ping(struct virtio_gpu_device *v,
@@ -671,7 +670,6 @@ static void virtio_gpu_cursor_ping(struct virtio_gpu_device *v,
     (void)v; assert(o && b); pings++;
 }
 C
-extract virtio_gpu_cmd_transfer_to_host_2d "$vq" '' >> "$work/cursor.c"
 plane="$src/sys/external/bsd/drm2/dist/drm/virtio/virtgpu_plane.c"
 extract virtio_gpu_cursor_plane_update "$plane" '' >> "$work/cursor.c"
 cat >> "$work/cursor.c" <<'C'
@@ -688,78 +686,47 @@ static void cursor_case(int how) {
     struct virtio_gpu_framebuffer fb = { .base.obj = { &bo.base.base }, .fence = &fence };
     struct drm_plane_state old = { .crtc = &output };
     struct drm_plane_state state = { .crtc = &output, .fb = &fb.base,
-        .crtc_w = how == 3 ? 65 : 64, .crtc_h = 64 };
+        .crtc_w = 64, .crtc_h = 64 };
     struct drm_plane p = { .dev = &dev, .state = &state };
-    mode = how; arrays_freed = waited = pings = cmd_frees = prewrite = 0;
+    mode = how; arrays_freed = waited = pings = cmd_frees = 0;
     virtio_gpu_cursor_plane_update(&p, &old);
     assert(arrays_freed == 1);
-    if (how == 0) assert(waited == 1 && pings == 1 && fb.fence == NULL);
+    if (how == 0) assert(waited == 0 && pings == 1 && fb.fence == NULL);
     else assert(waited == 0 && pings == 0 && !fence.f.emitted && fb.fence == &fence);
-    assert(cmd_frees == (how == 0 || how == 2 ? 1 : 0));
-    assert(prewrite == (how == 3 ? 0 : 1));
+    assert(cmd_frees == 1);
+
     free(bo.pages->sgl); free(bo.pages); free(vgdev.vdev);
 }
 int main(void) {
-    for (int i = 0; i < 4; i++) cursor_case(i);
-    puts("VirtGPU production cursor pre-emit OOM/validation and read-only DMA contracts passed");
+    for (int i = 0; i < 5; i++) cursor_case(i);
+    puts("VirtGPU production cursor exact upload errors prevent ping without a second wait");
     return 0;
 }
 C
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror \
     -I"$src/sys/external/bsd/drm2/virtio" "$work/cursor.c" -o "$work/cursor"
 "$work/cursor"
+# Opcode completion no longer owns 2D POST; immutable direction does.
 cat > "$work/dma.c" <<'C'
 #include <assert.h>
-#include <stdint.h>
 #include <stdbool.h>
-#include <stddef.h>
 #include <stdio.h>
-#define le32_to_cpu(x) (x)
-#define u32 uint32_t
-#define VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D 0x105
-#define VIRTIO_GPU_CMD_TRANSFER_TO_HOST_3D 0x206
-#define VIRTIO_GPU_CMD_TRANSFER_FROM_HOST_3D 0x207
-#define BUS_DMASYNC_POSTWRITE 1
-#define BUS_DMASYNC_POSTREAD 2
-#define gem_to_virtio_gpu_obj(p) ((struct virtio_gpu_object *)(p))
-struct virtio_gpu_ctrl_hdr { uint32_t type; };
-struct drm_gem_object { size_t size; };
-struct virtio_gpu_object {
-    struct { struct drm_gem_object base; } base;
-    struct { struct { void *sg_dmamap; } *sgl; } *pages;
-};
-struct virtio_gpu_object_array { unsigned int nents; struct drm_gem_object *objs[1]; };
-struct virtio_gpu_vbuffer { struct virtio_gpu_ctrl_hdr *buf; struct virtio_gpu_object_array *objs; };
-struct virtio_gpu_device { struct { void *dmat; } *vdev; };
-static unsigned char cpu[4], bounce[4];
-static int syncs, direction;
-static void bus_dmamap_sync(void *d, void *m, int offset, size_t size, int ops) {
-    (void)d; (void)m; assert(offset == 0 && size == sizeof(cpu));
-    syncs++; direction = ops;
-    /* Model the native bounce POSTREAD copyback, including stale bytes. */
-    if (ops & BUS_DMASYNC_POSTREAD)
-        for (unsigned int i = 0; i < sizeof(cpu); i++) cpu[i] = bounce[i];
-}
+#define KASSERT assert
+#define BUS_DMASYNC_PREWRITE 1
+#define BUS_DMASYNC_POSTWRITE 2
+#define BUS_DMASYNC_PREREAD 4
+#define BUS_DMASYNC_POSTREAD 8
+enum virtgpu_operation_kind { VIRTGPU_OPERATION_NONE,VIRTGPU_OPERATION_EXEC,
+    VIRTGPU_OPERATION_TO_HOST,VIRTGPU_OPERATION_FROM_HOST };
 C
-extract virtio_gpu_complete_transfer "$vq" void >> "$work/dma.c"
+extract virtgpu_operation_sync_ops "$src/sys/external/bsd/drm2/virtio/virtgpu_dma.c" int >> "$work/dma.c"
 cat >> "$work/dma.c" <<'C'
 int main(void) {
-    struct virtio_gpu_device v = { 0 };
-    struct virtio_gpu_object bo = { .base.base.size = sizeof(cpu) };
-    struct virtio_gpu_object_array a = { .nents = 1, .objs = { &bo.base.base } };
-    struct virtio_gpu_ctrl_hdr cmd = { .type = VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D };
-    struct virtio_gpu_vbuffer b = { .buf = &cmd, .objs = &a };
-    struct { void *dmat; } native = { 0 };
-    struct { void *sg_dmamap; } sg = { 0 };
-    struct { void *sgl; } pages = { &sg };
-    v.vdev = (void *)&native; bo.pages = (void *)&pages;
-    for (unsigned int i = 0; i < sizeof(cpu); i++) { cpu[i] = 7; bounce[i] = 1; }
-    virtio_gpu_complete_transfer(&v, &b);
-    assert(syncs == 1 && direction == BUS_DMASYNC_POSTWRITE);
-    for (unsigned int i = 0; i < sizeof(cpu); i++) assert(cpu[i] == 7);
-    cmd.type = 0x104; virtio_gpu_complete_transfer(&v, &b); assert(syncs == 1);
-    puts("VirtGPU production TO_HOST bounce DMA completion preserves CPU writes");
-    return 0;
+    assert(virtgpu_operation_sync_ops(VIRTGPU_OPERATION_TO_HOST,false)==BUS_DMASYNC_PREWRITE);
+    assert(virtgpu_operation_sync_ops(VIRTGPU_OPERATION_TO_HOST,true)==BUS_DMASYNC_POSTWRITE);
+    assert(virtgpu_operation_sync_ops(VIRTGPU_OPERATION_FROM_HOST,false)==BUS_DMASYNC_PREREAD);
+    assert(virtgpu_operation_sync_ops(VIRTGPU_OPERATION_FROM_HOST,true)==BUS_DMASYNC_POSTREAD);
+    puts("VirtGPU production immutable directional operation phases passed");
 }
 C
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror "$work/dma.c" -o "$work/dma"

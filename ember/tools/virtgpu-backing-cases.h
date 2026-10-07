@@ -132,6 +132,9 @@ static void backing_case(unsigned which) {
 		gpu.has_virgl_3d = false;
 		bo = make_bo(false);
 		assert(backing_pre == 1 && !rw_pre);
+#ifdef CONTROLLED_2D_FOUNDATION
+		assert(backing_post == 1); /* finite ATTACH, retained map */
+#endif
 		drm_gem_object_put_unlocked(&bo->base.base);
 		assert(backing_post == 1 && !rw_post && ids_freed == 1);
 	} else if (which == 15 || which == 16 || which == 18) {
@@ -227,7 +230,7 @@ int main(void) {
 	    "UNREF command OOM defers final release until reset POST",
 	    "UNREF fence OOM defers final release until reset POST",
 	    "late zero-ref UNREF after repeated reset closes once",
-	    "required=false preserves legacy 2D phases",
+	    "required=false pairs finite ATTACH and retains backing",
 	    "stop during lease PRE rejects before host exposure",
 	    "stop during token PRE rejects before host exposure",
 	    "zero-ref destructor during reset lease POST defers to pin",

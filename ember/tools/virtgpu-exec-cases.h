@@ -35,6 +35,7 @@ exec_setup(void)
 	for(unsigned i=0;i<2;i++) {
 		bos[i].refs=1; bos[i].resv=&resv[i]; resv[i].fence=&resv[i].shared;
 		backing[i].dma_lease=VIRTGPU_LEASE_OPEN;
+		backing[i].dma_required=true; backing[i].dma_eligible=true;
 		INIT_LIST_HEAD(&backing[i].exec_members);
 		exec_attach[i].obj=&bos[i]; exec_attach[i].handles=1;
 		list_add_tail(&exec_attach[i].node,&exec_priv.attachments);

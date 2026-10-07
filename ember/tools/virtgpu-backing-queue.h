@@ -33,7 +33,7 @@ static void backing_callback(struct virtio_gpu_device *d,
 	assert(!b->wait || !b->wait->done);
 #ifdef DMA_LEASE_SOURCE
 	assert(b->dma_op.state == VIRTGPU_DMA_IDLE);
-	if (b->dma_op.bo) assert(!b->dma_op.bo->dma_members && rw_post);
+	if (b->dma_op.bo) assert(!b->dma_op.bo->dma_members && (rw_post || backing_post));
 #endif
 	callback_checks++;
 }

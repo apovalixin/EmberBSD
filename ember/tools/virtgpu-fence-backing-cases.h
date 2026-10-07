@@ -31,8 +31,9 @@ fence_backing_case(unsigned which)
 		gpu.fence_drv.sync_seq=INT32_MAX-1;
 		assert(virtio_gpu_object_create(&gpu,&p,&bo,NULL)==-EOVERFLOW);
 		assert(!bo && create_commands==1 && !backing_commands);
-		assert(!rw_pre && !rw_post && ids_freed==1 && resets);
+		assert(!rw_pre && !rw_post && !ids_freed && resets);
 		virtio_gpu_reset_work(&gpu.reset_work);
+		assert(ids_freed==1);
 	} else {
 	if(which==5) gpu.fence_drv.sync_seq=INT32_MAX-2;
 		bo=make_bo(which!=5);

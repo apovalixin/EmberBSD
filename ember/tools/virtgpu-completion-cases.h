@@ -85,7 +85,7 @@ static void *virtqueue_get_buf(struct netbsd_virtqueue *q,unsigned *len) {
 	memmove(used_len,used_len+1,used_count*sizeof(*used_len));
 	return b;
 }
-static void virtio_gpu_complete_transfer(struct virtio_gpu_device *d,struct virtio_gpu_vbuffer *b) {
+static void completion_callback(struct virtio_gpu_device *d,struct virtio_gpu_vbuffer *b) {
 	/* A's ordering seam only: no backing PRE/POST implementation is claimed. */
 	assert(!b->fence || !b->fence->f.signaled);
 	transfers++;
@@ -164,6 +164,7 @@ submit(int expected, bool with_array)
 	h=virtio_gpu_alloc_cmd(&device,&b,sizeof(*h)); assert(!IS_ERR(h));
 	h->type=VIRTIO_GPU_CMD_SUBMIT_3D;
 	b->data_buf=test_alloc(4); b->data_size=4;
+	b->resp_cb=completion_callback;
 	if(with_array) {
 		struct drm_file client={0};
 		uint32_t handle=1;

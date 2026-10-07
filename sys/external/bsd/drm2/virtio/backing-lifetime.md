@@ -5,8 +5,10 @@ VIRGL remains disabled. This source contract covers qualified backing and
 single-BO ATTACH_BACKING/RESOURCE_UNREF only. It does not certify encoded
 EXEC, query results, context attachment/detachment, explicit transfers,
 WAIT, console copies, or a live coherent host topology. Those gates remain
-necessary before feature-on. The current required=false 2D path retains
-its existing PREWRITE/POSTWRITE policy.
+necessary before feature-on. The subsequent
+[controlled console/legacy 2D stage](controlled-console.md) replaces the
+required=false lifetime sync with finite ATTACH and directional upload owners;
+ordinary backing still survives until acknowledged UNREF or joined reset.
 
 ## Two independent phases
 
@@ -50,7 +52,7 @@ Central finish performs the token POST before response callbacks, wait
 completion, array release, cookie release and own-fence readiness. A host
 error first completes synchronous transport reset. A local queue rejection
 has never exposed that attempt. Final map unload, ID release and GEM free
-require lease NONE/CLOSED, no members and no retirement pins.
+require lease NONE/CLOSED, no resource-retained guard, no members and no retirement pins.
 
 The DMA lock owns claims and counters, not bus_dmamap_sync or freeing.
 Reset claims one lease and a temporary raw retirement pin, performs POST

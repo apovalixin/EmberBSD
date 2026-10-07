@@ -227,7 +227,9 @@ static void virtio_gpu_fence_complete(struct virtio_gpu_fence *f, int error) { }
 #ifdef DMA_LEASE_SOURCE
 /* These unrelated contracts have no qualified backing operations. */
 static void virtio_gpu_dma_finish(struct virtio_gpu_vbuffer *b, int error) { }
+#ifndef CONTROLLED_2D_FOUNDATION
 static void virtio_gpu_complete_transfer(struct virtio_gpu_device *d, struct virtio_gpu_vbuffer *b) { }
+#endif
 #endif
 static void virtio_gpu_cancel_vbuf(void *);
 static int
