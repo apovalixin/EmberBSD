@@ -14,7 +14,7 @@ tests at night. Design and implementation proceed inline under that instruction.
 ## Hardware evidence and choices
 
 Use Allwinner A133 User Manual revision 1.1, Audio register sections 9.4.6.3,
-9.4.6.5 and 9.4.6.9. The existing sunxi_codec driver serves other SoCs and has
+9.4.6.5 and 9.4.6.8. The existing sunxi_codec driver serves other SoCs and has
 different ADC fields. Keep this A133 core separate so it cannot change those
 devices. The eventual transfer mechanism (DMA versus FIFO IRQ) remains outside
 this milestone; both can use the format and buffer geometry checks.
