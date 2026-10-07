@@ -49,12 +49,19 @@ struct virtio_gpu_device {
 };
 #define jiffies 0
 static bool virtio_gpu_submit_begin(struct virtio_gpu_device *d) {
-    if (!d->vqs_ready) return false; d->submitters++; return true;
+    if (!d->vqs_ready)
+        return false;
+    d->submitters++;
+    return true;
 }
 static void virtio_gpu_submit_done(struct virtio_gpu_device *d) {
-    assert(d->submitters == 1); d->submitters--;
+    assert(d->submitters == 1);
+    d->submitters--;
 }
-static bool virtio_gpu_fence_space(struct virtio_gpu_device *d) { (void)d; return true; }
+static bool virtio_gpu_fence_space(struct virtio_gpu_device *d) {
+    (void)d;
+    return true;
+}
 static int attempts, canceled, stops, wait_calls;
 static int planned_error, first_enospc, progress;
 static unsigned int captured_out, captured_in;
@@ -67,7 +74,10 @@ static void dma_fence_get(struct dma_fence *f) { f->refs++; }
 static void dma_fence_put(struct dma_fence *f) { assert(f->refs > 1); f->refs--; }
 static int virtio_gpu_fence_emit(struct virtio_gpu_device *v,
     struct virtio_gpu_ctrl_hdr *hdr, struct virtio_gpu_fence *f) {
-    assert(v->submit_lock.held); hdr->id = 1; dma_fence_get(&f->f); return 0;
+    assert(v->submit_lock.held);
+    hdr->id = 1;
+    dma_fence_get(&f->f);
+    return 0;
 }
 static void virtio_gpu_array_add_fence(struct virtio_gpu_object_array *a,
     struct dma_fence *f) { (void)f; assert(a->locked); }
@@ -82,8 +92,10 @@ static void virtio_gpu_stop(struct virtio_gpu_device *v, int error) {
     stops++; v->vqs_ready = false; v->submit_error = error;
 }
 static void virtio_gpu_cancel_vbuf(struct virtio_gpu_vbuffer *b) {
-    canceled++; if (b->fence) {
-        if (!b->fence->f.signaled) virtio_gpu_fence_fail(b->fence, b->error);
+    canceled++;
+    if (b->fence) {
+        if (!b->fence->f.signaled)
+            virtio_gpu_fence_fail(b->fence, b->error);
         dma_fence_put(&b->fence->f);
     }
     if (b->release) { assert(stops); b->release->alive = 0; }
@@ -260,7 +272,10 @@ static int virtio_gpu_queue_fenced_ctrl_buffer(struct virtio_gpu_device *v,
     }
     assert(!pending); pending = b; return 0;
 }
-static void virtio_gpu_fence_complete(struct virtio_gpu_fence *f, int error) { (void)f; (void)error; }
+static void virtio_gpu_fence_complete(struct virtio_gpu_fence *f, int error) {
+    (void)f;
+    (void)error;
+}
 static void virtio_gpu_wait_done(struct virtio_gpu_vbuffer *b, int error) {
     (void)b; assert(error == -ENODEV);
 }
