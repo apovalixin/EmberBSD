@@ -346,8 +346,13 @@ on every board in the hardware catalog.
 - **Reproducible builds and development:** pinned kernel/UEFI inputs and
   checked firmware assets, pkgsrc overlays, versioned source probes and
   standalone examples. The [Ports development toolchain](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/development-toolchain)
-  provides a GCC 16.2 candidate built and installed on the AArch64 VM, with
-  native C11/C++20 thread, TLS and shared-library checks passing. The full
+  provides a GCC 16.2 candidate built in the AArch64 VM and running there and
+  on physical Orange Pi Zero 3W. C11/C++20 threads, TLS and shared-library
+  checks pass. On Zero 3W, current MPFR/MPC/libxml2 and actual pkgsrc wrapper
+  compilation, package installation and loaded-runtime checks also pass;
+  see the [native validation](https://github.com/neonix20b/EmberBSD-Ports/blob/main/profiles/development-toolchain/native-validation.md).
+  The original atomic/binary128 LTO tests pass with its installed corrected libc.
+  C++ modules still require the separate allocation repair. The full
   upstream suite has exposed platform compatibility failures. An upstream
   [TSVC allocator backport](https://github.com/neonix20b/EmberBSD-Ports/blob/main/profiles/development-toolchain/testsuite-portability.md)
   passes focused native plain/LTO checks; the full suite remains unaccepted.
