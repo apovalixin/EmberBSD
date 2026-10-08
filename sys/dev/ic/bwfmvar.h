@@ -228,6 +228,11 @@ struct bwfm_softc {
 	uint32_t		 sc_sae_caps;
 	uint32_t		 sc_sae_generation;
 	uint32_t		 sc_sae_packet_id;
+	uint32_t		 sc_sae_requests;
+	uint32_t		 sc_sae_received;
+	uint32_t		 sc_sae_sent;
+	uint32_t		 sc_sae_dropped;
+	uint32_t		 sc_sae_last_flags;
 	bool			 sc_sae_enabled;
 	uint8_t			 sc_sae_bssid[IEEE80211_ADDR_LEN];
 

@@ -82,6 +82,7 @@ static void bwfm_report_cb(struct bwfm_softc *);
 static void bwfm_sae_probe(struct bwfm_softc *);
 static int bwfm_sae_ioctl(struct bwfm_softc *, u_long, struct ieee80211req *);
 static int bwfm_sae_connect(struct bwfm_softc *);
+static int bwfm_set_mfp(struct bwfm_softc *, uint32_t);
 static void bwfm_sae_event(struct bwfm_softc *, const struct bwfm_event *, size_t);
 
 int	 bwfm_chip_attach(struct bwfm_softc *);
@@ -1043,9 +1044,13 @@ bwfm_newstate_cb(struct bwfm_softc *sc, struct bwfm_cmd_newstate *cmd)
 
 	switch (nstate) {
 	case IEEE80211_S_INIT:
+		if (ostate >= IEEE80211_S_AUTH)
+			bwfm_fwvar_cmd_set_data(sc, BWFM_C_DISASSOC, NULL, 0);
 		break;
 
 	case IEEE80211_S_SCAN:
+		if (ostate >= IEEE80211_S_AUTH)
+			bwfm_fwvar_cmd_set_data(sc, BWFM_C_DISASSOC, NULL, 0);
 		if (ostate != IEEE80211_S_SCAN) {
 			/* Start of scanning */
 			bwfm_scan(sc);
@@ -1137,6 +1142,10 @@ bwfm_report_cb(struct bwfm_softc *sc)
 	printf("%s: radio state %u ifflags 0x%x pm wanted %d pending %d\n",
 	    DEVNAME(sc), ic->ic_state, sc->sc_if.if_flags, sc->sc_pm,
 	    sc->sc_setpm);
+	printf("%s: SAE enabled %u generation %u requests %u rx %u tx %u dropped %u flags 0x%x\n",
+	    DEVNAME(sc), sc->sc_sae_enabled, sc->sc_sae_generation,
+	    sc->sc_sae_requests, sc->sc_sae_received, sc->sc_sae_sent,
+	    sc->sc_sae_dropped, sc->sc_sae_last_flags);
 	if ((sc->sc_if.if_flags & IFF_RUNNING) == 0 || ic->ic_bss == NULL)
 		return;
 	error = bwfm_fwvar_cmd_get_data(sc, BWFM_C_GET_BSSID,
@@ -2303,6 +2312,8 @@ bwfm_sae_ioctl(struct bwfm_softc *sc, u_long cmd, struct ieee80211req *ireq)
 		le32enc(frame + 28, ++sc->sc_sae_packet_id);
 		memcpy(frame + 32, req->data + 24, req->len - 24);
 		error = bwfm_fwvar_var_set_data(sc, "mgmt_frame", frame, len) ? EIO : 0;
+		if (error == 0)
+			sc->sc_sae_sent++;
 		kmem_free(frame, len);
 		break;
 	case IEEE80211_SAE_SET_IGTK:
@@ -2337,6 +2348,29 @@ out:
 }
 
 static int
+bwfm_set_mfp(struct bwfm_softc *sc, uint32_t mode)
+{
+	uint32_t current = 0;
+	int error, up_error;
+
+	error = bwfm_fwvar_var_get_int(sc, "mfp", &current);
+	if (error == 0 && current == mode)
+		return 0;
+	error = bwfm_fwvar_var_set_int(sc, "mfp", mode);
+	if (error == -5) { /* BCME_NOTDOWN: mode changes require the radio down. */
+		if (bwfm_fwvar_cmd_set_int(sc, BWFM_C_DOWN, 1))
+			return EIO;
+		error = bwfm_fwvar_var_set_int(sc, "mfp", mode);
+		up_error = bwfm_fwvar_cmd_set_int(sc, BWFM_C_UP, 1);
+		if (up_error)
+			return EIO;
+	}
+	if (error || bwfm_fwvar_var_get_int(sc, "mfp", &current) || current != mode)
+		return EIO;
+	return 0;
+}
+
+static int
 bwfm_sae_connect(struct bwfm_softc *sc)
 {
 	static const struct {
@@ -2346,7 +2380,6 @@ bwfm_sae_connect(struct bwfm_softc *sc)
 		{ "sup_wpa", 0 },
 		{ "auth", BWFM_AUTH_SAE },
 		{ "wsec", BWFM_WSEC_AES },
-		{ "mfp", BWFM_MFP_REQUIRED },
 		{ "wpa_auth", BWFM_WPA_AUTH_SAE }
 	};
 	struct ieee80211com *ic = &sc->sc_ic;
@@ -2358,6 +2391,10 @@ bwfm_sae_connect(struct bwfm_softc *sc)
 		printf("%s: SAE requires CCMP, required PMF and the selected peer\n",
 		    DEVNAME(sc));
 		return EINVAL;
+	}
+	if (bwfm_set_mfp(sc, BWFM_MFP_REQUIRED)) {
+		printf("%s: SAE required PMF setup failed\n", DEVNAME(sc));
+		return EIO;
 	}
 	error = bwfm_fwvar_var_set_data(sc, "wpaie", ic->ic_opt_ie, ic->ic_opt_ie_len);
 	if (error) {
@@ -2386,6 +2423,11 @@ bwfm_sae_event(struct bwfm_softc *sc, const struct bwfm_event *event, size_t len
 	uint32_t type = ntohl(event->msg.event_type);
 	size_t size;
 
+	if (type == BWFM_E_EXT_AUTH_REQ)
+		sc->sc_sae_requests++;
+	else
+		sc->sc_sae_received++;
+	sc->sc_sae_dropped++;
 	if (!sc->sc_sae_enabled || ic->ic_state != IEEE80211_S_AUTH ||
 	    len < sizeof(*event) || ntohl(event->msg.datalen) > len - sizeof(*event))
 		return;
@@ -2395,6 +2437,8 @@ bwfm_sae_event(struct bwfm_softc *sc, const struct bwfm_event *event, size_t len
 	req->generation = sc->sc_sae_generation;
 	memcpy(req->bssid, sc->sc_sae_bssid, 6);
 	if (type == BWFM_E_EXT_AUTH_REQ) {
+		if (size >= 2)
+			sc->sc_sae_last_flags = le16dec(data);
 		if (size < 60 || le16dec(data) != 1 || le32dec(data + 8) > 32 ||
 		    !IEEE80211_ADDR_EQ(data + 2, req->bssid) ||
 		    le32dec(data + 8) != ic->ic_bss->ni_esslen ||
@@ -2418,6 +2462,7 @@ bwfm_sae_event(struct bwfm_softc *sc, const struct bwfm_event *event, size_t len
 		if (le16dec(req->data + 24) != 3)
 			goto out;
 	}
+	sc->sc_sae_dropped--;
 	rt_ieee80211msg(ic->ic_ifp, RTM_IEEE80211_SAE, req,
 	    offsetof(struct ieee80211req_sae, data) + req->len);
 out:
@@ -2431,6 +2476,12 @@ bwfm_connect(struct bwfm_softc *sc)
 	struct ieee80211_node *ni = ic->ic_bss;
 	struct bwfm_ext_join_params *params;
 
+	if (!sc->sc_sae_enabled && sc->sc_sae_caps != 0 &&
+	    bwfm_set_mfp(sc, BWFM_MFP_NONE)) {
+		printf("%s: could not reset PMF for legacy association\n", DEVNAME(sc));
+		ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
+		return;
+	}
 	if (sc->sc_sae_enabled) {
 		if (bwfm_sae_connect(sc) != 0) {
 			printf("%s: external SAE security setup failed\n", DEVNAME(sc));
@@ -2464,7 +2515,8 @@ bwfm_connect(struct bwfm_softc *sc)
 
 	if (!sc->sc_sae_enabled) {
 		bwfm_fwvar_var_set_int(sc, "auth", BWFM_AUTH_OPEN);
-		bwfm_fwvar_var_set_int(sc, "mfp", BWFM_MFP_NONE);
+		if (sc->sc_sae_caps == 0)
+			bwfm_fwvar_var_set_int(sc, "mfp", BWFM_MFP_NONE);
 	}
 
 	if (ni->ni_esslen && ni->ni_esslen < BWFM_MAX_SSID_LEN) {
