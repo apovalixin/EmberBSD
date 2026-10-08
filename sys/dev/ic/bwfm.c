@@ -2439,7 +2439,8 @@ bwfm_sae_event(struct bwfm_softc *sc, const struct bwfm_event *event, size_t len
 	if (type == BWFM_E_EXT_AUTH_REQ) {
 		if (size >= 2)
 			sc->sc_sae_last_flags = le16dec(data);
-		if (size < 60 || le16dec(data) != 1 || le32dec(data + 8) > 32 ||
+		/* The event type starts auth; CYW43455 leaves request flags zero. */
+		if (size < 60 || le32dec(data + 8) > 32 ||
 		    !IEEE80211_ADDR_EQ(data + 2, req->bssid) ||
 		    le32dec(data + 8) != ic->ic_bss->ni_esslen ||
 		    memcmp(data + 12, ic->ic_bss->ni_essid, ic->ic_bss->ni_esslen) != 0)
