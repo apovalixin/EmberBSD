@@ -4,6 +4,13 @@
 #define _DEV_SDMMC_IF_AICWF_SAE_H_
 
 static inline bool
+aicwf_sae_peer_valid(const uint8_t *peer, uint32_t generation)
+{
+	return generation != 0 && (peer[0] & 1) == 0 &&
+	    (peer[0] | peer[1] | peer[2] | peer[3] | peer[4] | peer[5]) != 0;
+}
+
+static inline bool
 aicwf_sae_request_valid(const uint8_t *p, size_t len, uint8_t vif,
     const uint8_t *peer, const uint8_t *ssid, size_t ssid_len)
 {

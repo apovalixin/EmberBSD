@@ -27,6 +27,12 @@ main(void)
 	uint8_t ind[44] = {0}, frame[1537] = {0}, key[24] = {4};
 	size_t n;
 
+	check(aicwf_sae_peer_valid(peer, 1), "unicast peer and generation");
+	check(!aicwf_sae_peer_valid(peer, 0), "zero generation");
+	check(!aicwf_sae_peer_valid(frame, 1), "zero peer with valid generation");
+	frame[0] = 1;
+	check(!aicwf_sae_peer_valid(frame, 1), "multicast peer");
+	frame[0] = 0;
 	ind[0] = 1;
 	ind[1] = sizeof(ssid) - 1;
 	memcpy(ind + 2, ssid, sizeof(ssid) - 1);

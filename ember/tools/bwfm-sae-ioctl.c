@@ -73,6 +73,17 @@ main(int argc, char **argv)
 	req.data[0] = 1;
 	check(ioctl(fd, SIOCS80211, &ireq) == -1 && errno == EINVAL,
 	    "zero generation and peer");
+	req.generation = 1;
+	check(ioctl(fd, SIOCS80211, &ireq) == -1 && errno == EINVAL,
+	    "zero peer with nonzero generation");
+	req.bssid[0] = 1;
+	check(ioctl(fd, SIOCS80211, &ireq) == -1 && errno == EINVAL,
+	    "multicast peer");
+	req.bssid[0] = 2;
+	req.generation = 0;
+	check(ioctl(fd, SIOCS80211, &ireq) == -1 && errno == EINVAL,
+	    "zero generation with unicast peer");
+	memset(req.bssid, 0, sizeof(req.bssid));
 	req.data[0] = 0;
 	check(ioctl(fd, SIOCS80211, &ireq) == 0, "disable SAE");
 	req.op = IEEE80211_SAE_AUTH_STATUS;

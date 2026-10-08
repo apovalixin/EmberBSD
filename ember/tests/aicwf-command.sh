@@ -27,15 +27,15 @@ cat > "$work/check.c" <<'C'
 #define explicit_memset memset
 struct aicwf_softc {
     uint8_t sc_txbuf[2048], sc_cfm[1032];
-    int sc_lock, sc_cv;
+    int sc_lock, sc_cv; uint64_t sc_sae_epoch;
     bool sc_cmd_busy, sc_cfm_done;
     uint16_t sc_cfm_len, sc_cfm_id;
 };
-static int write_error, reply_len;
+static int write_error, reply_len, writes; static struct aicwf_softc *waiting;
 static int mutex_owned(int *p) { return *p; }
 static void mutex_enter(int *p) { assert(!*p); *p = 1; }
 static void mutex_exit(int *p) { assert(*p); *p = 0; }
-static void cv_wait(int *cv, int *lock) { (void)cv; (void)lock; assert(0); }
+static void cv_wait(int *cv, int *lock) { (void)cv; assert(*lock); assert(waiting); waiting->sc_sae_epoch++; waiting->sc_cmd_busy = false; }
 static int cv_timedwait(int *cv, int *lock, int ticks)
 { (void)cv; (void)lock; assert(ticks == 2000); return ETIMEDOUT; }
 static void cv_broadcast(int *cv) { (void)cv; }
@@ -47,7 +47,7 @@ static uint8_t aicwf_crc8(const void *p, size_t n)
 static int aicwf_write(struct aicwf_softc *sc, size_t len, unsigned reserve)
 {
     assert(mutex_owned(&sc->sc_lock));
-    assert(len == 20 && reserve == 0);
+    assert(len == 20 && reserve == 0); writes++;
     sc->sc_cfm_done = reply_len >= 0;
     sc->sc_cfm_len = reply_len >= 0 ? reply_len : 0;
     memset(sc->sc_cfm, 0, sizeof(sc->sc_cfm));
@@ -63,7 +63,7 @@ static void check(bool strict, int len, int transport_error, int expected)
     reply_len = len;
     write_error = transport_error;
     assert(aicwf_cmd_reply(&sc, 0x24, secret, 4, 0x25,
-        reply, sizeof(reply), strict) == expected);
+        reply, sizeof(reply), strict, 0) == expected);
     assert(!sc.sc_cmd_busy && sc.sc_cfm_id == 0 && sc.sc_lock == 0);
     if (strict)
         assert(memcmp(sc.sc_txbuf + 16, "\0\0\0\0", 4) == 0);
@@ -82,7 +82,19 @@ int main(void)
     check(true, -1, 0, ETIMEDOUT);
     check(true, 4, EIO, EIO);
     check(false, 1, 0, 0);
-    puts("PASS: 8 command reply, failure cleanup and buffer erasure cases");
+    struct aicwf_softc sc = {.sc_sae_epoch = 17, .sc_cmd_busy = true};
+    const uint8_t param[4] = {0};
+    waiting = &sc;
+    writes = 0;
+    assert(aicwf_cmd_reply(&sc, 0x24, param, 4, 0x25,
+        NULL, 0, true, 17) == ESTALE);
+    assert(writes == 0 && sc.sc_lock == 0 && !sc.sc_cmd_busy);
+    reply_len = 0;
+    assert(aicwf_cmd_reply(&sc, 0x24, param, 4, 0x25,
+        NULL, 0, true, 18) == 0);
+    assert(writes == 1 && sc.sc_lock == 0 && !sc.sc_cmd_busy);
+    puts("PASS: 10 command reply, lifetime, cleanup and erasure cases");
+
     return 0;
 }
 C

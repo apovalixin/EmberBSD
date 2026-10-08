@@ -423,6 +423,7 @@ struct aicwf_softc {
 	bool			sc_sae_pending;
 	bool			sc_sae_authenticated;
 	uint32_t		sc_sae_generation;
+	uint64_t		sc_sae_epoch;	/* changes on every join/leave */
 	uint8_t			sc_sae_bssid[ETHER_ADDR_LEN];
 	uint8_t			sc_igtk[2];
 	struct evcnt		sc_ev_sae_start;
@@ -556,7 +557,8 @@ aicwf_write(struct aicwf_softc *sc, size_t len, u_int reserve)
  */
 static int
 aicwf_cmd_reply(struct aicwf_softc *sc, uint16_t id, const void *param,
-    size_t param_len, uint16_t cfm_id, void *cfm, size_t cfm_len, bool strict)
+    size_t param_len, uint16_t cfm_id, void *cfm, size_t cfm_len, bool strict,
+    uint64_t epoch)
 {
 	uint8_t * const buf = sc->sc_txbuf;
 	size_t len;
@@ -567,6 +569,11 @@ aicwf_cmd_reply(struct aicwf_softc *sc, uint16_t id, const void *param,
 	mutex_enter(&sc->sc_lock);
 	while (sc->sc_cmd_busy)
 		cv_wait(&sc->sc_cv, &sc->sc_lock);
+	/* The caller may have retired while waiting for another command. */
+	if (epoch != 0 && epoch != sc->sc_sae_epoch) {
+		mutex_exit(&sc->sc_lock);
+		return ESTALE;
+	}
 	sc->sc_cmd_busy = true;
 
 	len = AICWF_TX_MSG_OFFSET + AICWF_MSG_HDR_LEN + param_len;
@@ -614,7 +621,7 @@ aicwf_cmd(struct aicwf_softc *sc, uint16_t id, const void *param,
     size_t param_len, uint16_t cfm_id, void *cfm, size_t cfm_len)
 {
 	return aicwf_cmd_reply(sc, id, param, param_len, cfm_id, cfm,
-	    cfm_len, false);
+	    cfm_len, false, 0);
 }
 
 static void
@@ -1309,6 +1316,16 @@ aicwf_scan_done(struct aicwf_softc *sc)
 	splx(s);
 }
 
+/* Serialize retirement with the final check and write of a bound command. */
+static void
+aicwf_sae_advance(struct aicwf_softc *sc)
+{
+	mutex_enter(&sc->sc_lock);
+	if (++sc->sc_sae_epoch == 0)
+		sc->sc_sae_epoch++;
+	mutex_exit(&sc->sc_lock);
+}
+
 /*
  * Firmware protocol references: Radxa's AIC8800 SDIO driver, revision
  * d13d07963cd15d731e2895e8288a04cca6152ac9, lmac_msg.h and rwnx_tx.c.
@@ -1335,8 +1352,6 @@ aicwf_sae_event(struct aicwf_softc *sc, bool start, const uint8_t *data,
 		    sc->sc_sae_bssid, ic->ic_bss->ni_essid,
 		    ic->ic_bss->ni_esslen))
 			return;
-		sc->sc_sae_pending = true;
-		sc->sc_ev_sae_start.ev_count++;
 		len = data[1];
 		data += 2;
 	} else {
@@ -1344,9 +1359,17 @@ aicwf_sae_event(struct aicwf_softc *sc, bool start, const uint8_t *data,
 		    !aicwf_sae_frame_valid(data, len, ic->ic_myaddr,
 		    sc->sc_sae_bssid, sc->sc_sae_bssid))
 			return;
+	}
+	/* Do not relabel a checked event after sleeping through a new join. */
+	req = kmem_zalloc(sizeof(*req), KM_NOSLEEP);
+	if (req == NULL)
+		return;
+	if (start) {
+		sc->sc_sae_pending = true;
+		sc->sc_ev_sae_start.ev_count++;
+	} else {
 		sc->sc_ev_sae_rx.ev_count++;
 	}
-	req = kmem_zalloc(sizeof(*req), KM_SLEEP);
 	req->version = IEEE80211_SAE_VERSION;
 	req->generation = sc->sc_sae_generation;
 	req->op = start ? IEEE80211_SAE_START : IEEE80211_SAE_RX_FRAME;
@@ -1360,13 +1383,18 @@ aicwf_sae_event(struct aicwf_softc *sc, bool start, const uint8_t *data,
 }
 
 static int
-aicwf_sae_tx(struct aicwf_softc *sc, const uint8_t *frame, size_t len)
+aicwf_sae_tx(struct aicwf_softc *sc, const uint8_t *frame, size_t len,
+    uint64_t epoch)
 {
 	uint8_t * const buf = sc->sc_txbuf;
 	uint8_t * const desc = buf + AICWF_HDR_LEN;
 	int error;
 
 	mutex_enter(&sc->sc_lock);
+	if (epoch != sc->sc_sae_epoch) {
+		mutex_exit(&sc->sc_lock);
+		return ESTALE;
+	}
 	le16enc(buf, AICWF_TXDESC_LEN + len);
 	buf[2] = AICWF_TYPE_DATA;
 	buf[3] = aicwf_crc8(buf, 3);
@@ -1388,12 +1416,24 @@ aicwf_sae_tx(struct aicwf_softc *sc, const uint8_t *frame, size_t len)
 	return error;
 }
 
+/* A command can sleep while a disconnect retires the current join. */
+static bool
+aicwf_sae_current(struct aicwf_softc *sc, const struct ieee80211req_sae *req,
+    uint64_t epoch)
+{
+	return sc->sc_sae_enabled && sc->sc_sae_epoch == epoch &&
+	    req->generation == sc->sc_sae_generation &&
+	    IEEE80211_ADDR_EQ(req->bssid, sc->sc_sae_bssid) &&
+	    IEEE80211_ADDR_EQ(req->bssid, sc->sc_ic.ic_bss->ni_bssid);
+}
+
 static int
 aicwf_sae_ioctl(struct aicwf_softc *sc, u_long cmd, struct ieee80211req *ireq)
 {
 	struct ieee80211com * const ic = &sc->sc_ic;
 	struct ieee80211req_sae *req;
-	uint8_t wire[44], cfm[4] = { 0xff };
+	uint8_t wire[44], cfm[2] = { 0xff };
+	uint64_t epoch;
 	uint16_t index;
 	int error;
 
@@ -1421,15 +1461,15 @@ aicwf_sae_ioctl(struct aicwf_softc *sc, u_long cmd, struct ieee80211req *ireq)
 		goto out;
 	if (req->op == IEEE80211_SAE_CONFIGURE) {
 		if (req->len != 1 || req->data[0] > 1 ||
-		    (req->data[0] && (req->generation == 0 ||
-		    IEEE80211_IS_MULTICAST(req->bssid) ||
-		    memcmp(req->bssid, "/* Ask the firmware to join the network net80211 has chosen. *//* Ask the firmware to join the network net80211 has chosen. *//* Ask the firmware to join the network net80211 has chosen. *//* Ask the firmware to join the network net80211 has chosen. *//* Ask the firmware to join the network net80211 has chosen. *//* Ask the firmware to join the network net80211 has chosen. */", 6) == 0)))
+		    (req->data[0] &&
+		    !aicwf_sae_peer_valid(req->bssid, req->generation)))
 			goto out;
 		if (req->data[0] && (sc->sc_sae_caps == 0 ||
 		    ic->ic_opmode != IEEE80211_M_STA)) {
 			error = EOPNOTSUPP;
 			goto out;
 		}
+		aicwf_sae_advance(sc);
 		sc->sc_sae_enabled = req->data[0] != 0;
 		sc->sc_sae_pending = false;
 		sc->sc_sae_authenticated = false;
@@ -1444,6 +1484,7 @@ aicwf_sae_ioctl(struct aicwf_softc *sc, u_long cmd, struct ieee80211req *ireq)
 		error = ESTALE;
 		goto out;
 	}
+	epoch = sc->sc_sae_epoch;
 	memset(wire, 0, sizeof(wire));
 	switch (req->op) {
 	case IEEE80211_SAE_AUTH_STATUS:
@@ -1456,8 +1497,10 @@ aicwf_sae_ioctl(struct aicwf_softc *sc, u_long cmd, struct ieee80211req *ireq)
 		sc->sc_sae_pending = false;
 		sc->sc_sae_authenticated = le16dec(req->data) == 0;
 		error = aicwf_cmd_reply(sc, AICWF_SM_EXTERNAL_AUTH_RSP, wire, 4,
-		    AICWF_SM_EXTERNAL_AUTH_CFM, NULL, 0, true);
-		if (error != 0)
+		    AICWF_SM_EXTERNAL_AUTH_CFM, NULL, 0, true, epoch);
+		if (!aicwf_sae_current(sc, req, epoch))
+			error = ESTALE;
+		else if (error != 0)
 			sc->sc_sae_authenticated = false;
 		break;
 	case IEEE80211_SAE_TX_FRAME:
@@ -1466,7 +1509,7 @@ aicwf_sae_ioctl(struct aicwf_softc *sc, u_long cmd, struct ieee80211req *ireq)
 		    !aicwf_sae_frame_valid(req->data, req->len, req->bssid,
 		    ic->ic_myaddr, req->bssid))
 			break;
-		error = aicwf_sae_tx(sc, req->data, req->len);
+		error = aicwf_sae_tx(sc, req->data, req->len, epoch);
 		break;
 	case IEEE80211_SAE_SET_IGTK:
 	case IEEE80211_SAE_DELETE_IGTK:
@@ -1482,8 +1525,11 @@ aicwf_sae_ioctl(struct aicwf_softc *sc, u_long cmd, struct ieee80211req *ireq)
 			}
 			wire[0] = sc->sc_igtk[index - 4];
 			error = aicwf_cmd_reply(sc, AICWF_MM_KEY_DEL_REQ, wire, 1,
-			    AICWF_MM_KEY_DEL_CFM, NULL, 0, true);
-			if (error == 0)
+			    AICWF_MM_KEY_DEL_CFM, NULL, 0, true, epoch);
+			if (!aicwf_sae_current(sc, req, epoch) ||
+			    sc->sc_igtk[index - 4] != wire[0])
+				error = ESTALE;
+			else if (error == 0)
 				sc->sc_igtk[index - 4] = AICWF_HWKEY_NONE;
 			break;
 		}
@@ -1502,7 +1548,11 @@ aicwf_sae_ioctl(struct aicwf_softc *sc, u_long cmd, struct ieee80211req *ireq)
 		wire[40] = AICWF_CIPHER_BIP;
 		wire[41] = sc->sc_vif;
 		error = aicwf_cmd_reply(sc, AICWF_MM_KEY_ADD_REQ, wire, sizeof(wire),
-		    AICWF_MM_KEY_ADD_CFM, cfm, sizeof(cfm), true);
+		    AICWF_MM_KEY_ADD_CFM, cfm, sizeof(cfm), true, epoch);
+		if (!aicwf_sae_current(sc, req, epoch) ||
+		    !sc->sc_connected || !sc->sc_sae_authenticated ||
+		    ic->ic_state != IEEE80211_S_RUN)
+			error = ESTALE;
 		if (error == 0 && cfm[0] != 0)
 			error = EIO;
 		if (error == 0)
@@ -1558,11 +1608,13 @@ aicwf_connect(struct aicwf_softc *sc)
 	req[59] = sc->sc_sae_enabled ? AICWF_AUTH_SAE : IEEE80211_AUTH_ALG_OPEN;
 	req[61] = sc->sc_vif;
 
+	aicwf_sae_advance(sc);
 	sc->sc_sae_pending = false;
 	sc->sc_sae_authenticated = false;
 	sc->sc_connecting = true;
+	const uint64_t epoch = sc->sc_sae_epoch;
 	error = aicwf_cmd_reply(sc, AICWF_SM_CONNECT_REQ, req, sizeof(req),
-	    AICWF_SM_CONNECT_CFM, cfm, sizeof(cfm), true);
+	    AICWF_SM_CONNECT_CFM, cfm, sizeof(cfm), true, epoch);
 	if (error != 0 || cfm[0] != 0) {
 		/* net80211 times the join out and scans again. */
 		device_printf(sc->sc_dev, "connect request failed: %d, %u\n",
@@ -1626,6 +1678,7 @@ aicwf_disconnect_ind(struct aicwf_softc *sc)
 
 	if (!sc->sc_if_attached || !sc->sc_connected)
 		return;
+	aicwf_sae_advance(sc);
 	sc->sc_connected = false;
 	sc->sc_sae_pending = false;
 	sc->sc_sae_authenticated = false;
@@ -1642,14 +1695,20 @@ aicwf_disconnect_ind(struct aicwf_softc *sc)
 static void
 aicwf_sae_clear_keys(struct aicwf_softc *sc)
 {
+	const uint64_t epoch = sc->sc_sae_epoch;
+	uint8_t key;
 	unsigned i;
 
 	for (i = 0; i < __arraycount(sc->sc_igtk); i++) {
 		if (sc->sc_igtk[i] == AICWF_HWKEY_NONE)
 			continue;
+		key = sc->sc_igtk[i];
 		(void)aicwf_cmd_reply(sc, AICWF_MM_KEY_DEL_REQ,
-		    &sc->sc_igtk[i], 1, AICWF_MM_KEY_DEL_CFM, NULL, 0, true);
-		sc->sc_igtk[i] = AICWF_HWKEY_NONE;
+		    &key, 1, AICWF_MM_KEY_DEL_CFM, NULL, 0, true, epoch);
+		if (epoch != sc->sc_sae_epoch)
+			return;
+		if (sc->sc_igtk[i] == key)
+			sc->sc_igtk[i] = AICWF_HWKEY_NONE;
 	}
 }
 
@@ -1658,9 +1717,13 @@ aicwf_disconnect(struct aicwf_softc *sc)
 {
 	uint8_t req[4];
 
+	aicwf_sae_advance(sc);
+
 	sc->sc_sae_pending = false;
 	sc->sc_sae_authenticated = false;
 	aicwf_sae_clear_keys(sc);
+	/* CONNECT shares this workqueue; a new CONFIGURE cannot cancel leave. */
+	memset(sc->sc_igtk, AICWF_HWKEY_NONE, sizeof(sc->sc_igtk));
 	if (!sc->sc_connected && !sc->sc_connecting)
 		return;
 	sc->sc_connected = false;
