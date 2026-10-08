@@ -304,7 +304,9 @@ on every board in the hardware catalog.
   Revision nb2 corrects XCB pkg-config requirements with byte-identical Mesa
   libraries. Its first migrated consumer, [libepoxy 1.5.10nb2](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/epoxy.md),
   passes four real dispatch/pixel lifecycles and four pure upstream tests
-  against the installed providers. The package includes X11/Wayland,
+  against the installed providers. The common [LLVM23.1.2nb1 update](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/mesa-runtime-rebind.md)
+  also passes renewed Mesa and libepoxy rendering checks on Zero 3W,
+  without rebuilding those libraries. The package includes X11/Wayland,
   EGL/GLES/GL and GBM. The same providers pass four guarded
   [GBM/PRIME/EGLImage pixel lifecycles](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/gbm.md)
   through native VirtGPU buffers in an isolated AArch64 VM, using llvmpipe.
