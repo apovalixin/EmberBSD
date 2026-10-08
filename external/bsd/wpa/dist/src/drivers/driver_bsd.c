@@ -70,7 +70,7 @@ struct bsd_driver_data {
 	int	prev_roaming;	/* roaming state to restore on deinit */
 	int	prev_privacy;	/* privacy state to restore on deinit */
 	int	prev_wpa;	/* wpa state to restore on deinit */
-#ifdef IEEE80211_IOC_SAE
+#if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE)
 	u32 sae_generation;
 	u8 sae_bssid[ETH_ALEN];
 	int sae_active;
@@ -266,7 +266,7 @@ bsd_set_mediaopt(void *priv, uint32_t mask, uint32_t mode)
 	return 0;
 }
 
-#ifdef IEEE80211_IOC_SAE
+#if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE)
 static int
 bsd_sae_request(struct bsd_driver_data *drv, u16 op, const void *data, size_t len)
 {
@@ -322,7 +322,7 @@ static int
 bsd_del_key(void *priv, const u8 *addr, int key_idx)
 {
 	struct ieee80211req_del_key wk;
-#ifdef IEEE80211_IOC_SAE
+#if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE)
 	struct bsd_driver_data *drv = priv;
 	if (key_idx == 4 || key_idx == 5) {
 		u8 index[2];
@@ -408,7 +408,7 @@ bsd_set_key(void *priv, struct wpa_driver_set_key_params *params)
 			return bsd_del_key(priv, addr, key_idx);
 	}
 
-#ifdef IEEE80211_IOC_SAE
+#if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE)
 	if (alg == WPA_ALG_BIP_CMAC_128) {
 		struct bsd_driver_data *sae_drv = priv;
 		u8 material[24];
@@ -852,7 +852,7 @@ bsd_wireless_event_receive(int sock, void *ctx, void *sock_ctx)
 		if (drv == NULL)
 			return;
 		switch (ifan->ifan_what) {
-#ifdef IEEE80211_IOC_SAE
+#if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE)
 		case RTM_IEEE80211_SAE: {
 			const struct ieee80211req_sae *req = (const void *)(ifan + 1);
 			size_t hdr = sizeof(*ifan) + offsetof(struct ieee80211req_sae, data);
@@ -1387,7 +1387,7 @@ wpa_driver_bsd_associate(void *priv, struct wpa_driver_associate_params *params)
 			  params->wpa_ie[0] == WLAN_EID_RSN ? 2 : 1) < 0)
 		return -1;
 
-#ifdef IEEE80211_IOC_SAE
+#if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE)
 	if (drv->capa.key_mgmt & WPA_DRIVER_CAPA_KEY_MGMT_SAE) {
 		u8 enabled = params->key_mgmt_suite == WPA_KEY_MGMT_SAE;
 
@@ -1664,7 +1664,7 @@ static int wpa_driver_bsd_capa(struct bsd_driver_data *drv)
 #else /* IEEE80211_IOC_SCAN_MAX_SSID */
 	drv->capa.max_scan_ssids = 1;
 #endif /* IEEE80211_IOC_SCAN_MAX_SSID */
-#ifdef IEEE80211_IOC_SAE
+#if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE)
 	{
 		struct ieee80211req req;
 		os_memset(&req, 0, sizeof(req));
@@ -1913,7 +1913,7 @@ const struct wpa_driver_ops wpa_driver_bsd_ops = {
 	.deauthenticate		= wpa_driver_bsd_deauthenticate,
 	.associate		= wpa_driver_bsd_associate,
 	.get_capa		= wpa_driver_bsd_get_capa,
-#ifdef IEEE80211_IOC_SAE
+#if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE)
 	.send_mlme = bsd_sae_send_mlme,
 	.send_external_auth_status = bsd_sae_auth_status,
 #endif
