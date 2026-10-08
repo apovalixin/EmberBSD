@@ -47,6 +47,7 @@
 #include <dev/ic/bwfmreg.h>
 #include <dev/ic/bwfmvar.h>
 #include <dev/ic/bwfm_sae.h>
+#include <dev/ic/bwfm_scan.h>
 
 /* #define BWFM_DEBUG */
 #ifdef BWFM_DEBUG
@@ -2793,7 +2794,8 @@ bwfm_scan_node(struct bwfm_softc *sc, struct bwfm_bss_info *bss, size_t len)
 	scan.sp_tstamp  = (uint8_t *)&tsf;
 	scan.sp_bintval = le16toh(bss->beacon_period);
 	scan.sp_capinfo = le16toh(bss->capability);
-	scan.sp_bchan   = ieee80211_chan2ieee(ic, ic->ic_curchan);
+	scan.sp_bchan   = bwfm_scan_channel(bss->ctl_ch,
+	    le16toh(bss->chanspec), sc->sc_io_type);
 	scan.sp_chan    = scan.sp_bchan;
 	scan.sp_rates   = rates;
 	scan.sp_ssid    = ssid;
@@ -2860,7 +2862,14 @@ bwfm_scan_node(struct bwfm_softc *sc, struct bwfm_bss_info *bss, size_t len)
 			break;
 	}
 
+	if (scan.sp_chan == 0 ||
+	    scan.sp_chan >= __arraycount(ic->ic_channels) ||
+	    ic->ic_channels[scan.sp_chan].ic_freq == 0) {
+		ic->ic_stats.is_rx_badchan++;
+		return;
+	}
+
 	if (ic->ic_flags & IEEE80211_F_SCAN)
 		ieee80211_add_scan(ic, &scan, &wh, IEEE80211_FC0_SUBTYPE_BEACON,
-		    le32toh(bss->rssi), 0);
+		    bwfm_scan_rssi((int16_t)le16toh(bss->rssi)), 0);
 }

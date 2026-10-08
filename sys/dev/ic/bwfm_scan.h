@@ -1,0 +1,72 @@
+/* SPDX-License-Identifier: BSD-2-Clause */
+/* Firmware scan metadata. Include bwfmreg.h before this header. */
+#ifndef _DEV_IC_BWFM_SCAN_H_
+#define _DEV_IC_BWFM_SCAN_H_
+
+/* Decode the primary 20 MHz channel, never the current host scan channel. */
+static inline unsigned int
+bwfm_scan_channel(uint8_t control, uint16_t spec, unsigned int version)
+{
+	int channel = spec & BWFM_CHANSPEC_CHAN_MASK;
+	unsigned int sideband;
+
+	if (control != 0)
+		return control;
+	if (version == 1) {
+		switch (spec & BWFM_CHANSPEC_D11N_BW_MASK) {
+		case BWFM_CHANSPEC_D11N_BW_20:
+			break;
+		case BWFM_CHANSPEC_D11N_BW_40:
+			switch (spec & BWFM_CHANSPEC_D11N_SB_MASK) {
+			case BWFM_CHANSPEC_D11N_SB_L:
+				channel -= 2;
+				break;
+			case BWFM_CHANSPEC_D11N_SB_U:
+				channel += 2;
+				break;
+			default:
+				return 0;
+			}
+			break;
+		default:
+			return 0;
+		}
+	} else if (version == 2) {
+		sideband = (spec & BWFM_CHANSPEC_D11AC_SB_MASK) >>
+		    BWFM_CHANSPEC_D11AC_SB_SHIFT;
+		switch (spec & BWFM_CHANSPEC_D11AC_BW_MASK) {
+		case BWFM_CHANSPEC_D11AC_BW_20:
+			if (sideband != 0)
+				return 0;
+			break;
+		case BWFM_CHANSPEC_D11AC_BW_40:
+			if (sideband > 1)
+				return 0;
+			channel += (int)sideband * 4 - 2;
+			break;
+		case BWFM_CHANSPEC_D11AC_BW_80:
+			if (sideband > 3)
+				return 0;
+			channel += (int)sideband * 4 - 6;
+			break;
+		case BWFM_CHANSPEC_D11AC_BW_160:
+			channel += (int)sideband * 4 - 14;
+			break;
+		default:
+			return 0;
+		}
+	} else {
+		return 0;
+	}
+	return channel > 0 && channel <= 255 ? (unsigned int)channel : 0;
+}
+
+/* NetBSD's legacy scan ABI carries unsigned quality, not signed dBm. */
+static inline unsigned int
+bwfm_scan_rssi(int16_t dbm)
+{
+	int quality = dbm + 100;
+
+	return quality < 1 ? 1 : quality > 100 ? 100 : (unsigned int)quality;
+}
+#endif
