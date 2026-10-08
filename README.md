@@ -319,8 +319,11 @@ on every board in the hardware catalog.
   invocations pass. Input events, VT switching, application surfaces and a
   complete accelerated Wayland session remain unverified.
   Ports also [cross-builds current text/image dependencies](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/labwc-dependencies.md),
-  including GLib 2.90.1, HarfBuzz 14.6.0 and Cairo 1.18.6, with normal package
-  checks. Target text rendering, Pango/labwc and full SVG remain unaccepted.
+  including GLib 2.90.1, Pango 1.58.2, HarfBuzz 14.6.0 and Cairo 1.18.6, with
+  normal package checks. Four installed AArch64 VM cycles pass exact font
+  selection, text shaping, CPU rasterization and PNG roundtrip; two causal
+  controls detect missing drawing and ligatures. labwc client surfaces and
+  full SVG remain unaccepted.
   A Ports
   [host-side VirGL 1.3.0 adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/utm-virgl-host)
   preserves the upstream IOV-size correction and prevents resource publication
