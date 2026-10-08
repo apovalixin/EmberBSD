@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
-**Goal:** Build the A133 audio(4) driver with silent default routes and stage its kernel without disturbing kernel#7.
+**Goal:** Build the A133 audio(4) driver with silent default routes, verify unattended recovery and install its kernel with a complete boot-partition backup.
 
 **Architecture:** Separate portable hardware/FIFO operations from the NetBSD adapter. Keep existing non-A133 codecs unchanged. Explicit mixer routes prepare the clock/analog lease; attachment and read-only queries have no register effects.
 
@@ -69,9 +69,18 @@
 - [x] Add a native compilation gate against the real audio API and a production-adapter guard/format contract. Initial native compilation failed on the mono constant and missing kpause declaration before source corrections.
 - [x] Implement adapter with thread/interrupt locks, single-owner register mappings, staged prepare/IRQ unwind, allocation bounds, default denied streams, IRQ budgets, XRUN counters and child-first detach.
 - [x] Build a clean pinned commit natively as `EMBER64_A133_AUDIO`; run the seven portable A133/Goodix contracts and adapter gate. Expected: kernel ELF/image and contracts succeed; runtime hardware not claimed.
-- [x] Package kernel image in private Android boot container using the original DTB and empty ramdisk; inspect header, size and hash. Expected: bounded valid container, no eMMC writes.
+- [x] Package kernel image in a private Android boot container using the retained DTB payload and empty ramdisk; inspect header, size and hash before eMMC writes.
 - [x] Update docs with exact source/build level and pending physical acceptance; commit `feat(audio): integrate guarded A133 audio interface`.
 
 ## Finish
 
 Independent read-only review; fix important issues with regressions and repeat affected gates. Keep the source branch/worktree and staged private artifact. Do not ask nighttime acoustic questions or deploy an unverified kernel with unavailable automatic recovery.
+
+## Physical default-off deployment
+
+- [x] Verify UART in both directions and automatic U-Boot countdown interception after software reboot.
+- [x] Test the reviewed container from RAM, copying to 0x45000000 before boot to avoid kernel relocation overlap.
+- [x] Back up the entire inspected 32 MiB boot wedge off-device and verify its hash before writing.
+- [x] Write only the new container prefix, read back the complete wedge and verify both the new prefix and unchanged suffix.
+- [x] Boot the reviewed kernel from eMMC; verify audio enumeration, disabled routes, zero stream/sample counters and retained GUI/network/watchdog services.
+- [ ] Perform daytime physical audio(4) playback, speech recording, duplex and latency/XRUN acceptance. No acoustic test or microphone recording is permitted during this night session.

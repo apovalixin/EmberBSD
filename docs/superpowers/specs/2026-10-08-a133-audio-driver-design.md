@@ -6,7 +6,9 @@ Provide normal NetBSD audio(4) playback/capture for the tablet's hotel voice
 application. The PCM core is already validated. The operator authorizes inline,
 autonomous night work: no sound signals, microphone recording or questions.
 Produce a compiled driver and boot artifact; retain kernel #7 until unattended
-recovery through UART is verified. Current SSH works, UART output is absent.
+recovery through UART is verified. That recovery gate has now passed: software
+reboot and serial countdown interception were verified before the reviewed
+kernel was tested from RAM and installed in the backed-up boot wedge.
 Physical acoustics, microphone quality and voice application acceptance remain
 separate daytime checks. No Wi-Fi or custom U-Boot work is hidden in this driver.
 
@@ -88,5 +90,8 @@ calibration preservation, PCM byte order, bounded budgets, partial blocks,
 wrap, route-off no-I/O and wrong formats/directions. This is software behavior,
 not hardware acceptance. Build a clean pinned source natively as a separate A133
 audio kernel config. Run the existing five contracts and independent review.
-Prepare the Android boot container privately, verify it structurally, and keep
-it staged without replacing the working boot partition.
+Prepare the Android boot container privately and verify it structurally.
+Installation follows only after recovery, an off-device backup, a RAM boot
+and complete partition readback have passed. The
+[validation receipt](../../../ember/boards/validation/2026-10-08-a133-audio-driver.md)
+records that completed default-off attachment milestone.

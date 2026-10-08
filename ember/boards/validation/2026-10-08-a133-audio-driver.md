@@ -1,4 +1,4 @@
-# A133 audio driver: source and native build validation
+# A133 audio driver: build and physical default-off attachment
 
 Validation date: 2026-10-08. This receipt covers the experimental YS-M33
 audio(4) driver, not physical playback/capture acceptance.
@@ -43,22 +43,47 @@ of the resource contract, not a claim of complete CCU-state restoration.
 - Independent read-only review found no remaining critical/important issues.
   `git diff --check` passed.
 
-## Staged artifact
+## Installed artifact and recovery
 
 The ARM64 Image is 16,989,540 bytes. The private Android v2 boot container
-is 17,002,496 bytes, with an empty ramdisk and the original 8,351-byte vendor
-DTB extracted from the preceding working container. Header/version, load
+is 17,002,496 bytes, with an empty ramdisk and the 8,351-byte DTB payload
+retained from the preceding working container. Its original provenance is
+not established; vendor U-Boot supplies the full inspected board tree at boot.
+Header/version, load
 addresses, page alignment, exact kernel/DTB payloads and the 32 MiB partition
-size limit were checked. The image was not written to the tablet.
+size limit were checked. The container SHA-256 is
+`dd5f70773680ea0072355deb6f8d4f32a1c596731822fddd16f28b0cf3b22aa0`.
+The native build source is `811491a81414e8dcd720e13fa584ce1ccbc05d5e`;
+the final reviewed driver sources in `d245249485d2` are identical.
 
-The physical sample retains its preceding kernel. No physical audio test,
-recording or reboot was performed during this milestone. UART recovery
-interception was unavailable, so replacing that working kernel would require
-operator assistance after a failed boot.
+UART on J1 was verified in both directions, and an automatic serial relay
+intercepted the three-second U-Boot countdown following a software reboot.
+The quiet running console was not evidence of a broken UART connection.
+The kernel first booted from RAM. The downloaded container had to be copied
+from `0x41000000` to `0x45000000` before `bootm`, to avoid source/destination
+overlap during kernel relocation. Vendor U-Boot and its environment were retained.
+
+Before writing, the complete 32 MiB boot wedge was backed up off-device and
+its SHA-256 verified:
+`195481669c9128594e9064e56f0adb76703ca73794bb861036413ed1ed8a079d`.
+The inspected GPT boot wedge occupies 65,536 sectors at sector 172,032.
+Only the container prefix was written. Complete partition readback matched
+that prefix byte for byte, and its untouched suffix matched the backup.
+The readback SHA-256 is
+`cb2ce60aceaa4ef31d76ee4a25eafa9653357509bb9de55a8b6630a5d2a95b72`.
+U-Boot's independent container CRC32 also matched `435b7361` before eMMC boot.
+
+Physical `EMBER64_A133_AUDIO #0` boot identified `a133codec0` and `audio0`.
+Read-only queries enumerated mono playback/capture and stereo playback at
+16/48 kHz, with `outputs.route=disabled` and `record.route=disabled`.
+Play/record open and active counts and sample counters were zero.
+SSH, Ethernet, MCU keepalive, Xorg, awesomeWM and terminal/clock windows
+remained active after boot. `ddb.onpanic=0` was verified; no panic was induced.
+No physical playback or microphone recording was performed.
 
 ## Remaining acceptance
 
-Physical driver attachment, IRQ latency/CPU use, underrun/overrun behavior,
+Physical IRQ streaming, latency/CPU use, underrun/overrun behavior,
 amplifier polarity, acoustic level, microphone speech quality, duplex and
 the voice application remain unverified. Suspend/resume and DMA are outside
 this implementation. The portable fixture does not execute the complete
