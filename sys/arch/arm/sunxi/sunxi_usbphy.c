@@ -32,6 +32,7 @@
 __KERNEL_RCSID(0, "$NetBSD: sunxi_usbphy.c,v 1.18 2024/08/13 07:20:23 skrll Exp $");
 
 #include <sys/param.h>
+#include <sys/gpio.h>
 #include <sys/bus.h>
 #include <sys/device.h>
 #include <sys/intr.h>
@@ -127,6 +128,7 @@ struct sunxi_usbphy_softc {
 
 	struct fdtbus_gpio_pin	*sc_gpio_id_det;
 	struct fdtbus_gpio_pin	*sc_gpio_vbus_det;
+	struct fdtbus_gpio_pin	*sc_gpio_usb1_power[4];
 };
 
 #define	PHYCTL_READ(sc, reg)				\
@@ -234,6 +236,12 @@ sunxi_usbphy_enable(device_t dev, void *priv, bool enable)
 	u_int disc_thresh;
 	bool phy0_reroute;
 	uint32_t val;
+
+	if (phy->phy_index == 1) {
+		for (u_int i = 0; i < __arraycount(sc->sc_gpio_usb1_power); i++)
+			if (sc->sc_gpio_usb1_power[i] != NULL)
+				fdtbus_gpio_write(sc->sc_gpio_usb1_power[i], enable);
+	}
 
 	switch (sc->sc_type) {
 	case USBPHY_A13:
@@ -421,6 +429,17 @@ sunxi_usbphy_attach(device_t parent, device_t self, void *aux)
 			aprint_error(": couldn't de-assert reset #%d\n", n);
 			return;
 		}
+
+	if (of_hasprop(phandle, "usb1-power-gpios")) {
+		for (n = 0; n < __arraycount(sc->sc_gpio_usb1_power); n++) {
+			sc->sc_gpio_usb1_power[n] = fdtbus_gpio_acquire_index(phandle,
+			    "usb1-power-gpios", n, GPIO_PIN_OUTPUT);
+			if (sc->sc_gpio_usb1_power[n] == NULL) {
+				aprint_error(": couldn't acquire USB1 power GPIO #%u\n", n);
+				return;
+			}
+		}
+	}
 
 	aprint_naive("\n");
 	aprint_normal(": USB PHY\n");

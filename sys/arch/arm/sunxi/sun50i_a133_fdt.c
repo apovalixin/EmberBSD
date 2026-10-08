@@ -330,7 +330,7 @@ a133_usb1(void *fdt, uint32_t ccu)
 	};
 	const char *phy_path = SOC "/ember-usb1-phy";
 	const fdt32_t *p;
-	fdt32_t cells[8], gpio[7], cell;
+	fdt32_t cells[8], gpio[7], power[28], cell;
 	uint32_t pio, vbus, phy;
 	int node, len, error, i;
 
@@ -373,6 +373,24 @@ a133_usb1(void *fdt, uint32_t ccu)
 	    fdt32_to_cpu(p[3]) != 1 || fdt32_to_cpu(p[6]) != 1)
 		return 0;
 	memcpy(gpio, p, sizeof(gpio));
+	{
+		static const char *names[] = {"vcc_host_drv0", "vcc_host_drv2",
+		    "vcc_host_drv3", "vcc_hub_drv0"};
+		static const uint32_t pins[] = {0, 3, 4, 5};
+		char name[48];
+		for (i = 0; i < 4; i++) {
+			snprintf(name, sizeof(name), "%s_gpio_level", names[i]);
+			if (!a133_sdio_cell(fdt, "/misc_power_en", name, 1))
+				return 0;
+			snprintf(name, sizeof(name), "%s_gpio", names[i]);
+			p = fdt_getprop(fdt, node, name, &len);
+			if (p == NULL || len != 28 || fdt32_to_cpu(p[0]) != pio ||
+			    fdt32_to_cpu(p[1]) != 5 || fdt32_to_cpu(p[2]) != pins[i] ||
+			    fdt32_to_cpu(p[3]) != 1 || fdt32_to_cpu(p[6]) != 1)
+				return 0;
+			memcpy(power + i * 7, p, 28);
+		}
+	}
 	A133_SET("/usb1-vbus", "gpio", gpio, sizeof(gpio));
 	A133_CELL("/usb1-vbus", "startup-delay-us", 1000);
 	A133_SET("/usb1-vbus", "regulator-boot-on", NULL, 0);
@@ -392,6 +410,7 @@ a133_usb1(void *fdt, uint32_t ccu)
 	A133_SET(phy_path, "resets", cells, 8);
 	A133_CELL(phy_path, "#phy-cells", 1);
 	A133_CELL(phy_path, "usb1_vbus-supply", vbus);
+	A133_SET(phy_path, "usb1-power-gpios", power, sizeof(power));
 	A133_STRING(phy_path, "status", "okay");
 	for (i = 0; i < 2; i++) {
 		const char *path = paths[i];

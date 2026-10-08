@@ -28,6 +28,19 @@ usb_fixture(void *fdt)
 	cells[4] = cpu_to_fdt32(1); cells[5] = 0; cells[6] = cpu_to_fdt32(1);
 	assert(fdt_setprop(fdt, node, "vcc_host_drv1_gpio", cells, 28) == 0);
 	assert(fdt_setprop_u32(fdt, node, "vcc_host_drv1_gpio_level", 1) == 0);
+	{
+		static const char *names[] = {"vcc_host_drv0", "vcc_host_drv2",
+		    "vcc_host_drv3", "vcc_hub_drv0"};
+		static const uint32_t pins[] = {0, 3, 4, 5};
+		char name[48];
+		for (i = 0; i < 4; i++) {
+			cells[2] = cpu_to_fdt32(pins[i]);
+			snprintf(name, sizeof(name), "%s_gpio", names[i]);
+			assert(fdt_setprop(fdt, node, name, cells, 28) == 0);
+			snprintf(name, sizeof(name), "%s_gpio_level", names[i]);
+			assert(fdt_setprop_u32(fdt, node, name, 1) == 0);
+		}
+	}
 	for (i = 0; i < 2; i++) {
 		soc = fdt_path_offset(fdt, SOC);
 		node = fdt_add_subnode(fdt, soc, i == 0 ?
@@ -65,6 +78,8 @@ main(void)
 	assert(fdt_node_check_compatible(fdt, node, "allwinner,sun50i-a100-usb-phy") == 0);
 	cells = fdt_getprop(fdt, node, "clocks", &len);
 	assert(cells != NULL && len == 8 && fdt32_to_cpu(cells[1]) == 111);
+	cells = fdt_getprop(fdt, node, "usb1-power-gpios", &len);
+	assert(cells != NULL && len == 112 && fdt32_to_cpu(cells[23]) == 5);
 	node = fdt_path_offset(fdt, "/usb1-vbus");
 	cells = fdt_getprop(fdt, node, "gpio", &len);
 	assert(cells != NULL && len == 28 && fdt32_to_cpu(cells[2]) == 2);
