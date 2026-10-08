@@ -25,10 +25,12 @@
  */
 
 #include <sys/param.h>
+#include <sys/condvar.h>
 #include <sys/device.h>
 #include <sys/errno.h>
 #include <sys/lwp.h>
 #include <sys/systm.h>
+#include <libfdt.h>
 
 #include <dev/fdt/fdtvar.h>
 #include <dev/ofw/openfirm.h>
