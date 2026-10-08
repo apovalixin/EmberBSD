@@ -40,6 +40,60 @@ quiescent recovery copies. eMMC hardware boot0/boot1 are outside the main
 snapshot and must be saved separately. Device binding, retained secure state,
 backup revalidation at use and physical restoration remain installer stages.
 
+The same checker is callable as `A133Backup.verify_file(path, sha256:,
+format: 'zstd', zstd: 'zstd', timeout: 3600)`. It returns the same integrity
+receipt and normalizes read/decoder errors to `A133Backup::Invalid` symbolic
+reasons. Importing it performs no CLI work. Physical geometry is fixed.
+
+## Bind a trusted capture record and critical copies
+
+The [capture checker](../tools/a133-capture-check.rb) freshly reads the full
+snapshot and separate bootloader/env/boot/recovery copies. It compares recorded
+serial/CID with explicit caller inputs and each full critical-copy hash with
+its range in the freshly verified snapshot. Repeating it rereads the files;
+a cached success receipt cannot replace those reads.
+
+Keep a capture manifest in the same private directory as its five files.
+Directory mode must be0700, every input file0600, owned by the current UID,
+regular and single-linked. Leaf symlinks, hardlinks and unsafe modes are
+refused. The full-image descriptor remains open across all copy checks;
+changed stat/inode/path or a deadline prevents success.
+
+The JSON manifest has these exact fields, with no additional receipt object:
+
+| Field | Value |
+| --- | --- |
+| schema / board | Integer1 / `ys-m33-a133` |
+| serial / cid | Trusted capture serial and lowercase32hex eMMC CID |
+| uncompressed_sha256 | Separately recorded lowercase64hex raw-image SHA256 |
+| backup | Object with `file` (one filename) and `format` (`raw` or `zstd`) |
+| partitions | Exactly four objects with `role` and `file`, for bootloader/env/boot/recovery |
+
+Names are distinct single ASCII filenames, at most128 bytes; no directory
+components or alias of the manifest. JSON is bounded to65536 bytes, with
+duplicate keys refused. Copies cover the **whole** original GPT partition:
+bootloader/boot/recovery32MiB each, env16MiB. A128KiB environment prefix used
+by the preparer is not a substitute for the whole env backup.
+
+```sh
+ruby ember/tools/a133-capture-check.rb --serial "$a133_serial" --cid "$a133_cid" /private/backup/capture.json
+```
+
+This read-only command emits a redacted `capture_integrity_verified` result,
+without identifiers, filenames or image hashes. The library
+`A133Capture.verify(path, serial:, cid:, zstd: 'zstd', timeout: 3600)` returns
+a **private** string-keyed `backup_integrity_verified` receipt with recorded
+serial/CID and `critical_copies_verified=true`, for the guarded USB consumer.
+Both report writes_performed0/installation_ready=false. No write/reboot flag.
+
+The capture record is trusted input, not a signature. Offline matching labels
+does not discover hardware: the caller must obtain live identity and use the
+USB guards at write time. A backup without a recorded CID is refused; never
+infer that value from a different tablet. Capture-time consistency, quiescent
+mutable copies, hardware boot0/1, release authenticity and first boot remain
+separate prerequisites. Do not persist this receipt as proof for a later write;
+freshly verify the capture again in the consuming invocation.
+
 ## Prepare a one-shot recovery environment copy
 
 Read the exact original 128 KiB environment prefix from this particular tablet
@@ -76,6 +130,8 @@ decoder subprocesses, not a 31 GB allocation:
 
 ```sh
 ruby ember/tools/a133-backup-check-test.rb
+ruby ember/tools/a133-backup-library-test.rb
+ruby ember/tools/a133-capture-check-test.rb
 ruby ember/tools/a133-recovery-env-test.rb
 ruby ember/tools/a133-env-edit-test.rb
 ruby ember/tools/a133-install-bundle-test.rb

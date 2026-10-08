@@ -214,6 +214,10 @@ The [session coordinator](ys-m33-a133-install-session.md) adds private locked
 progress and fresh range verification on every repeat. It coordinates only
 the prepared recovery write stage; factory backup/recovery setup and accepted
 first boot remain integration work.
+The [capture binding checker](ys-m33-a133-backup-recovery.md#bind-a-trusted-capture-record-and-critical-copies)
+freshly verifies the full backup and four critical copies against a trusted
+record and explicit serial/CID. Its offline binding does not replace live USB
+identity, retained hardware/mutable copies or accepted first boot.
 
 The first closed-enclosure installation is an experimental hardware result,
 not a released fleet installer. Repeat the complete procedure without UART:
