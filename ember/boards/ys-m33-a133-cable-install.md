@@ -101,6 +101,11 @@ were unchanged after returning to EmberBSD.
 
 ## Android backup and QEMU
 
+The common [backup checker and recovery-copy preparer](ys-m33-a133-backup-recovery.md)
+now validate complete saved main-eMMC images and produce a guarded one-shot
+env candidate on the host. They neither write nor restart a tablet and never
+claim installation readiness or live-filesystem consistency.
+
 The second tablet has a verified full 31,037,849,600-byte live Android snapshot
 and separate unmounted recovery snapshots of all UDISK and metadata bytes.
 The latter preserve filesystem consistency for the overwritten data partition;
