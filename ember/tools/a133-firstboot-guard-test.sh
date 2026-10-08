@@ -23,9 +23,14 @@ a133_firstboot_wait()
         fail) return 1 ;;
     esac
 }
-a133_firstboot_stop()
+a133_firstboot_recover()
 {
     stops=$((stops + 1))
+}
+a133_firstboot_stop()
+{
+    echo 'FAIL: an unconfirmed running kernel must request a clean reboot' >&2
+    return 1
 }
 a133_firstboot_guard "$marker" 120
 [ "$waits:$stops" = 0:0 ]
@@ -61,7 +66,7 @@ done
 if a133_firstboot_guard "$marker"; then exit 1; fi
 if a133_firstboot_guard "$marker" 120 extra; then exit 1; fi
 [ "$waits:$stops" = 6:3 ]
-a133_firstboot_stop()
+a133_firstboot_recover()
 {
     return 1
 }
