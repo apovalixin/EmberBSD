@@ -6,6 +6,6 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/bwfm-scan.XXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 awk '/^#define BWFM_CHANSPEC_/ {print}' "$src/sys/dev/ic/bwfmreg.h" \
     > "$work/bwfm-scan-constants.h"
-${CC:-cc} -std=c99 -Wall -Wextra -Werror -I"$work" \
+${CC:-cc} -std=c99 -Wall -Wextra -Wshadow -Werror -I"$work" \
     "$src/ember/tools/bwfm-scan-contract.c" -o "$work/check"
 "$work/check"

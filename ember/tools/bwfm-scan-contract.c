@@ -3,6 +3,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include "bwfm-scan-constants.h"
+/* Match the kernel namespace when checking the shared helpers. */
+extern const char version[];
 #include "../../sys/dev/ic/bwfm_scan.h"
 
 static unsigned int checks;

@@ -5,14 +5,14 @@
 
 /* Decode the primary 20 MHz channel, never the current host scan channel. */
 static inline unsigned int
-bwfm_scan_channel(uint8_t control, uint16_t spec, unsigned int version)
+bwfm_scan_channel(uint8_t control, uint16_t spec, unsigned int io_type)
 {
 	int channel = spec & BWFM_CHANSPEC_CHAN_MASK;
 	unsigned int sideband;
 
 	if (control != 0)
 		return control;
-	if (version == 1) {
+	if (io_type == 1) {
 		switch (spec & BWFM_CHANSPEC_D11N_BW_MASK) {
 		case BWFM_CHANSPEC_D11N_BW_20:
 			break;
@@ -31,7 +31,7 @@ bwfm_scan_channel(uint8_t control, uint16_t spec, unsigned int version)
 		default:
 			return 0;
 		}
-	} else if (version == 2) {
+	} else if (io_type == 2) {
 		sideband = (spec & BWFM_CHANSPEC_D11AC_SB_MASK) >>
 		    BWFM_CHANSPEC_D11AC_SB_SHIFT;
 		switch (spec & BWFM_CHANSPEC_D11AC_BW_MASK) {
