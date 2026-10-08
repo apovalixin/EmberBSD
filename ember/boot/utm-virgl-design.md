@@ -1,6 +1,6 @@
 # VirtIO-GPU acceleration for EmberBSD in UTM
 
-Status: native 2D verified; the separate [classic VirGL opt-in](utm-virgl-optin.md) awaits guest draw acceptance.
+Status: native 2D and four offscreen guest GLES lifecycles verified; the separate [classic VirGL opt-in](utm-virgl-optin.md) still needs accelerated Wayland and recovery acceptance.
 Reviewed on 2026-10-06 against EmberBSD `b1d21397dca` and UTM 4.7.5.
 Target: the current NetBSD 11/aarch64-based EmberBSD installation.
 
@@ -26,10 +26,11 @@ The path is Mesa VirGL, the standard VirtGPU DRM ABI, VirtIO, UTM's
 virglrenderer, and an accelerated ANGLE backend. Keep one display initially.
 Preserve the working framebuffer kernel, display configuration and login.
 
-Keep the existing GNOME/Xorg session as a working recovery and comparison
-path. Native GNOME Wayland remains a subsequent integration result: the
-installed Mutter disables Wayland and its native backend. A successful labwc
-test does not complete GNOME Wayland support. Physical-board GPUs,
+The former GNOME/Xorg demonstration VM has been removed; its acceptance is
+historical, not an available recovery session. Preserve matched framebuffer
+kernels and use isolated test roots. Native GNOME Wayland remains a later
+integration result; the earlier Mutter build disabled its native backend.
+A successful labwc test does not complete GNOME Wayland support. Physical-board GPUs,
 Vulkan/Venus, compute, multi-head and live driver unloading remain outside
 the first result. A nested Wayland client does not establish KMS or GPU support.
 
