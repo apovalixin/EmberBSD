@@ -80,7 +80,6 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define	AICWF_INTR_PENDING		0x01
 #define	 AICWF_INTR_PENDING_SOFT	__BIT(0)
 #define	AICWF_FLOW_CTRL			0x03	/* free transmit buffers */
-#define	 AICWF_FLOW_CTRL_BUFFERS	__BITS(6,0)
 #define	AICWF_INTR_STATUS		0x04
 #define	 AICWF_INTR_STATUS_OTHER	__BIT(7)
 #define	 AICWF_INTR_STATUS_BLOCKS	__BITS(6,0)
@@ -506,12 +505,12 @@ aicwf_fifo(struct aicwf_softc *sc, bool write, uint8_t *buf, size_t len)
 static int
 aicwf_tx_wait(struct aicwf_softc *sc, size_t len, u_int reserve)
 {
-	u_int tries;
+	u_int tries, buffers = 0;
 
 	for (tries = 0; tries < 50; tries++) {
 		mutex_enter(&sc->sc_bus_lock);
-		const u_int buffers = sdmmc_io_read_1(sc->sc_sf,
-		    AICWF_FLOW_CTRL) & AICWF_FLOW_CTRL_BUFFERS;
+		/* D80 uses all eight bits, unlike the older 8801/DC/DW. */
+		buffers = sdmmc_io_read_1(sc->sc_sf, AICWF_FLOW_CTRL);
 		mutex_exit(&sc->sc_bus_lock);
 
 		if (buffers > reserve &&
@@ -520,6 +519,9 @@ aicwf_tx_wait(struct aicwf_softc *sc, size_t len, u_int reserve)
 		sdmmc_pause(tries < 30 ? 200 : 10000, NULL);
 	}
 
+	IEEE80211_DPRINTF(&sc->sc_ic, IEEE80211_MSG_STATE,
+	    "SDIO transmit busy: buffers %u reserve %u length %zu\n",
+	    buffers, reserve, len);
 	return EBUSY;
 }
 
@@ -1221,6 +1223,7 @@ aicwf_scan_result(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 	struct ieee80211_frame wh;
 	uint8_t tstamp[8];
 	const uint8_t *frm, *efrm;
+	u_int ds_chan = 0, ht_chan = 0, primary;
 	int rssi, s;
 
 	if (!sc->sc_if_attached || len < hdr + sizeof(wh) + fixed)
@@ -1263,6 +1266,14 @@ aicwf_scan_result(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 			if (frm[1] <= IEEE80211_RATE_MAXSIZE)
 				scan.sp_rates = ie;
 			break;
+		case IEEE80211_ELEMID_DSPARMS:
+			if (frm[1] == 1)
+				ds_chan = frm[2];
+			break;
+		case IEEE80211_ELEMID_HTINFO:
+			if (frm[1] >= 22)
+				ht_chan = frm[2];
+			break;
 		case IEEE80211_ELEMID_XRATES:
 			scan.sp_xrates = ie;
 			break;
@@ -1289,6 +1300,19 @@ aicwf_scan_result(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 	}
 	if (scan.sp_ssid == NULL || scan.sp_rates == NULL)
 		return;
+
+	/* A 2.4 GHz beacon can be received on an adjacent scan channel. */
+	primary = le16dec(ind + 4) < 3000 && ds_chan != 0 ? ds_chan :
+	    ht_chan != 0 ? ht_chan : chan;
+	if (primary > IEEE80211_CHAN_MAX ||
+	    ic->ic_channels[primary].ic_freq == 0 ||
+	    (ic->ic_channels[primary].ic_freq < 3000) !=
+	    (ic->ic_channels[chan].ic_freq < 3000))
+		return;
+	if (primary != chan)
+		IEEE80211_DPRINTF(ic, IEEE80211_MSG_STATE,
+		    "scan primary channel %u received on %u\n", primary, chan);
+	scan.sp_chan = primary;
 
 	/* The firmware reports dBm; net80211 compares a positive scale. */
 	rssi = (int8_t)ind[9] + 100;
