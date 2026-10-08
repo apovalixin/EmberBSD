@@ -353,8 +353,11 @@ on every board in the hardware catalog.
   clocks, interface gates and resets while preserving firmware-owned PLLs.
   They pass 199 software assertions and GCC12/GCC16 object builds. A complete
   GCC16.2 kernel boots on Zero 3W with both CCUs and PCK600 attached; physical
-  accelerator power/clock transitions are unverified. On that board, accelerator
-  drivers are not attached. Power sequencing, shared clock arbitration, DMA/MMU
+  accelerator power/clock transitions are unverified. The read-only
+  [GPU identification consumer](ember/boot/a733-gpu-identification.md) now
+  attaches on Zero 3W. Its physical probe stops at unavailable clock/reset
+  readiness before GPU MMIO; the actual GPU identity remains unverified.
+  Power sequencing, shared clock arbitration, DMA/MMU
   and command submission still require porting. These are
   porting targets, not available EmberBSD acceleration. Board bring-up,
   driver/DMA integration, compatible runtime and real model execution must

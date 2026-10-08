@@ -4,8 +4,33 @@ The native `sun60igpuid` consumer identifies an already prepared A733 GPU.
 It does not initialize or power the GPU, load firmware, establish interrupts,
 allocate DMA, submit commands, expose a DRM device, or provide acceleration.
 The [driver](https://github.com/oxtech-ember/EmberBSD/blob/main/sys/arch/arm/sunxi/sun60i_a733_gpu.c)
-is owned by EmberBSD. Software contracts and focused AArch64 compilation are
-verified; physical identification has not yet been accepted.
+is owned by EmberBSD. Software contracts, the complete GCC16 kernel build
+and physical attachment on Zero 3W are verified. Physical GPU identification
+has not yet been accepted.
+
+## Physical result, 2026-10-08
+
+A 4 GiB Orange Pi Zero 3W booted the matched `EMBER64 #4` kernel, four
+modules and A733 DTBs from `4125fa28057fa1f9cdd19e825a03c458485aa3e6`.
+The board revision was not recorded. The existing vendor boot0/U-Boot and
+boot script were preserved. Eight CPUs, microSD root and Wi-Fi/SSH returned.
+
+`sun60igpuid0` attached and reported `identification unavailable at
+clock/reset state: 16; firmware state left unchanged`. The query reached
+CCU readiness after observing the supply enabled and GPU_TOP statically ON.
+`EBUSY` does not identify which clock, gate, reset or snapshot check failed.
+The driver therefore did not map or read GPU registers. This establishes
+the unavailable path on this firmware configuration, not the expected
+PBVNC value or a working accelerator.
+
+Before installation, the five provider/consumer software contracts passed
+48,077 assertions on the board with fake hardware. The complete existing
+native kernel-source suite also passed with GCC 16.2 and Python 3.14.8.
+Neither suite substitutes for hardware identification. Native image SHA256:
+`ad5de33eca8c2f356cf73588fbee6a2fdbe92fe311cc239cd8dde5926717a366`;
+Zero 3W DTB SHA256:
+`9b37b1833a718733616900aaceb1263807c8dd80efcf2133702bb0ea9439bea3`.
+This was a short boot check, not a sustained run.
 
 ## Local binding
 
