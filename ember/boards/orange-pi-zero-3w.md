@@ -16,7 +16,7 @@ Board revision: not recorded in the original support table.
 | Serial console | Tested |
 | All CPU cores | Tested (8 cores, a minute of full load at 62 degC with the kit's cooler) |
 | Ethernet | No port |
-| Wi-Fi | Tested: WPA2 on 2.4 and 5 GHz with 802.11n, 32 MiB transfers each way with matching checksums; WPA3-SAE/H2E with required PMF and 8 MiB each way also passes; needs vendor firmware; see Wi-Fi limits below |
+| Wi-Fi | Tested: WPA2 on 2.4 and 5 GHz with 802.11n, 32 MiB transfers each way with matching checksums; WPA3-SAE/H2E on 5 GHz with required PMF and 8 MiB each way also passes; needs vendor firmware; see Wi-Fi limits below |
 | Bluetooth | Classic: inquiry Tested, pairing not tried; BLE: No; needs the vendor patch files |
 | Temperature sensor | Tested (five sensors) |
 | Fan control | No |
@@ -65,6 +65,7 @@ booted with eight CPUs, microSD root and Wi-Fi. WPA3-Personal completed on a
 5 GHz channel-60 mesh AP: SAE group 19, H2E, required PMF and BIP-CMAC-128.
 An 8 MiB file transferred each way with an exact comparison. The persistent
 5 GHz SAE profile uses the normal rc service and leaves BSSID selection open.
+A normal reboot restores SAE/H2E, required PMF, mDNS/SSH and all eight CPUs.
 On the preceding `c8fabb0f4` bundle, three reconnects
 to the same AP without flushing PMKSA took 9, 10 and 9 seconds. A wrong
 password caused three SAE attempts without connection over 30 seconds;
