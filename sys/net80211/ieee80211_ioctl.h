@@ -514,6 +514,37 @@ struct ieee80211req {
 #define	IEEE80211_IOC_MCAST_RATE	72	/* tx rate for mcast frames */
 #define	IEEE80211_IOC_FRAGTHRESHOLD	73	/* tx fragmentation threshold */
 
+/* Full-MAC external SAE authentication. No passwords or PMKs cross this ABI. */
+#define IEEE80211_IOC_SAE		74
+#define IEEE80211_SAE_VERSION		1
+#define IEEE80211_SAE_CAP_EXTERNAL	0x0001
+#define IEEE80211_SAE_CAP_PMF		0x0002
+#define IEEE80211_SAE_CONFIGURE		1
+#define IEEE80211_SAE_AUTH_STATUS	2
+#define IEEE80211_SAE_TX_FRAME		3
+#define IEEE80211_SAE_SET_IGTK		4
+#define IEEE80211_SAE_DELETE_IGTK	5
+#define IEEE80211_SAE_START		0x100
+#define IEEE80211_SAE_RX_FRAME		0x101
+#define IEEE80211_SAE_DATA_MAX		1536
+/* SET: full structure, root only. GET: i_len=0, capabilities in i_val only. */
+struct ieee80211req_sae {
+	uint32_t version;
+	uint32_t generation;
+	uint16_t op;
+	uint16_t len;
+	uint8_t bssid[IEEE80211_ADDR_LEN];
+	uint8_t reserved[2];
+	uint8_t data[IEEE80211_SAE_DATA_MAX];
+};
+/* CONFIGURE data: one byte, 0=disabled, 1=SAE/CCMP with required PMF.
+ * AUTH_STATUS data: two-byte little-endian IEEE 802.11 status.
+ * TX_FRAME/RX_FRAME data: complete authentication frame, including MAC header.
+ * START data: SSID bytes. IGTK data: little-endian index (4/5), six-byte IPN,
+ * sixteen-byte BIP-CMAC-128 key. DELETE_IGTK contains only the index.
+ * Route events contain the fixed header followed by exactly len data bytes.
+ */
+
 /*
  * Scan result data returned for IEEE80211_IOC_SCAN_RESULTS.
  */

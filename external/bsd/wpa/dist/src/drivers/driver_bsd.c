@@ -70,6 +70,11 @@ struct bsd_driver_data {
 	int	prev_roaming;	/* roaming state to restore on deinit */
 	int	prev_privacy;	/* privacy state to restore on deinit */
 	int	prev_wpa;	/* wpa state to restore on deinit */
+#ifdef IEEE80211_IOC_SAE
+	u32 sae_generation;
+	u8 sae_bssid[ETH_ALEN];
+	int sae_active;
+#endif
 	enum ieee80211_opmode opmode;	/* operation mode */
 };
 
@@ -261,10 +266,73 @@ bsd_set_mediaopt(void *priv, uint32_t mask, uint32_t mode)
 	return 0;
 }
 
+#ifdef IEEE80211_IOC_SAE
+static int
+bsd_sae_request(struct bsd_driver_data *drv, u16 op, const void *data, size_t len)
+{
+	struct ieee80211req_sae req;
+	int ret;
+
+	if (len > sizeof(req.data))
+		return -1;
+	os_memset(&req, 0, sizeof(req));
+	req.version = IEEE80211_SAE_VERSION;
+	req.generation = drv->sae_generation;
+	req.op = op;
+	req.len = len;
+	os_memcpy(req.bssid, drv->sae_bssid, ETH_ALEN);
+	if (len)
+		os_memcpy(req.data, data, len);
+	ret = set80211var(drv, IEEE80211_IOC_SAE, &req, sizeof(req));
+	forced_memzero(&req, sizeof(req));
+	return ret;
+}
+
+#ifndef HOSTAPD
+static int
+bsd_sae_send_mlme(void *priv, const u8 *data, size_t len, int noack,
+		  unsigned int freq, const u16 *csa_offs, size_t csa_offs_len,
+		  int no_encrypt, unsigned int wait, int link_id)
+{
+	struct bsd_driver_data *drv = priv;
+
+	if (!drv->sae_active || len < 30 || WPA_GET_LE16(data) != 0xb0 ||
+	    csa_offs_len || link_id >= 0)
+		return -1;
+	return bsd_sae_request(drv, IEEE80211_SAE_TX_FRAME, data, len);
+}
+
+static int
+bsd_sae_auth_status(void *priv, struct external_auth *params)
+{
+	struct bsd_driver_data *drv = priv;
+	u8 status[2];
+
+	if (!drv->sae_active || !params->bssid ||
+	    os_memcmp(params->bssid, drv->sae_bssid, ETH_ALEN) != 0 ||
+	    params->pmkid || params->mld_addr)
+		return -1;
+	WPA_PUT_LE16(status, params->status);
+	return bsd_sae_request(drv, IEEE80211_SAE_AUTH_STATUS, status, sizeof(status));
+}
+#endif /* HOSTAPD */
+#endif /* IEEE80211_IOC_SAE */
+
 static int
 bsd_del_key(void *priv, const u8 *addr, int key_idx)
 {
 	struct ieee80211req_del_key wk;
+#ifdef IEEE80211_IOC_SAE
+	struct bsd_driver_data *drv = priv;
+	if (key_idx == 4 || key_idx == 5) {
+		u8 index[2];
+		if (!drv->sae_active)
+			return 0;
+		WPA_PUT_LE16(index, key_idx);
+		return bsd_sae_request(drv, IEEE80211_SAE_DELETE_IGTK, index, sizeof(index));
+	}
+#endif
+
 
 	os_memset(&wk, 0, sizeof(wk));
 	if (addr == NULL) {
@@ -340,8 +408,26 @@ bsd_set_key(void *priv, struct wpa_driver_set_key_params *params)
 			return bsd_del_key(priv, addr, key_idx);
 	}
 
+#ifdef IEEE80211_IOC_SAE
+	if (alg == WPA_ALG_BIP_CMAC_128) {
+		struct bsd_driver_data *sae_drv = priv;
+		u8 material[24];
+		int ret;
+
+		if (!sae_drv->sae_active || key_len != 16 || seq_len != 6 ||
+		    (key_idx != 4 && key_idx != 5))
+			return -1;
+		WPA_PUT_LE16(material, key_idx);
+		os_memcpy(material + 2, seq, 6);
+		os_memcpy(material + 8, key, 16);
+		ret = bsd_sae_request(sae_drv, IEEE80211_SAE_SET_IGTK, material, sizeof(material));
+		forced_memzero(material, sizeof(material));
+		return ret;
+	}
+#endif
 	os_memset(&wk, 0, sizeof(wk));
 	switch (alg) {
+
 	case WPA_ALG_WEP:
 		wk.ik_type = IEEE80211_CIPHER_WEP;
 		break;
@@ -748,6 +834,8 @@ bsd_wireless_event_receive(int sock, void *ctx, void *sock_ctx)
 		return;
 	}
 
+	if (n < 4)
+		return;
 	rtm = (struct rt_msghdr *) event_buf;
 	if (rtm->rtm_version != RTM_VERSION) {
 		wpa_printf(MSG_DEBUG, "Invalid routing message version=%d",
@@ -757,11 +845,39 @@ bsd_wireless_event_receive(int sock, void *ctx, void *sock_ctx)
 	os_memset(&event, 0, sizeof(event));
 	switch (rtm->rtm_type) {
 	case RTM_IEEE80211:
+		if (n < (int)sizeof(*ifan))
+			return;
 		ifan = (struct if_announcemsghdr *) rtm;
 		drv = bsd_get_drvindex(global, ifan->ifan_index);
 		if (drv == NULL)
 			return;
 		switch (ifan->ifan_what) {
+#ifdef IEEE80211_IOC_SAE
+		case RTM_IEEE80211_SAE: {
+			const struct ieee80211req_sae *req = (const void *)(ifan + 1);
+			size_t hdr = sizeof(*ifan) + offsetof(struct ieee80211req_sae, data);
+
+			if (drv->is_ap || !drv->sae_active || n < (int)hdr ||
+			    req->version != IEEE80211_SAE_VERSION ||
+			    req->generation != drv->sae_generation ||
+			    req->len > IEEE80211_SAE_DATA_MAX || req->len > n - hdr ||
+			    os_memcmp(req->bssid, drv->sae_bssid, ETH_ALEN) != 0)
+				break;
+			if (req->op == IEEE80211_SAE_START && req->len <= 32) {
+				event.external_auth.action = EXT_AUTH_START;
+				event.external_auth.bssid = req->bssid;
+				event.external_auth.ssid = req->data;
+				event.external_auth.ssid_len = req->len;
+				event.external_auth.key_mgmt_suite = RSN_AUTH_KEY_MGMT_SAE;
+				wpa_supplicant_event(drv->ctx, EVENT_EXTERNAL_AUTH, &event);
+			} else if (req->op == IEEE80211_SAE_RX_FRAME && req->len >= 30) {
+				event.rx_mgmt.frame = req->data;
+				event.rx_mgmt.frame_len = req->len;
+				wpa_supplicant_event(drv->ctx, EVENT_RX_MGMT, &event);
+			}
+			break;
+		}
+#endif
 		case RTM_IEEE80211_ASSOC:
 		case RTM_IEEE80211_REASSOC:
 			if (drv->is_ap)
@@ -1271,6 +1387,28 @@ wpa_driver_bsd_associate(void *priv, struct wpa_driver_associate_params *params)
 			  params->wpa_ie[0] == WLAN_EID_RSN ? 2 : 1) < 0)
 		return -1;
 
+#ifdef IEEE80211_IOC_SAE
+	if (drv->capa.key_mgmt & WPA_DRIVER_CAPA_KEY_MGMT_SAE) {
+		u8 enabled = params->key_mgmt_suite == WPA_KEY_MGMT_SAE;
+
+		if (enabled && (params->mgmt_frame_protection != MGMT_FRAME_PROTECTION_REQUIRED ||
+		    params->pairwise_suite != WPA_CIPHER_CCMP ||
+		    params->group_suite != WPA_CIPHER_CCMP || !params->bssid))
+			return -1;
+		if (++drv->sae_generation == 0)
+			drv->sae_generation++;
+		os_memset(drv->sae_bssid, 0, ETH_ALEN);
+		if (params->bssid)
+			os_memcpy(drv->sae_bssid, params->bssid, ETH_ALEN);
+		drv->sae_active = enabled;
+		if (bsd_sae_request(drv, IEEE80211_SAE_CONFIGURE, &enabled, 1) < 0) {
+			drv->sae_active = 0;
+			return -1;
+		}
+	}
+#endif
+	if (ret)
+		return ret;
 	os_memset(&mlme, 0, sizeof(mlme));
 	mlme.im_op = IEEE80211_MLME_ASSOC;
 	if (params->ssid != NULL)
@@ -1526,6 +1664,21 @@ static int wpa_driver_bsd_capa(struct bsd_driver_data *drv)
 #else /* IEEE80211_IOC_SCAN_MAX_SSID */
 	drv->capa.max_scan_ssids = 1;
 #endif /* IEEE80211_IOC_SCAN_MAX_SSID */
+#ifdef IEEE80211_IOC_SAE
+	{
+		struct ieee80211req req;
+		os_memset(&req, 0, sizeof(req));
+		os_strlcpy(req.i_name, drv->ifname, sizeof(req.i_name));
+		req.i_type = IEEE80211_IOC_SAE;
+		if (ioctl(drv->global->sock, SIOCG80211, &req) == 0 &&
+		    (req.i_val & (IEEE80211_SAE_CAP_EXTERNAL | IEEE80211_SAE_CAP_PMF)) ==
+		    (IEEE80211_SAE_CAP_EXTERNAL | IEEE80211_SAE_CAP_PMF)) {
+			drv->capa.key_mgmt |= WPA_DRIVER_CAPA_KEY_MGMT_SAE;
+			drv->capa.enc |= WPA_DRIVER_CAPA_ENC_BIP;
+			drv->capa.flags |= WPA_DRIVER_FLAGS_SAE;
+		}
+	}
+#endif
 	drv->capa.auth = WPA_DRIVER_AUTH_OPEN |
 		WPA_DRIVER_AUTH_SHARED |
 		WPA_DRIVER_AUTH_LEAP;
@@ -1760,6 +1913,10 @@ const struct wpa_driver_ops wpa_driver_bsd_ops = {
 	.deauthenticate		= wpa_driver_bsd_deauthenticate,
 	.associate		= wpa_driver_bsd_associate,
 	.get_capa		= wpa_driver_bsd_get_capa,
+#ifdef IEEE80211_IOC_SAE
+	.send_mlme = bsd_sae_send_mlme,
+	.send_external_auth_status = bsd_sae_auth_status,
+#endif
 #endif /* HOSTAPD */
 	.set_freq		= bsd_set_freq,
 	.set_key		= bsd_set_key,

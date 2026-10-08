@@ -23,6 +23,7 @@
 #include <sys/buf.h>
 #include <sys/device.h>
 #include <sys/kernel.h>
+#include <sys/kauth.h>
 #include <sys/kmem.h>
 #include <sys/pool.h>
 #include <sys/queue.h>
@@ -35,6 +36,7 @@
 #include <net/if_dl.h>
 #include <net/if_ether.h>
 #include <net/if_media.h>
+#include <net/route.h>
 
 #include <netinet/in.h>
 
@@ -44,6 +46,7 @@
 
 #include <dev/ic/bwfmreg.h>
 #include <dev/ic/bwfmvar.h>
+#include <dev/ic/bwfm_sae.h>
 
 /* #define BWFM_DEBUG */
 #ifdef BWFM_DEBUG
@@ -76,6 +79,10 @@ void	 bwfm_newstate_cb(struct bwfm_softc *, struct bwfm_cmd_newstate *);
 void	 bwfm_newassoc(struct ieee80211_node *, int);
 void	 bwfm_task(struct work *, void *);
 static void bwfm_report_cb(struct bwfm_softc *);
+static void bwfm_sae_probe(struct bwfm_softc *);
+static int bwfm_sae_ioctl(struct bwfm_softc *, u_long, struct ieee80211req *);
+static int bwfm_sae_connect(struct bwfm_softc *);
+static void bwfm_sae_event(struct bwfm_softc *, const struct bwfm_event *, size_t);
 
 int	 bwfm_chip_attach(struct bwfm_softc *);
 int	 bwfm_chip_detach(struct bwfm_softc *, int);
@@ -386,6 +393,8 @@ bwfm_attach(struct bwfm_softc *sc)
 	if (bwfm_fwvar_var_get_data(sc, "ver", fw_version, sizeof(fw_version)) == 0)
 		printf("%s: %s", DEVNAME(sc), fw_version);
 
+	bwfm_sae_probe(sc);
+
 	ic->ic_ifp = ifp;
 	ic->ic_phytype = IEEE80211_T_OFDM;
 	ic->ic_opmode = IEEE80211_M_STA;
@@ -653,7 +662,19 @@ bwfm_init(struct ifnet *ifp)
 	memset(evmask, 0xff, sizeof(evmask));
 #endif
 
-	if (bwfm_fwvar_var_set_data(sc, "event_msgs", evmask, sizeof(evmask))) {
+	if (sc->sc_sae_caps != 0) {
+		uint8_t extmask[4 + BWFM_EVENT_MASK_LEN];
+
+		evmask[BWFM_E_EXT_AUTH_REQ / 8] |= 1 << (BWFM_E_EXT_AUTH_REQ % 8);
+		evmask[BWFM_E_EXT_AUTH_FRAME_RX / 8] |= 1 << (BWFM_E_EXT_AUTH_FRAME_RX % 8);
+		memset(extmask, 0, sizeof(extmask));
+		extmask[0] = 1;
+		extmask[1] = 3;
+		extmask[2] = sizeof(evmask);
+		memcpy(extmask + 4, evmask, sizeof(evmask));
+		if (bwfm_fwvar_var_set_data(sc, "event_msgs_ext", extmask, sizeof(extmask)))
+			return EIO;
+	} else if (bwfm_fwvar_var_set_data(sc, "event_msgs", evmask, 18)) {
 		printf("%s: could not set event mask\n", DEVNAME(sc));
 		return EIO;
 	}
@@ -733,6 +754,8 @@ bwfm_stop(struct ifnet *ifp, int disable)
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct bwfm_join_params join;
 
+	sc->sc_sae_enabled = false;
+	sc->sc_sae_generation++;
 	sc->sc_tx_timer = 0;
 	ifp->if_timer = 0;
 	ifp->if_flags &= ~(IFF_RUNNING | IFF_OACTIVE);
@@ -784,6 +807,14 @@ bwfm_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 	s = splnet();
 
 	switch (cmd) {
+	case SIOCG80211:
+	case SIOCS80211:
+		if (((struct ieee80211req *)data)->i_type == IEEE80211_IOC_SAE)
+			error = bwfm_sae_ioctl(sc, cmd, data);
+		else
+			error = ieee80211_ioctl(ic, cmd, data);
+		break;
+
 	case SIOCSIFFLAGS:
 		oflags = ifp->if_flags;
 		if ((error = ifioctl_common(ifp, cmd, data)) != 0)
@@ -934,7 +965,8 @@ bwfm_key_set_cb(struct bwfm_softc *sc, struct bwfm_cmd_key *ck)
 	if (bwfm_fwvar_var_set_data(sc, "wsec_key", &wsec_key, sizeof(wsec_key)))
 		return;
 
-	bwfm_fwvar_var_set_int(sc, "wpa_auth", BWFM_WPA_AUTH_WPA2_PSK);
+	bwfm_fwvar_var_set_int(sc, "wpa_auth", sc->sc_sae_enabled ?
+	    BWFM_WPA_AUTH_SAE : BWFM_WPA_AUTH_WPA2_PSK);
 
 	bwfm_fwvar_var_get_int(sc, "wsec", &wsec);
 	wsec |= wsec_enable;
@@ -2160,6 +2192,215 @@ bwfm_get_wsec(struct bwfm_softc *sc)
 	}
 }
 
+/*
+ * External SAE firmware ABI follows Raspberry Pi brcmfmac (ISC),
+ * revision 43c132e8863c3bff3647033b6a7d2bf87b15501c, cfg80211.c and
+ * fwil_types.h. See ember/boot/bwfm-sae.md for provenance and limits.
+ */
+static void
+bwfm_sae_probe(struct bwfm_softc *sc)
+{
+	char caps[1024];
+	uint8_t mask[4 + BWFM_EVENT_MASK_LEN] = { 1, 0, 0,
+	    BWFM_EVENT_MASK_LEN };
+	uint32_t mfp = 0;
+
+	memset(caps, 0, sizeof(caps));
+	if (bwfm_fwvar_var_get_data(sc, "cap", caps, sizeof(caps) - 1) ||
+	    (!bwfm_sae_cap_token(caps, "sae_ext") &&
+	    !bwfm_sae_cap_token(caps, "extsae")) ||
+	    bwfm_fwvar_var_get_int(sc, "mfp", &mfp) ||
+	    bwfm_fwvar_var_get_data(sc, "event_msgs_ext", mask, sizeof(mask)))
+		return;
+	sc->sc_sae_caps = IEEE80211_SAE_CAP_EXTERNAL | IEEE80211_SAE_CAP_PMF;
+	printf("%s: external SAE and firmware PMF available\n", DEVNAME(sc));
+}
+
+static int
+bwfm_sae_ioctl(struct bwfm_softc *sc, u_long cmd, struct ieee80211req *ireq)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct ieee80211req_sae *req;
+	struct bwfm_wsec_key key;
+	uint8_t status[60], *frame;
+	size_t len;
+	uint16_t index;
+	int error;
+
+	if (cmd == SIOCG80211) {
+		if (ireq->i_len != 0)
+			return EINVAL;
+		ireq->i_val = sc->sc_sae_caps;
+		return 0;
+	}
+	error = kauth_authorize_network(kauth_cred_get(),
+	    KAUTH_NETWORK_INTERFACE, KAUTH_REQ_NETWORK_INTERFACE_SETPRIV,
+	    ic->ic_ifp, (void *)cmd, NULL);
+	if (error)
+		return error;
+	if (ireq->i_len != sizeof(*req))
+		return EINVAL;
+	req = kmem_zalloc(sizeof(*req), KM_SLEEP);
+	error = copyin(ireq->i_data, req, sizeof(*req));
+	if (error)
+		goto out;
+	error = EINVAL;
+	if (req->version != IEEE80211_SAE_VERSION ||
+	    req->reserved[0] != 0 || req->reserved[1] != 0 ||
+	    req->len > sizeof(req->data))
+		goto out;
+	if (req->op == IEEE80211_SAE_CONFIGURE) {
+		if (req->len != 1 || req->data[0] > 1 ||
+		    (req->data[0] && (req->generation == 0 ||
+		    IEEE80211_IS_MULTICAST(req->bssid) ||
+		    memcmp(req->bssid, "\0\0\0\0\0\0", 6) == 0)))
+			goto out;
+		if (req->data[0] && (sc->sc_sae_caps == 0 ||
+		    ic->ic_opmode != IEEE80211_M_STA)) {
+			error = EOPNOTSUPP;
+			goto out;
+		}
+		sc->sc_sae_enabled = req->data[0] != 0;
+		sc->sc_sae_generation = req->generation;
+		memcpy(sc->sc_sae_bssid, req->bssid, 6);
+		error = 0;
+		goto out;
+	}
+	if (!sc->sc_sae_enabled || req->generation != sc->sc_sae_generation ||
+	    !IEEE80211_ADDR_EQ(req->bssid, sc->sc_sae_bssid) ||
+	    !IEEE80211_ADDR_EQ(req->bssid, ic->ic_bss->ni_bssid)) {
+		error = ESTALE;
+		goto out;
+	}
+	switch (req->op) {
+	case IEEE80211_SAE_AUTH_STATUS:
+		if (req->len != 2 || ic->ic_state != IEEE80211_S_AUTH)
+			break;
+		memset(status, 0, sizeof(status));
+		le16enc(status, le16dec(req->data) == 0 ? 4 : 3);
+		memcpy(status + 2, req->bssid, 6);
+		le32enc(status + 8, ic->ic_bss->ni_esslen);
+		memcpy(status + 12, ic->ic_bss->ni_essid, ic->ic_bss->ni_esslen);
+		error = bwfm_fwvar_var_set_data(sc, "auth_status", status,
+		    sizeof(status)) ? EIO : 0;
+		break;
+	case IEEE80211_SAE_TX_FRAME:
+		if (req->len < 30 || ic->ic_state != IEEE80211_S_AUTH ||
+		    le16dec(req->data) != 0xb0 || le16dec(req->data + 24) != 3 ||
+		    !IEEE80211_ADDR_EQ(req->data + 4, req->bssid) ||
+		    !IEEE80211_ADDR_EQ(req->data + 10, ic->ic_myaddr) ||
+		    !IEEE80211_ADDR_EQ(req->data + 16, req->bssid))
+			break;
+		/* brcmf_mf_params_le: two padding bytes precede the packet ID. */
+		len = 32 + req->len - 24;
+		frame = kmem_zalloc(len, KM_SLEEP);
+		le32enc(frame + 4, 4000);
+		le16enc(frame + 8, req->len - 24);
+		le16enc(frame + 10, 0xb0);
+		le16enc(frame + 12, ieee80211_chan2ieee(ic, ic->ic_bss->ni_chan));
+		memcpy(frame + 14, req->bssid, 6);
+		memcpy(frame + 20, req->bssid, 6);
+		le32enc(frame + 28, ++sc->sc_sae_packet_id);
+		memcpy(frame + 32, req->data + 24, req->len - 24);
+		error = bwfm_fwvar_var_set_data(sc, "mgmt_frame", frame, len) ? EIO : 0;
+		kmem_free(frame, len);
+		break;
+	case IEEE80211_SAE_SET_IGTK:
+	case IEEE80211_SAE_DELETE_IGTK:
+		if (req->len != (req->op == IEEE80211_SAE_SET_IGTK ? 24 : 2))
+			break;
+		index = le16dec(req->data);
+		if (index != 4 && index != 5)
+			break;
+		memset(&key, 0, sizeof(key));
+		key.index = htole32(index);
+		key.flags = htole32(BWFM_WSEC_PRIMARY_KEY);
+		if (req->op == IEEE80211_SAE_SET_IGTK) {
+			key.len = htole32(16);
+			key.algo = htole32(BWFM_CRYPTO_ALGO_AES_CCM);
+			memcpy(key.data, req->data + 8, 16);
+			key.rxiv.hi = htole32(le32dec(req->data + 4));
+			key.rxiv.lo = htole16(le16dec(req->data + 2));
+			key.iv_initialized = htole32(1);
+		}
+		error = bwfm_fwvar_var_set_data(sc, "wsec_key", &key,
+		    sizeof(key)) ? EIO : 0;
+		explicit_memset(&key, 0, sizeof(key));
+		break;
+	default:
+		break;
+	}
+out:
+	explicit_memset(req, 0, sizeof(*req));
+	kmem_free(req, sizeof(*req));
+	return error;
+}
+
+static int
+bwfm_sae_connect(struct bwfm_softc *sc)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+
+	if (!bwfm_sae_rsn_valid(ic->ic_opt_ie, ic->ic_opt_ie_len) ||
+	    !IEEE80211_ADDR_EQ(sc->sc_sae_bssid, ic->ic_bss->ni_bssid))
+		return EINVAL;
+	if (bwfm_fwvar_var_set_data(sc, "wpaie", ic->ic_opt_ie, ic->ic_opt_ie_len) ||
+	    bwfm_fwvar_var_set_int(sc, "sup_wpa", 0) ||
+	    bwfm_fwvar_var_set_int(sc, "auth", BWFM_AUTH_SAE) ||
+	    bwfm_fwvar_var_set_int(sc, "wsec", BWFM_WSEC_AES) ||
+	    bwfm_fwvar_var_set_int(sc, "mfp", BWFM_MFP_REQUIRED) ||
+	    bwfm_fwvar_var_set_int(sc, "wpa_auth", BWFM_WPA_AUTH_SAE))
+		return EIO;
+	return 0;
+}
+
+static void
+bwfm_sae_event(struct bwfm_softc *sc, const struct bwfm_event *event, size_t len)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct ieee80211req_sae *req;
+	const uint8_t *data = (const void *)(event + 1);
+	uint32_t type = ntohl(event->msg.event_type);
+	size_t size;
+
+	if (!sc->sc_sae_enabled || ic->ic_state != IEEE80211_S_AUTH ||
+	    len < sizeof(*event) || ntohl(event->msg.datalen) > len - sizeof(*event))
+		return;
+	size = ntohl(event->msg.datalen);
+	req = kmem_zalloc(sizeof(*req), KM_SLEEP);
+	req->version = IEEE80211_SAE_VERSION;
+	req->generation = sc->sc_sae_generation;
+	memcpy(req->bssid, sc->sc_sae_bssid, 6);
+	if (type == BWFM_E_EXT_AUTH_REQ) {
+		if (size < 60 || le16dec(data) != 1 || le32dec(data + 8) > 32 ||
+		    !IEEE80211_ADDR_EQ(data + 2, req->bssid) ||
+		    le32dec(data + 8) != ic->ic_bss->ni_esslen ||
+		    memcmp(data + 12, ic->ic_bss->ni_essid, ic->ic_bss->ni_esslen) != 0)
+			goto out;
+		req->op = IEEE80211_SAE_START;
+		req->len = le32dec(data + 8);
+		memcpy(req->data, data + 12, req->len);
+	} else {
+		/* Firmware supplies a 16-byte RX prefix followed by a MAC frame. */
+		if (size < 16 + 30 || size - 16 > sizeof(req->data) ||
+		    !IEEE80211_ADDR_EQ(&event->msg.addr, req->bssid))
+			goto out;
+		req->op = IEEE80211_SAE_RX_FRAME;
+		req->len = size - 16;
+		memcpy(req->data, data + 16, req->len);
+		le16enc(req->data, 0xb0);
+		memcpy(req->data + 4, ic->ic_myaddr, 6);
+		memcpy(req->data + 10, req->bssid, 6);
+		memcpy(req->data + 16, req->bssid, 6);
+		if (le16dec(req->data + 24) != 3)
+			goto out;
+	}
+	rt_ieee80211msg(ic->ic_ifp, RTM_IEEE80211_SAE, req,
+	    offsetof(struct ieee80211req_sae, data) + req->len);
+out:
+	kmem_free(req, sizeof(*req));
+}
+
 void
 bwfm_connect(struct bwfm_softc *sc)
 {
@@ -2167,7 +2408,14 @@ bwfm_connect(struct bwfm_softc *sc)
 	struct ieee80211_node *ni = ic->ic_bss;
 	struct bwfm_ext_join_params *params;
 
-	if (ic->ic_flags & IEEE80211_F_WPA) {
+	if (sc->sc_sae_enabled) {
+		if (bwfm_sae_connect(sc) != 0) {
+			printf("%s: external SAE security setup failed\n", DEVNAME(sc));
+			sc->sc_sae_enabled = false;
+			ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
+			return;
+		}
+	} else if (ic->ic_flags & IEEE80211_F_WPA) {
 		uint32_t wsec = 0;
 		uint32_t wpa = 0;
 
@@ -2191,8 +2439,10 @@ bwfm_connect(struct bwfm_softc *sc)
 		bwfm_fwvar_var_set_int(sc, "wsec", BWFM_WSEC_NONE);
 	}
 
-	bwfm_fwvar_var_set_int(sc, "auth", BWFM_AUTH_OPEN);
-	bwfm_fwvar_var_set_int(sc, "mfp", BWFM_MFP_NONE);
+	if (!sc->sc_sae_enabled) {
+		bwfm_fwvar_var_set_int(sc, "auth", BWFM_AUTH_OPEN);
+		bwfm_fwvar_var_set_int(sc, "mfp", BWFM_MFP_NONE);
+	}
 
 	if (ni->ni_esslen && ni->ni_esslen < BWFM_MAX_SSID_LEN) {
 		params = kmem_zalloc(sizeof(*params), KM_SLEEP);
@@ -2268,7 +2518,7 @@ bwfm_rx(struct bwfm_softc *sc, struct mbuf *m)
 	struct ifnet *ifp = ic->ic_ifp;
 	struct bwfm_event *e = mtod(m, struct bwfm_event *);
 
-	if (m->m_len >= sizeof(e->ehdr) &&
+	if (m->m_len >= sizeof(e->ehdr) + sizeof(e->hdr) &&
 	    ntohs(e->ehdr.ether_type) == BWFM_ETHERTYPE_LINK_CTL &&
 	    memcmp(BWFM_BRCM_OUI, e->hdr.oui, sizeof(e->hdr.oui)) == 0 &&
 	    ntohs(e->hdr.usr_subtype) == BWFM_BRCM_SUBTYPE_EVENT) {
@@ -2307,6 +2557,11 @@ bwfm_rx_event_cb(struct bwfm_softc *sc, struct mbuf *m)
 	size_t len = m->m_len;
 	int s;
 
+	if (len < sizeof(*e)) {
+		m_freem(m);
+		return;
+	}
+
 	DPRINTF(("%s: event %p len %lu datalen %u code %u status %u"
 	    " reason %u\n", __func__, e, len, ntohl(e->msg.datalen),
 	    ntohl(e->msg.event_type), ntohl(e->msg.status),
@@ -2318,6 +2573,10 @@ bwfm_rx_event_cb(struct bwfm_softc *sc, struct mbuf *m)
 	}
 
 	switch (ntohl(e->msg.event_type)) {
+	case BWFM_E_EXT_AUTH_REQ:
+	case BWFM_E_EXT_AUTH_FRAME_RX:
+		bwfm_sae_event(sc, e, len);
+		break;
 	case BWFM_E_ESCAN_RESULT: {
 		struct bwfm_escan_results *res = (void *)&e[1];
 		struct bwfm_bss_info *bss;

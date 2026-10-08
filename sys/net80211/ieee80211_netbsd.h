@@ -233,6 +233,7 @@ struct ieee80211_michael_event {
 #define	RTM_IEEE80211_REPLAY	106	/* sequence counter replay detected */
 #define	RTM_IEEE80211_MICHAEL	107	/* Michael MIC failure detected */
 #define	RTM_IEEE80211_REJOIN	108	/* station re-associate (ap mode) */
+#define	RTM_IEEE80211_SAE	109	/* external SAE request/frame */
 
 #ifdef _KERNEL
 #define	ticks	getticks()

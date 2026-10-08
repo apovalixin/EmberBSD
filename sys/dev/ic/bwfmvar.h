@@ -225,6 +225,11 @@ struct bwfm_softc {
 #define		BWFM_IO_TYPE_D11AC		2
 
 	int			 sc_tx_timer;
+	uint32_t		 sc_sae_caps;
+	uint32_t		 sc_sae_generation;
+	uint32_t		 sc_sae_packet_id;
+	bool			 sc_sae_enabled;
+	uint8_t			 sc_sae_bssid[IEEE80211_ADDR_LEN];
 
 	bool			 sc_if_attached;
 	struct pool_cache	*sc_freetask;

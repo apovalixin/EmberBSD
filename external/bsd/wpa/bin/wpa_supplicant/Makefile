@@ -145,6 +145,13 @@ CPPFLAGS+=-DEAP_OTP
 CPPFLAGS+=-DEAP_LEAP
 CPPFLAGS+=-DEAP_PSK
 CPPFLAGS+=-DEAP_TLS_OPENSSL
+
+# SAE runs in the upstream SME; full-MAC drivers forward external auth frames.
+CPPFLAGS+=-DCONFIG_SAE -DCONFIG_SME -DCONFIG_ECC -DCONFIG_SHA256
+CPPFLAGS+=-DCONFIG_HMAC_SHA256_KDF
+SRCS+=sae.c dragonfly.c sme.c dh_groups.c sha256-kdf.c
+# CONFIG_SHA256 uses OpenSSL HMAC, avoiding duplicate internal symbols.
+SRCS:= ${SRCS:Nsha256.c}
 SRCS+= \
 chap.c \
 crypto_openssl.c \
@@ -187,6 +194,9 @@ SRCS+= sha1-pbkdf2.c sha1.c md5.c
 .endif
 
 .endif
+
+# GCC 16 diagnoses the packed RRM report with the default SSP heuristic.
+COPTS.rrm.c+= -fstack-protector-all
 
 COPTS.crypto_openssl.c+= -Wno-error=deprecated-declarations
 COPTS.tls_openssl.c+= -Wno-error=deprecated-declarations
