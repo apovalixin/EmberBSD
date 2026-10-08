@@ -45,6 +45,14 @@ main(void)
 	check(bwfm_scan_channel(0, 0xe42a, 2) == 0, "invalid 80 MHz sideband");
 	check(bwfm_scan_channel(0, 0xf02a, 2) == 0, "unknown 80+80 mapping");
 	check(bwfm_scan_channel(0, 0xd024, 3) == 0, "unknown firmware format");
+	check(bwfm_scan_channel(0, 0x5024, 2) == 0, "unsupported 3 GHz band");
+	check(bwfm_scan_channel(0, 0x9024, 2) == 0, "unsupported 4 GHz band");
+	check(bwfm_scan_channel(0, 0x1024, 2) == 0, "2 GHz band with channel 36");
+	check(bwfm_scan_channel(0, 0xd00b, 2) == 0, "5 GHz band with channel 11");
+	check(bwfm_scan_channel(0, 0x200a, 2) == 0, "80 MHz in 2 GHz band");
+	check(bwfm_scan_channel(0, 0x2906, 1) == 0, "legacy 20 MHz sideband");
+	check(bwfm_scan_channel(0, 0x0b24, 1) == 0, "legacy unknown band");
+	check(bwfm_scan_channel(0, 0x2b24, 1) == 0, "legacy band mismatch");
 	check(bwfm_scan_rssi(-62) == 38, "negative RSSI does not wrap to 194");
 	check(bwfm_scan_rssi(-88) == 12, "weak 5 GHz quality");
 	check(bwfm_scan_rssi(INT16_MIN) == 1, "RSSI lower bound");

@@ -15,6 +15,9 @@ bwfm_scan_channel(uint8_t control, uint16_t spec, unsigned int io_type)
 	if (io_type == 1) {
 		switch (spec & BWFM_CHANSPEC_D11N_BW_MASK) {
 		case BWFM_CHANSPEC_D11N_BW_20:
+			if ((spec & BWFM_CHANSPEC_D11N_SB_MASK) !=
+			    BWFM_CHANSPEC_D11N_SB_N)
+				return 0;
 			break;
 		case BWFM_CHANSPEC_D11N_BW_40:
 			switch (spec & BWFM_CHANSPEC_D11N_SB_MASK) {
@@ -45,11 +48,15 @@ bwfm_scan_channel(uint8_t control, uint16_t spec, unsigned int io_type)
 			channel += (int)sideband * 4 - 2;
 			break;
 		case BWFM_CHANSPEC_D11AC_BW_80:
-			if (sideband > 3)
+			if ((spec & BWFM_CHANSPEC_D11AC_BND_MASK) !=
+			    BWFM_CHANSPEC_D11AC_BND_5G || sideband > 3)
 				return 0;
 			channel += (int)sideband * 4 - 6;
 			break;
 		case BWFM_CHANSPEC_D11AC_BW_160:
+			if ((spec & BWFM_CHANSPEC_D11AC_BND_MASK) !=
+			    BWFM_CHANSPEC_D11AC_BND_5G)
+				return 0;
 			channel += (int)sideband * 4 - 14;
 			break;
 		default:
@@ -58,7 +65,20 @@ bwfm_scan_channel(uint8_t control, uint16_t spec, unsigned int io_type)
 	} else {
 		return 0;
 	}
-	return channel > 0 && channel <= 255 ? (unsigned int)channel : 0;
+	if (channel <= 0 || channel > 255)
+		return 0;
+	if (io_type == 1) {
+		if ((spec & BWFM_CHANSPEC_D11N_BND_MASK) !=
+		    (channel <= 14 ? BWFM_CHANSPEC_D11N_BND_2G :
+		    BWFM_CHANSPEC_D11N_BND_5G))
+			return 0;
+	} else {
+		if ((spec & BWFM_CHANSPEC_D11AC_BND_MASK) !=
+		    (channel <= 14 ? BWFM_CHANSPEC_D11AC_BND_2G :
+		    BWFM_CHANSPEC_D11AC_BND_5G))
+			return 0;
+	}
+	return (unsigned int)channel;
 }
 
 /* NetBSD's legacy scan ABI carries unsigned quality, not signed dBm. */
