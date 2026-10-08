@@ -62,6 +62,13 @@ the full suite on EmberBSD before deployment. The
 kernel, required board modules and base userland together. Its Pi 5 hardware
 receipt is separate from validation of a complete general release image.
 
+The [AArch64 development image](ember/image/README.md) combines verified
+NetBSD 11 base sets, an accepted EmberBSD kernel, the corrected static
+`fsck_ffs`, and the Ports GDB 18.1 package closure. Offline first-boot package
+installation and live split-DWARF debugging after reboot pass in QEMU/HVF.
+This is a bounded development image, not a complete OS rebuilt with GCC16
+or a physical-board installation image.
+
 For an AArch64 desktop VM, see the [UTM framebuffer configuration](ember/boot/utm-framebuffer.md).
 It documents the PCI ownership fix, the `viogpu` boot override and the
 visible-display regression check.

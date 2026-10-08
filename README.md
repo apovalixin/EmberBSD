@@ -433,8 +433,13 @@ on every board in the hardware catalog.
   and standard supplementary type conversion, including malformed-input
   rejection. These checks do not cover DWP packages or every DWARF consumer.
   [Ports GDB 18.1](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain/gdb)
-  is installed in that VM and passes external-DWARF, live FP-register and
-  signal-unwinding checks. Its integration into release images remains pending.
+  is installed as a checked pkgsrc package and passes external-DWARF,
+  live FP-register and signal-unwinding checks. Its expanded matrix covers
+  DWARF2–5, DWARF32/64, DWP, type units and compressed sections; two valid
+  `DW_OP_entry_value` cases remain unsupported. The OS-owned
+  [development image](ember/image/README.md) installs the pinned package
+  closure offline and passes live split-DWARF debugging after a normal reboot
+  in an AArch64 VM. It includes the corrected FFS primary-superblock selector.
   Full OS builds
   with GCC16 and general pkgsrc cross-package builds remain unvalidated.
   C11/C++20 threads, TLS and shared-library

@@ -45,9 +45,17 @@ Separately, [Ports GDB 18.1](https://github.com/oxtech-ember/EmberBSD-Ports/tree
 passes all eight external-object cases and live DWARF32/64 debugging in
 the same VM. Its native backend repairs FP register ordering and signal
 unwinding; Unicode conversion and malformed supplementary metadata are
-also checked. It is the installed active debugger there. The base source
-import remains GDB 15.1, and release-image/pkgsrc integration of the current
-Ports debugger is separate work. Neither check establishes every DWARF form.
+also checked. It is registered as a pkgsrc package and selected by `/usr/bin/gdb`.
+The [expanded installed matrix](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/development-toolchain/gdb/dwarf-variants.md)
+passes 32 format cases, four additional DWP helper-CU checks, 22 expression
+cases and 14 agent-expression checks. Two valid `DW_OP_entry_value` cases
+remain unsupported, so this is not universal DWARF conformance.
+
+The [development image](../image/README.md) includes this package and passes
+offline installation, a normal reboot and live split-DWARF32/64 debugging.
+The base source import remains GDB 15.1; image assembly removes its executable
+entry points and selects the Ports package. GDB's DWP results do not extend
+the CTF converter's accepted scope.
 
 ## Build and check the host readers
 
