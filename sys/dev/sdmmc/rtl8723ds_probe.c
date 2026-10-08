@@ -116,7 +116,7 @@ rtl8723ds_probe_attach(device_t parent, device_t self, void *aux)
 	if (error != 0)
 		goto fail;
 	stage = "CCCR function ready";
-	error = rtl8723ds_read8(&ops, 0, SD_IO_CCCR_FN_READY, &ready);
+	error = rtl8723ds_read8(&ops, 0, SD_IO_CCCR_FN_IOREADY, &ready);
 	if (error != 0)
 		goto fail;
 	aprint_normal_dev(self, "CCCR enable=%02x ready=%02x (unchanged)\n",
