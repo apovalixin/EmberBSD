@@ -44,6 +44,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/endian.h>
 #include <sys/evcnt.h>
 #include <sys/kernel.h>
+#include <sys/kauth.h>
 #include <sys/kmem.h>
 #include <sys/mbuf.h>
 #include <sys/mutex.h>
@@ -58,12 +59,15 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <net/if_dl.h>
 #include <net/if_ether.h>
 #include <net/if_media.h>
+#include <net/route.h>
 
 #include <netinet/in.h>
 
 #include <net80211/ieee80211_var.h>
 
 #include <dev/firmload.h>
+#include <dev/ic/fullmac_sae.h>
+#include <dev/sdmmc/if_aicwf_sae.h>
 #include <dev/sdmmc/sdmmcchip.h>
 #include <dev/sdmmc/sdmmcvar.h>
 
@@ -148,6 +152,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define	AICWF_MM_KEY_ADD_REQ		0x0024
 #define	AICWF_MM_KEY_ADD_CFM		0x0025
 #define	 AICWF_CIPHER_CCMP		2
+#define	 AICWF_CIPHER_BIP		5
 #define	 AICWF_STA_NONE			0xff	/* a group key */
 #define	AICWF_MM_KEY_DEL_REQ		0x0026
 #define	AICWF_MM_KEY_DEL_CFM		0x0027
@@ -177,6 +182,12 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define	AICWF_SM_DISCONNECT_REQ		0x1803
 #define	AICWF_SM_DISCONNECT_CFM		0x1804
 #define	AICWF_SM_DISCONNECT_IND		0x1805
+#define	AICWF_SM_EXTERNAL_AUTH_IND	0x1806
+#define	AICWF_SM_EXTERNAL_AUTH_RSP	0x1807
+#define	AICWF_SM_EXTERNAL_AUTH_CFM	0x180c
+#define	 AICWF_CONNECT_MFP		__BIT(4)
+#define	 AICWF_FEATURE_MFP		__BIT(13)
+#define	 AICWF_AUTH_SAE			3
 #define	 AICWF_CONNECT_PORT_HOST	__BIT(0) /* the host opens the port */
 #define	 AICWF_CONNECT_WPA		__BIT(3)
 
@@ -187,6 +198,8 @@ __KERNEL_RCSID(0, "$NetBSD$");
  */
 #define	AICWF_TXDESC_LEN		28
 #define	AICWF_HWQ_BE			1
+#define	AICWF_HWQ_VO			3
+#define	AICWF_TX_MGMT			__BIT(3)
 #define	AICWF_TID_NONE			0xff
 #define	AICWF_TX_RESERVE		2	/* buffers left to messages */
 
@@ -405,6 +418,17 @@ struct aicwf_softc {
 	bool			sc_qos;
 	uint8_t			sc_ap;		/* station index of the AP */
 	uint8_t			sc_hwkey[AICWF_KEY_SLOTS];
+	uint16_t		sc_sae_caps;
+	bool			sc_sae_enabled;
+	bool			sc_sae_pending;
+	bool			sc_sae_authenticated;
+	uint32_t		sc_sae_generation;
+	uint8_t			sc_sae_bssid[ETHER_ADDR_LEN];
+	uint8_t			sc_igtk[2];
+	struct evcnt		sc_ev_sae_start;
+	struct evcnt		sc_ev_sae_rx;
+	struct evcnt		sc_ev_sae_tx;
+	struct evcnt		sc_ev_sae_drop;
 };
 
 static int	aicwf_match(device_t, cfdata_t, void *);
@@ -418,6 +442,8 @@ static void	aicwf_scan_done(struct aicwf_softc *);
 static void	aicwf_connect_ind(struct aicwf_softc *, const uint8_t *,
 		    size_t);
 static void	aicwf_disconnect_ind(struct aicwf_softc *);
+static void	aicwf_sae_event(struct aicwf_softc *, bool,
+		    const uint8_t *, size_t);
 static void	aicwf_rx_data(struct aicwf_softc *, const uint8_t *, size_t);
 static void	aicwf_reorder_flush(struct aicwf_softc *, int, bool);
 static void	aicwf_reorder_timeout(void *);
@@ -529,8 +555,8 @@ aicwf_write(struct aicwf_softc *sc, size_t len, u_int reserve)
  * confirmation are copied to cfm, which holds cfm_len bytes.
  */
 static int
-aicwf_cmd(struct aicwf_softc *sc, uint16_t id, const void *param,
-    size_t param_len, uint16_t cfm_id, void *cfm, size_t cfm_len)
+aicwf_cmd_reply(struct aicwf_softc *sc, uint16_t id, const void *param,
+    size_t param_len, uint16_t cfm_id, void *cfm, size_t cfm_len, bool strict)
 {
 	uint8_t * const buf = sc->sc_txbuf;
 	size_t len;
@@ -560,10 +586,15 @@ aicwf_cmd(struct aicwf_softc *sc, uint16_t id, const void *param,
 	sc->sc_cfm_done = false;
 
 	error = aicwf_write(sc, len, 0);
+	if (strict)
+		explicit_memset(buf + AICWF_TX_MSG_OFFSET +
+		    AICWF_MSG_HDR_LEN, 0, param_len);
 	while (error == 0 && !sc->sc_cfm_done) {
 		error = cv_timedwait(&sc->sc_cv, &sc->sc_lock,
 		    mstohz(AICWF_CMD_TIMEOUT_MS));
 	}
+	if (error == 0 && strict && sc->sc_cfm_len < cfm_len)
+		error = EPROTO;
 	if (error == 0 && cfm_len != 0) {
 		/* A shorter answer reads as zeros past its end. */
 		memset(cfm, 0, cfm_len);
@@ -578,8 +609,17 @@ aicwf_cmd(struct aicwf_softc *sc, uint16_t id, const void *param,
 	return error;
 }
 
+static int
+aicwf_cmd(struct aicwf_softc *sc, uint16_t id, const void *param,
+    size_t param_len, uint16_t cfm_id, void *cfm, size_t cfm_len)
+{
+	return aicwf_cmd_reply(sc, id, param, param_len, cfm_id, cfm,
+	    cfm_len, false);
+}
+
 static void
-aicwf_rx_msg(struct aicwf_softc *sc, const uint8_t *msg, size_t len)
+aicwf_rx_msg
+(struct aicwf_softc *sc, const uint8_t *msg, size_t len)
 {
 	if (len < AICWF_RX_MSG_PARAM)
 		return;
@@ -596,6 +636,9 @@ aicwf_rx_msg(struct aicwf_softc *sc, const uint8_t *msg, size_t len)
 		return;
 	case AICWF_SCANU_START_CFM:
 		aicwf_scan_done(sc);
+		return;
+	case AICWF_SM_EXTERNAL_AUTH_IND:
+		aicwf_sae_event(sc, true, msg + AICWF_RX_MSG_PARAM, param_len);
 		return;
 	case AICWF_SM_CONNECT_IND:
 		aicwf_connect_ind(sc, msg + AICWF_RX_MSG_PARAM, param_len);
@@ -1068,6 +1111,13 @@ aicwf_fw_init(struct aicwf_softc *sc)
 	    le32dec(cfm + 12), le32dec(cfm + 16), le32dec(cfm + 20),
 	    le16dec(cfm + 24), cfm[26]);
 
+	if (le32dec(cfm) == 0x06090101 &&
+	    (le32dec(cfm + 20) & AICWF_FEATURE_MFP) != 0) {
+		sc->sc_sae_caps = IEEE80211_SAE_CAP_EXTERNAL |
+		    IEEE80211_SAE_CAP_PMF;
+		aprint_normal_dev(sc->sc_dev, "external SAE and firmware PMF available\n");
+	}
+
 	/*
 	 * Capabilities: 802.11n with one stream in channels up to 40 MHz
 	 * wide. The firmware builds the association request from them.
@@ -1259,13 +1309,218 @@ aicwf_scan_done(struct aicwf_softc *sc)
 	splx(s);
 }
 
+/*
+ * Firmware protocol references: Radxa's AIC8800 SDIO driver, revision
+ * d13d07963cd15d731e2895e8288a04cca6152ac9, lmac_msg.h and rwnx_tx.c.
+ * This is an independent BSD implementation of that wire interface.
+ */
+static void
+aicwf_sae_event(struct aicwf_softc *sc, bool start, const uint8_t *data,
+    size_t len)
+{
+	struct ieee80211com * const ic = &sc->sc_ic;
+	struct ieee80211req_sae *req;
+
+	sc->sc_ev_sae_drop.ev_count++;
+	if (!sc->sc_if_attached || !sc->sc_sae_enabled ||
+	    !sc->sc_connecting || ic->ic_state != IEEE80211_S_AUTH ||
+	    !IEEE80211_ADDR_EQ(ic->ic_bss->ni_bssid, sc->sc_sae_bssid))
+		return;
+	if (start) {
+		if (!aicwf_sae_request_valid(data, len, sc->sc_vif,
+		    sc->sc_sae_bssid, ic->ic_bss->ni_essid,
+		    ic->ic_bss->ni_esslen))
+			return;
+		sc->sc_sae_pending = true;
+		sc->sc_ev_sae_start.ev_count++;
+		len = data[1];
+		data += 2;
+	} else {
+		if (!sc->sc_sae_pending ||
+		    !aicwf_sae_frame_valid(data, len, ic->ic_myaddr,
+		    sc->sc_sae_bssid, sc->sc_sae_bssid))
+			return;
+		sc->sc_ev_sae_rx.ev_count++;
+	}
+	req = kmem_zalloc(sizeof(*req), KM_SLEEP);
+	req->version = IEEE80211_SAE_VERSION;
+	req->generation = sc->sc_sae_generation;
+	req->op = start ? IEEE80211_SAE_START : IEEE80211_SAE_RX_FRAME;
+	req->len = len;
+	memcpy(req->bssid, sc->sc_sae_bssid, ETHER_ADDR_LEN);
+	memcpy(req->data, data, len);
+	rt_ieee80211msg(ic->ic_ifp, RTM_IEEE80211_SAE, req,
+	    offsetof(struct ieee80211req_sae, data) + len);
+	kmem_free(req, sizeof(*req));
+	sc->sc_ev_sae_drop.ev_count--;
+}
+
+static int
+aicwf_sae_tx(struct aicwf_softc *sc, const uint8_t *frame, size_t len)
+{
+	uint8_t * const buf = sc->sc_txbuf;
+	uint8_t * const desc = buf + AICWF_HDR_LEN;
+	int error;
+
+	mutex_enter(&sc->sc_lock);
+	le16enc(buf, AICWF_TXDESC_LEN + len);
+	buf[2] = AICWF_TYPE_DATA;
+	buf[3] = aicwf_crc8(buf, 3);
+	memset(desc, 0, AICWF_TXDESC_LEN);
+	le16enc(desc, len);
+	memcpy(desc + 8, frame + 4, ETHER_ADDR_LEN);
+	memcpy(desc + 14, frame + 10, ETHER_ADDR_LEN);
+	desc[22] = AICWF_HWQ_VO;
+	desc[23] = AICWF_TID_NONE;
+	desc[24] = sc->sc_vif;
+	desc[25] = AICWF_STA_NONE;
+	le16enc(desc + 26, AICWF_TX_MGMT);
+	memcpy(desc + AICWF_TXDESC_LEN, frame, len);
+	error = aicwf_write(sc, AICWF_HDR_LEN + AICWF_TXDESC_LEN + len,
+	    AICWF_TX_RESERVE);
+	mutex_exit(&sc->sc_lock);
+	if (error == 0)
+		sc->sc_ev_sae_tx.ev_count++;
+	return error;
+}
+
+static int
+aicwf_sae_ioctl(struct aicwf_softc *sc, u_long cmd, struct ieee80211req *ireq)
+{
+	struct ieee80211com * const ic = &sc->sc_ic;
+	struct ieee80211req_sae *req;
+	uint8_t wire[44], cfm[4] = { 0xff };
+	uint16_t index;
+	int error;
+
+	if (cmd == SIOCG80211) {
+		if (ireq->i_len != 0)
+			return EINVAL;
+		ireq->i_val = sc->sc_sae_caps;
+		return 0;
+	}
+	error = kauth_authorize_network(kauth_cred_get(),
+	    KAUTH_NETWORK_INTERFACE, KAUTH_REQ_NETWORK_INTERFACE_SETPRIV,
+	    ic->ic_ifp, (void *)cmd, NULL);
+	if (error != 0)
+		return error;
+	if (ireq->i_len != sizeof(*req))
+		return EINVAL;
+	req = kmem_zalloc(sizeof(*req), KM_SLEEP);
+	error = copyin(ireq->i_data, req, sizeof(*req));
+	if (error != 0)
+		goto out;
+	error = EINVAL;
+	if (req->version != IEEE80211_SAE_VERSION ||
+	    req->reserved[0] != 0 || req->reserved[1] != 0 ||
+	    req->len > sizeof(req->data))
+		goto out;
+	if (req->op == IEEE80211_SAE_CONFIGURE) {
+		if (req->len != 1 || req->data[0] > 1 ||
+		    (req->data[0] && (req->generation == 0 ||
+		    IEEE80211_IS_MULTICAST(req->bssid) ||
+		    memcmp(req->bssid, "/* Ask the firmware to join the network net80211 has chosen. *//* Ask the firmware to join the network net80211 has chosen. *//* Ask the firmware to join the network net80211 has chosen. *//* Ask the firmware to join the network net80211 has chosen. *//* Ask the firmware to join the network net80211 has chosen. *//* Ask the firmware to join the network net80211 has chosen. */", 6) == 0)))
+			goto out;
+		if (req->data[0] && (sc->sc_sae_caps == 0 ||
+		    ic->ic_opmode != IEEE80211_M_STA)) {
+			error = EOPNOTSUPP;
+			goto out;
+		}
+		sc->sc_sae_enabled = req->data[0] != 0;
+		sc->sc_sae_pending = false;
+		sc->sc_sae_authenticated = false;
+		sc->sc_sae_generation = req->generation;
+		memcpy(sc->sc_sae_bssid, req->bssid, ETHER_ADDR_LEN);
+		error = 0;
+		goto out;
+	}
+	if (!sc->sc_sae_enabled || req->generation != sc->sc_sae_generation ||
+	    !IEEE80211_ADDR_EQ(req->bssid, sc->sc_sae_bssid) ||
+	    !IEEE80211_ADDR_EQ(req->bssid, ic->ic_bss->ni_bssid)) {
+		error = ESTALE;
+		goto out;
+	}
+	memset(wire, 0, sizeof(wire));
+	switch (req->op) {
+	case IEEE80211_SAE_AUTH_STATUS:
+		if (req->len != 2 || !sc->sc_sae_pending ||
+		    !sc->sc_connecting || ic->ic_state != IEEE80211_S_AUTH)
+			break;
+		wire[0] = sc->sc_vif;
+		le16enc(wire + 2, le16dec(req->data));
+		/* A successful association can arrive before the confirmation. */
+		sc->sc_sae_pending = false;
+		sc->sc_sae_authenticated = le16dec(req->data) == 0;
+		error = aicwf_cmd_reply(sc, AICWF_SM_EXTERNAL_AUTH_RSP, wire, 4,
+		    AICWF_SM_EXTERNAL_AUTH_CFM, NULL, 0, true);
+		if (error != 0)
+			sc->sc_sae_authenticated = false;
+		break;
+	case IEEE80211_SAE_TX_FRAME:
+		if (!sc->sc_sae_pending || !sc->sc_connecting ||
+		    ic->ic_state != IEEE80211_S_AUTH ||
+		    !aicwf_sae_frame_valid(req->data, req->len, req->bssid,
+		    ic->ic_myaddr, req->bssid))
+			break;
+		error = aicwf_sae_tx(sc, req->data, req->len);
+		break;
+	case IEEE80211_SAE_SET_IGTK:
+	case IEEE80211_SAE_DELETE_IGTK:
+		if (req->len != (req->op == IEEE80211_SAE_SET_IGTK ? 24 : 2))
+			break;
+		index = le16dec(req->data);
+		if (index != 4 && index != 5)
+			break;
+		if (req->op == IEEE80211_SAE_DELETE_IGTK) {
+			if (sc->sc_igtk[index - 4] == AICWF_HWKEY_NONE) {
+				error = 0;
+				break;
+			}
+			wire[0] = sc->sc_igtk[index - 4];
+			error = aicwf_cmd_reply(sc, AICWF_MM_KEY_DEL_REQ, wire, 1,
+			    AICWF_MM_KEY_DEL_CFM, NULL, 0, true);
+			if (error == 0)
+				sc->sc_igtk[index - 4] = AICWF_HWKEY_NONE;
+			break;
+		}
+		if (!sc->sc_connected || !sc->sc_sae_authenticated ||
+		    ic->ic_state != IEEE80211_S_RUN)
+			break;
+		if (!aicwf_sae_igtk_valid(req->data, req->len)) {
+			device_printf(sc->sc_dev, "nonzero initial IGTK IPN is unsupported\n");
+			error = EOPNOTSUPP;
+			break;
+		}
+		wire[0] = index;
+		wire[1] = AICWF_STA_NONE;
+		wire[4] = 16;
+		memcpy(wire + 8, req->data + 8, 16);
+		wire[40] = AICWF_CIPHER_BIP;
+		wire[41] = sc->sc_vif;
+		error = aicwf_cmd_reply(sc, AICWF_MM_KEY_ADD_REQ, wire, sizeof(wire),
+		    AICWF_MM_KEY_ADD_CFM, cfm, sizeof(cfm), true);
+		if (error == 0 && cfm[0] != 0)
+			error = EIO;
+		if (error == 0)
+			sc->sc_igtk[index - 4] = cfm[1];
+		break;
+	default:
+		break;
+	}
+	explicit_memset(wire, 0, sizeof(wire));
+out:
+	explicit_memset(req, 0, sizeof(*req));
+	kmem_free(req, sizeof(*req));
+	return error;
+}
+
 /* Ask the firmware to join the network net80211 has chosen. */
 static void
 aicwf_connect(struct aicwf_softc *sc)
 {
 	struct ieee80211com * const ic = &sc->sc_ic;
 	struct ieee80211_node * const ni = ic->ic_bss;
-	uint8_t req[320], cfm[1];
+	uint8_t req[320], cfm[1] = { 0xff };
 	uint32_t flags = 0;
 	int error;
 
@@ -1287,13 +1542,23 @@ aicwf_connect(struct aicwf_softc *sc)
 			memcpy(req + 64, ic->ic_opt_ie, ic->ic_opt_ie_len);
 		}
 	}
+	if (sc->sc_sae_enabled) {
+		if (!fullmac_sae_rsn_valid(ic->ic_opt_ie, ic->ic_opt_ie_len) ||
+		    !IEEE80211_ADDR_EQ(sc->sc_sae_bssid, ni->ni_bssid)) {
+			device_printf(sc->sc_dev, "SAE requires CCMP, required PMF and the selected peer\n");
+			return;
+		}
+		flags |= AICWF_CONNECT_MFP;
+	}
 	le32enc(req + 48, flags);
-	req[59] = IEEE80211_AUTH_ALG_OPEN;
+	req[59] = sc->sc_sae_enabled ? AICWF_AUTH_SAE : IEEE80211_AUTH_ALG_OPEN;
 	req[61] = sc->sc_vif;
 
+	sc->sc_sae_pending = false;
+	sc->sc_sae_authenticated = false;
 	sc->sc_connecting = true;
-	error = aicwf_cmd(sc, AICWF_SM_CONNECT_REQ, req, sizeof(req),
-	    AICWF_SM_CONNECT_CFM, cfm, sizeof(cfm));
+	error = aicwf_cmd_reply(sc, AICWF_SM_CONNECT_REQ, req, sizeof(req),
+	    AICWF_SM_CONNECT_CFM, cfm, sizeof(cfm), true);
 	if (error != 0 || cfm[0] != 0) {
 		/* net80211 times the join out and scans again. */
 		device_printf(sc->sc_dev, "connect request failed: %d, %u\n",
@@ -1314,6 +1579,13 @@ aicwf_connect_ind(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 
 	const u_int status = le16dec(ind);
 	s = splnet();
+	if (status == 0 && sc->sc_sae_enabled && !sc->sc_sae_authenticated) {
+		device_printf(sc->sc_dev, "association before SAE completion rejected\n");
+		sc->sc_connecting = true;
+		ieee80211_new_state(ic, IEEE80211_S_INIT, -1);
+		splx(s);
+		return;
+	}
 	if (status == 0) {
 		sc->sc_ap = ind[10];
 		sc->sc_qos = ind[12] != 0;
@@ -1348,6 +1620,9 @@ aicwf_disconnect_ind(struct aicwf_softc *sc)
 	if (!sc->sc_if_attached || !sc->sc_connected)
 		return;
 	sc->sc_connected = false;
+	sc->sc_sae_pending = false;
+	sc->sc_sae_authenticated = false;
+	memset(sc->sc_igtk, AICWF_HWKEY_NONE, sizeof(sc->sc_igtk));
 	aicwf_reorder_flush(sc, -1, false);
 
 	s = splnet();
@@ -1356,11 +1631,29 @@ aicwf_disconnect_ind(struct aicwf_softc *sc)
 	splx(s);
 }
 
+/* Delete management keys before the firmware can reuse their hardware slots. */
+static void
+aicwf_sae_clear_keys(struct aicwf_softc *sc)
+{
+	unsigned i;
+
+	for (i = 0; i < __arraycount(sc->sc_igtk); i++) {
+		if (sc->sc_igtk[i] == AICWF_HWKEY_NONE)
+			continue;
+		(void)aicwf_cmd_reply(sc, AICWF_MM_KEY_DEL_REQ,
+		    &sc->sc_igtk[i], 1, AICWF_MM_KEY_DEL_CFM, NULL, 0, true);
+		sc->sc_igtk[i] = AICWF_HWKEY_NONE;
+	}
+}
+
 static void
 aicwf_disconnect(struct aicwf_softc *sc)
 {
 	uint8_t req[4];
 
+	sc->sc_sae_pending = false;
+	sc->sc_sae_authenticated = false;
+	aicwf_sae_clear_keys(sc);
 	if (!sc->sc_connected && !sc->sc_connecting)
 		return;
 	sc->sc_connected = false;
@@ -1424,8 +1717,12 @@ aicwf_newstate_cb(struct aicwf_softc *sc, enum ieee80211_state nstate,
 		break;
 
 	case IEEE80211_S_AUTH:
+		/* Firmware may request SAE before CONNECT_CFM arrives. */
+		s = splnet();
+		sc->sc_newstate(ic, nstate, arg);
+		splx(s);
 		aicwf_connect(sc);
-		break;
+		return;
 
 	default:
 		break;
@@ -1871,7 +2168,7 @@ aicwf_rx_data(struct aicwf_softc *sc, const uint8_t *pkt, size_t mpdu_len)
 	const uint8_t * const wh = pkt + AICWF_RXHDR_LEN;
 	const uint32_t status = le32dec(pkt + AICWF_RXHDR_STATUS);
 	const uint32_t flags = le32dec(pkt + AICWF_RXHDR_FLAGS);
-	const uint16_t seq = le16dec(wh + 22) >> 4;
+	uint16_t seq;
 	struct mbuf *m = NULL, **tailp = &m;
 	bool qos = false, amsdu = false;
 	u_int tid = 0;
@@ -1879,11 +2176,17 @@ aicwf_rx_data(struct aicwf_softc *sc, const uint8_t *pkt, size_t mpdu_len)
 
 	if (!sc->sc_if_attached || (flags & AICWF_RX_FLAG_UPLOAD) == 0)
 		return;
+	if (mpdu_len >= 2 && wh[0] == IEEE80211_FC0_SUBTYPE_AUTH) {
+		if (((flags >> 8) & 0xff) == sc->sc_vif)
+			aicwf_sae_event(sc, false, wh, mpdu_len);
+		return;
+	}
 	/* Beacons and data frames without a body come up too. */
 	if (mpdu_len < sizeof(struct ieee80211_frame) + 8 ||
 	    (wh[0] & (IEEE80211_FC0_TYPE_MASK |
 	    IEEE80211_FC0_SUBTYPE_NODATA)) != IEEE80211_FC0_TYPE_DATA)
 		return;
+	seq = le16dec(wh + 22) >> 4;
 	/* Whole frames from the access point. */
 	if ((wh[1] & IEEE80211_FC1_DIR_MASK) != IEEE80211_FC1_DIR_FROMDS ||
 	    (wh[1] & IEEE80211_FC1_MORE_FRAG) != 0 || (wh[22] & 0x0f) != 0)
@@ -2003,6 +2306,9 @@ aicwf_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 	struct ieee80211com * const ic = &sc->sc_ic;
 	int s, error = 0, oflags;
 
+	if ((cmd == SIOCG80211 || cmd == SIOCS80211) &&
+	    ((struct ieee80211req *)data)->i_type == IEEE80211_IOC_SAE)
+		return aicwf_sae_ioctl(sc, cmd, data);
 	s = splnet();
 
 	switch (cmd) {
@@ -2127,6 +2433,15 @@ aicwf_ifattach(struct aicwf_softc *sc)
 
 	ieee80211_announce(ic);
 
+	memset(sc->sc_igtk, AICWF_HWKEY_NONE, sizeof(sc->sc_igtk));
+	evcnt_attach_dynamic(&sc->sc_ev_sae_start, EVCNT_TYPE_MISC, NULL,
+	    device_xname(sc->sc_dev), "SAE starts");
+	evcnt_attach_dynamic(&sc->sc_ev_sae_rx, EVCNT_TYPE_MISC, NULL,
+	    device_xname(sc->sc_dev), "SAE received");
+	evcnt_attach_dynamic(&sc->sc_ev_sae_tx, EVCNT_TYPE_MISC, NULL,
+	    device_xname(sc->sc_dev), "SAE sent");
+	evcnt_attach_dynamic(&sc->sc_ev_sae_drop, EVCNT_TYPE_MISC, NULL,
+	    device_xname(sc->sc_dev), "SAE rejected");
 	sc->sc_if_attached = true;
 }
 

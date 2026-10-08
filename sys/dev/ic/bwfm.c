@@ -2402,7 +2402,7 @@ bwfm_sae_connect(struct bwfm_softc *sc)
 	size_t i;
 	int error;
 
-	if (!bwfm_sae_rsn_valid(ic->ic_opt_ie, ic->ic_opt_ie_len) ||
+	if (!fullmac_sae_rsn_valid(ic->ic_opt_ie, ic->ic_opt_ie_len) ||
 	    !IEEE80211_ADDR_EQ(sc->sc_sae_bssid, ic->ic_bss->ni_bssid)) {
 		printf("%s: SAE requires CCMP, required PMF and the selected peer\n",
 		    DEVNAME(sc));
