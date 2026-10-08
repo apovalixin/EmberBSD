@@ -133,6 +133,24 @@ sun60i_gpu_clock_report(struct sun60i_gpu_softc *sc,
 	}
 }
 
+static void
+sun60i_gpu_clock_terminal(struct sun60i_gpu_softc *sc, struct clk *gpu)
+{
+	struct sun60i_a733_gpu_state state;
+	int error;
+
+	/* A fresh observation cannot replace the failure or authorize GPU access. */
+	aprint_normal_dev(sc->sc_dev, "terminal CCU observation after %s\n",
+	    sc->sc_stage);
+	error = sun60i_a733_ccu_gpu_inspect(gpu, &state);
+	if (error != 0) {
+		aprint_normal_dev(sc->sc_dev,
+		    "terminal CCU observation unavailable: %d\n", error);
+		return;
+	}
+	sun60i_gpu_clock_report(sc, &state);
+}
+
 static int
 sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
 {
@@ -263,10 +281,8 @@ sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
 		sc->sc_retained = true;
 		sc->sc_stage = "experimental 400 MHz preparation";
 		error = sun60i_a733_ccu_gpu_prepare(gpu, sc, &sc->sc_retained);
-		if (error != 0)
-			goto out;
-		sc->sc_stage = "experimental CORE ON/Q acceptance";
-		error = sun60i_a733_pck_gpu_wait(power_node, sc);
+		if (error == ETIMEDOUT)
+			sc->sc_stage = "experimental clock UPDATE completion";
 		if (error != 0)
 			goto out;
 	}
@@ -293,6 +309,16 @@ sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
 	}
 
 	if (prepare) {
+		/* Completed UPDATE and strict CCU readiness precede CORE waiting. */
+		sc->sc_stage = "experimental prepared clock check";
+		if (sc->sc_core_hz != 400000000 || sc->sc_bus_hz != 200000000) {
+			error = EBUSY;
+			goto out;
+		}
+		sc->sc_stage = "experimental CORE ON/Q acceptance";
+		error = sun60i_a733_pck_gpu_wait(power_node, sc);
+		if (error != 0)
+			goto out;
 		/* No GPU mapping is permitted on a lost supply or domain check. */
 		sc->sc_stage = "experimental final supply check";
 		error = fdtbus_regulator_is_enabled(supply, &enabled);
@@ -340,6 +366,8 @@ sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
 	sc->sc_stage = "PBVNC value";
 	error = id == A733_GPU_EXPECTED ? 0 : ENODEV;
 out:
+	if (prepare && sc->sc_retained && error == ETIMEDOUT)
+		sun60i_gpu_clock_terminal(sc, gpu);
 	if (!sc->sc_retained) {
 		if (clock_reserved)
 			(void)sun60i_a733_ccu_gpu_release(gpu, sc);

@@ -51,7 +51,7 @@ typedef size_t bus_size_t;
 #define aprint_error(...) ((void)0)
 #define aprint_normal(...) ((void)0)
 #define aprint_naive(...) ((void)0)
-#define delay(n) ((void)0)
+static void delay(unsigned);
 struct clk_domain { void *priv; };
 struct clk { struct clk_domain *domain; const char *name; u_int flags; };
 struct fdt_attach_args { int faa_phandle; bus_space_tag_t faa_bst; };
@@ -69,6 +69,8 @@ static unsigned reject_write_number;
 static bus_size_t write_regs[64];
 static uint32_t write_vals[64];
 static unsigned writes, barriers, checks, reads;
+static bool update_model;
+static unsigned update_clear_us, update_delay_us, update_reads;
 static unsigned unstable_read, hosc_reads, parent_queries;
 static bus_size_t unstable_reg;
 static u_int hosc_rate = 24000000;
@@ -114,6 +116,12 @@ bus_space_read_4(bus_space_tag_t tag, bus_space_handle_t handle, bus_size_t off)
 {
 	assert(off < sizeof(registers) && off % 4 == 0);
 	reads++;
+	if (update_model && off == 0xb20 &&
+	    (registers[off / 4] & __BIT(31)) != 0) {
+		update_reads++;
+		if (update_delay_us >= update_clear_us)
+			registers[off / 4] &= ~__BIT(27);
+	}
 	if ((reads == unstable_read && off == unstable_reg) ||
 	    (unstable_all && reads > 11 && reads <= 22))
 		registers[off / 4] ^= __BIT(0);
@@ -130,7 +138,19 @@ bus_space_write_4(bus_space_tag_t tag, bus_space_handle_t handle,
 	writes++;
 	last_write = val;
 	if (!reject_write && writes != reject_write_number)
-		registers[off / 4] = off == 0xb20 ? val & ~__BIT(27) : val;
+		registers[off / 4] = off == 0xb20 && !update_model ?
+		    val & ~__BIT(27) : val;
+}
+static void
+delay(unsigned us)
+{
+	if (!update_model)
+		return;
+	/* UPDATE cannot finish until the last existing local write. */
+	assert(writes == 4 && (registers[0xb20 / 4] & __BIT(31)) != 0);
+	assert((registers[0xb24 / 4] & 0x10001) == 0x10001);
+	assert(us == 10 && update_delay_us < 10000);
+	update_delay_us += us;
 }
 static void
 bus_space_barrier(bus_space_tag_t tag, bus_space_handle_t handle,
@@ -223,6 +243,8 @@ reset(void)
 	memset(registers, 0, sizeof(registers));
 	memset(&sun60i_gpu_lease, 0, sizeof(sun60i_gpu_lease));
 	writes = barriers = reads = hosc_reads = dcxo_queries = 0;
+	update_model = false;
+	update_clear_us = update_delay_us = update_reads = 0;
 	reject_write_number = 0;
 	prepare_test = false;
 	unstable_read = 0;
@@ -732,6 +754,40 @@ test_gpu_prepare(void)
 	printf("A733 experimental CCU ownership: %u checks passed\n", checks - start);
 }
 
+static void
+test_gpu_update_completion(void)
+{
+	const unsigned clear_us[] = { 30, 0, 10000, 10010, UINT_MAX };
+	const int owner = 1;
+	unsigned start = checks;
+	bool retained;
+
+	for (u_int n = 0; n < __arraycount(clear_us); n++) {
+		prepare_fixture(); retained = false;
+		update_model = true;
+		update_clear_us = clear_us[n];
+		CHECK(sun60i_a733_ccu_gpu_reserve(CLOCK(A733_CLK_GPU0), &owner) == 0);
+		fprintf(stderr, "UPDATE fixture: clear after %u us\n", clear_us[n]);
+		CHECK(sun60i_a733_ccu_gpu_prepare(CLOCK(A733_CLK_GPU0),
+		    &owner, &retained) == (n < 3 ? 0 : ETIMEDOUT));
+		CHECK(update_delay_us == (n < 3 ? clear_us[n] : 10000));
+		/* Final write readback plus the bounded completion observations. */
+		CHECK(update_reads == 2 + update_delay_us / 10);
+		CHECK((REG(GPU0_CLK_REG) & GPU_CLK_UPDATE) ==
+		    (n < 3 ? 0 : GPU_CLK_UPDATE));
+		CHECK(retained && writes == 4 && barriers == 4);
+		CHECK(write_regs[0] == 0xb20 && write_vals[0] == 0x0b000000);
+		CHECK(write_regs[1] == 0xb24 && write_vals[1] == 0x00010080);
+		CHECK(write_regs[2] == 0xb24 && write_vals[2] == 0x00010081);
+		CHECK(write_regs[3] == 0xb20 && write_vals[3] == 0x8b000000);
+		CHECK(sun60i_a733_ccu_gpu_release(CLOCK(A733_CLK_GPU0), &owner) == EBUSY);
+		CHECK(sun60i_a733_ccu_gpu_prepare(CLOCK(A733_CLK_GPU0), &owner,
+		    &retained) == EBUSY && writes == 4);
+	}
+	prepare_test = false;
+	printf("A733 GPU UPDATE completion: %u checks passed\n", checks - start);
+}
+
 int
 main(void)
 {
@@ -873,6 +929,7 @@ main(void)
 	test_gpu_inspect();
 	test_dcxo();
 	test_gpu_prepare();
+	test_gpu_update_completion();
 	printf("A733 accelerator clocks: %u production checks passed\n", checks);
 	return 0;
 }

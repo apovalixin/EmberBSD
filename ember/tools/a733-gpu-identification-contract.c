@@ -102,6 +102,8 @@ static bool bad_power_compat, bad_pmic, bad_supply;
 static bool missing_supply, missing_clock;
 static int reg_error, state_error, voltage_error, power_error, ready_error;
 static int map_error, peek_error, match_result;
+static unsigned inspect_calls;
+static int terminal_error;
 static bus_addr_t binding_addr;
 static bus_size_t binding_size;
 static bool supply_on, power_on;
@@ -111,6 +113,7 @@ static uint64_t pbvnc;
 static struct fdtbus_regulator regulator;
 static struct clk clock_fixture;
 static struct sun60i_a733_gpu_state clock_observation;
+static struct sun60i_a733_gpu_state terminal_observation;
 static unsigned int maps, peeks, unmaps, releases, clock_puts, checks;
 static char events[128], normal_output[4096], error_output[256];
 static size_t nevents;
@@ -258,6 +261,12 @@ sun60i_a733_ccu_gpu_inspect(struct clk *clock,
 {
 	assert(clock->acquired);
 	record('Q');
+	if (++inspect_calls > 1 && prepare_len == 0) {
+		if (terminal_error != 0)
+			return terminal_error;
+		*state = terminal_observation;
+		return 0;
+	}
 	if (ready_error == 0) {
 		*state = clock_observation;
 		state->core_hz = core_hz;
@@ -347,7 +356,7 @@ int sun60i_a733_pck_gpu_retain(int node, const void *owner)
 int sun60i_a733_ccu_gpu_prepare(struct clk *c, const void *owner, bool *held)
 { prepares++; record('W'); *held = true; return prepare_error; }
 int sun60i_a733_pck_gpu_wait(int node, const void *owner)
-{ waits++; record('Q'); return waits == 2 ? second_wait_error : wait_error; }
+{ waits++; record('K'); return waits == 2 ? second_wait_error : wait_error; }
 int sun60i_a733_ccu_gpu_ready(struct clk *c, u_int *core, u_int *bus)
 { record('F'); *core = core_hz; *bus = bus_hz; return final_ready_error; }
 #include "driver.h"
@@ -378,6 +387,7 @@ reset(void)
 	observe_len = prepare_len = -1;
 	prepare_error = reserve_error = wait_error = retain_error = 0;
 	power_reserve_error = second_wait_error = final_ready_error = 0;
+	inspect_calls = 0; terminal_error = 0;
 	prepares = reserves = waits = retains = unreserves = 0;
 	supply_calls = fail_supply_call = 0;
 	supply_len = 4;
@@ -393,6 +403,7 @@ reset(void)
 	core_hz = 400000000;
 	bus_hz = 200000000;
 	memset(&clock_observation, 0, sizeof(clock_observation));
+	memset(&terminal_observation, 0, sizeof(terminal_observation));
 	clock_observation.hosc_hz[0] = clock_observation.hosc_hz[1] = 24000000;
 	pbvnc = UINT64_C(0x00240038006800b7);
 	maps = peeks = unmaps = releases = clock_puts = 0;
@@ -526,8 +537,7 @@ test_experimental_prepare(void)
 	CHECK(sun60i_gpu_identify(&sc) == 0);
 	CHECK(prepares == 1 && reserves == 2 && retains == 1 && waits == 2);
 	CHECK(sc.sc_retained && peeks == 1 && unreserves == 0);
-	CHECK(strstr(events, "PCSVHW") != NULL);
-	CHECK(strstr(events, "SVQFMI") != NULL);
+	CHECK(strcmp(events, "ASVPCPCSVHWQKSVKFMIUcs") == 0);
 	for (u_int i = 0; i < __arraycount(errors); i++) {
 		for (u_int stage = 0; stage < 5; stage++) {
 			reset(); prepare_len = 0;
@@ -555,6 +565,50 @@ test_experimental_prepare(void)
 	unavailable(EBUSY); CHECK(sc.sc_retained && unreserves == 0);
 	reset(); prepare_len = 0; second_wait_error = EIO;
 	unavailable(EIO); CHECK(sc.sc_retained && unreserves == 0);
+	/* Complete clock readiness must precede the first CORE observation. */
+	reset(); prepare_len = 0;
+	clock_observation.reason = A733_GPU_UPDATE_PENDING;
+	clock_observation.readiness_error = EBUSY;
+	unavailable(EBUSY);
+	CHECK(waits == 0 && inspect_calls == 1 && sc.sc_retained && unreserves == 0);
+	reset(); prepare_len = 0; ready_error = ENXIO;
+	unavailable(ENXIO);
+	CHECK(waits == 0 && sc.sc_retained && unreserves == 0);
+	for (unsigned rate = 0; rate < 2; rate++) {
+		reset(); prepare_len = 0;
+		if (rate == 0) core_hz = 600000000; else bus_hz = 100000000;
+		unavailable(EBUSY);
+		CHECK(waits == 0 && sc.sc_retained && unreserves == 0);
+	}
+	/* A terminal snapshot is fresh, read-only, and preserves the timeout. */
+	for (unsigned stage = 0; stage < 3; stage++) {
+		reset(); prepare_len = 0;
+		if (stage == 0) prepare_error = ETIMEDOUT;
+		if (stage == 1) wait_error = ETIMEDOUT;
+		if (stage == 2) second_wait_error = ETIMEDOUT;
+		clock_observation.sample[0][A733_GPU_MODULE] = 0x83000000;
+		clock_observation.sample[1][A733_GPU_MODULE] = 0x83000000;
+		terminal_observation.sample[0][A733_GPU_MODULE] = 0x8b000000;
+		terminal_observation.sample[1][A733_GPU_MODULE] = 0x8b000001;
+		terminal_observation.changed = 1U << A733_GPU_MODULE;
+		terminal_observation.reason = A733_GPU_SNAPSHOT_CHANGED;
+		terminal_observation.readiness_error = EBUSY;
+		if (stage == 0) clock_observation = terminal_observation;
+		unavailable(ETIMEDOUT);
+		CHECK(waits == stage && inspect_calls == (stage == 0 ? 1 : 2));
+		CHECK(sc.sc_retained && unreserves == 0 && prepares == 1);
+		CHECK(strstr(normal_output, "terminal CCU observation after ") != NULL);
+		CHECK(strstr(normal_output, "GPU_CLK[0xb20] 0x8b000000 -> 0x8b000001") != NULL);
+		CHECK(strcmp(sc.sc_stage, stage == 0 ? "experimental clock UPDATE completion" :
+		    stage == 1 ? "experimental CORE ON/Q acceptance" :
+		    "experimental final CORE check") == 0);
+	}
+	reset(); prepare_len = 0; wait_error = ETIMEDOUT; terminal_error = EIO;
+	unavailable(ETIMEDOUT);
+	CHECK(inspect_calls == 2 && waits == 1 && sc.sc_retained && unreserves == 0);
+	CHECK(strstr(normal_output, "terminal CCU observation unavailable:") != NULL);
+	CHECK(strstr(normal_output, "GPU_CLK[") == NULL);
+	CHECK(strcmp(sc.sc_stage, "experimental CORE ON/Q acceptance") == 0);
 	reset(); prepare_len = 0; map_error = ENOMEM;
 	CHECK(sun60i_gpu_identify(&sc) == ENOMEM && sc.sc_retained && unreserves == 0);
 	reset(); prepare_len = 0; peek_error = 1;

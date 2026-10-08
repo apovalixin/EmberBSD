@@ -63,6 +63,10 @@ mutate wrong-clock-selector "$ccu" sun60i_a733_ccu.c \
     'ACCEL_CLK_SEL | __BITS(3,0), __SHIFTIN(2, ACCEL_CLK_SEL));'
 mutate lost-retention "$ccu" sun60i_a733_ccu.c \
     'sun60i_gpu_lease.attempted = true;' 'sun60i_gpu_lease.attempted = false;'
+mutate update-completion-bypass "$ccu" sun60i_a733_ccu.c \
+    'if ((CCU_READ(sc, GPU0_CLK_REG) & GPU_CLK_UPDATE) == 0)' 'if (true)'
+mutate update-timeout-success "$ccu" sun60i_a733_ccu.c \
+    'error = ETIMEDOUT;' 'error = 0;'
 mutate pck-reservation-bypass "$pck" sun60i_a733_pck600.c \
     'if (sc->sc_gpu_owner != NULL &&' 'if (false && sc->sc_gpu_owner != NULL &&'
 mutate q-acceptance-bypass "$pck" sun60i_a733_pck600.c \
@@ -77,3 +81,6 @@ mutate conflicting-opt-in "$gpu" sun60i_a733_gpu.c \
     'if (prepare && observe_only)' 'if (false && prepare && observe_only)'
 mutate consumer-release-after-write "$gpu" sun60i_a733_gpu.c \
     'if (!sc->sc_retained)' 'if (true)'
+mutate terminal-snapshot-bypass "$gpu" sun60i_a733_gpu.c \
+    'if (prepare && sc->sc_retained && error == ETIMEDOUT)' \
+    'if (false && prepare && sc->sc_retained && error == ETIMEDOUT)'

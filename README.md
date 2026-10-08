@@ -322,8 +322,11 @@ on every board in the hardware catalog.
   including GLib 2.90.1, Pango 1.58.2, HarfBuzz 14.6.0 and Cairo 1.18.6, with
   normal package checks. Four installed AArch64 VM cycles pass exact font
   selection, text shaping, CPU rasterization and PNG roundtrip; two causal
-  controls detect missing drawing and ligatures. labwc client surfaces and
-  full SVG remain unaccepted.
+  controls detect missing drawing and ligatures. Installed
+  [libsfdo and session D-Bus](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/desktop-support.md)
+  also pass upstream lookup/parser tests, real method replies, name ownership
+  and error/lifecycle checks in AArch64. labwc client surfaces and full SVG
+  remain unaccepted.
   A Ports
   [host-side VirGL 1.3.0 adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/utm-virgl-host)
   preserves the upstream IOV-size correction and prevents resource publication
@@ -404,6 +407,10 @@ on every board in the hardware catalog.
   completed its GPU-local clock/reset writes but timed out waiting for CORE
   ON/Q acceptance. It stopped before GPU MMIO; the actual identity remains
   unverified. Reboot restored the normal observe-only state and gated clocks.
+  The experiment had not checked clock UPDATE completion. The corrected path
+  bounds that wait, validates CCU readiness before CORE and records terminal
+  clocks on timeout. Host and AArch64 VM software contracts pass; the correction
+  has not established the physical timeout's cause or GPU readiness.
   The missing power handshake, general shared resource management, DMA/MMU
   and command submission still require porting. These are
   porting targets, not available EmberBSD acceleration. Board bring-up,
@@ -413,8 +420,9 @@ on every board in the hardware catalog.
   now share a bounded TX/RX deadline and validate the echoed DMA address.
   Unknown completion retains the buffer and closes that channel until reboot,
   while unrelated channels can progress. Seventy software-contract cases pass
-  on macOS and in an AArch64 VM, plus cross-compilation of the native attachment
-  objects. Physical CM5 firmware acceptance and a V3D driver remain unverified.
+  on macOS and in an AArch64 VM. The complete GCC16 EMBER64 kernel and matched
+  modules build; that kernel also boots and shuts down in an isolated AArch64 VM.
+  Physical CM5 firmware acceptance and a V3D driver remain unverified.
 
 ### Board support and system builds
 

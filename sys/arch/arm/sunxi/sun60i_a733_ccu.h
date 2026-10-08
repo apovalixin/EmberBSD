@@ -65,6 +65,7 @@ int	sun60i_a733_ccu_gpu_inspect(struct clk *,
 
 /* Experimental boot ownership; release is forbidden after any attempted write. */
 int	sun60i_a733_ccu_gpu_reserve(struct clk *, const void *);
+/* Local writes, then bounded UPDATE completion; timeout retains ownership. */
 int	sun60i_a733_ccu_gpu_prepare(struct clk *, const void *, bool *);
 int	sun60i_a733_ccu_gpu_release(struct clk *, const void *);
 

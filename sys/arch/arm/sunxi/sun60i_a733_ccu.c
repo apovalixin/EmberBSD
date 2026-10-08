@@ -97,6 +97,8 @@ sun60i_a733_dcxo_query(int phandle, struct sunxi_rtc_dcxo_state *state)
 #define	ACCEL_CLK_ENABLE	__BIT(31)
 #define	ACCEL_CLK_SEL		__BITS(26,24)
 #define	GPU_CLK_UPDATE		__BIT(27)
+#define	GPU_UPDATE_POLL_US	10
+#define	GPU_UPDATE_TIMEOUT_US	10000
 #define	SMHC0_CLK_REG		0xd00
 #define	SMHC0_BGR_REG		0xd0c
 #define	SMHC1_CLK_REG		0xd10
@@ -1059,6 +1061,18 @@ sun60i_a733_ccu_gpu_prepare(struct clk *gpu, const void *owner, bool *retained)
 		goto out;
 	error = sun60i_a733_accel_write(sc, GPU0_CLK_REG,
 	    ACCEL_CLK_ENABLE, ACCEL_CLK_ENABLE);
+	if (error != 0)
+		goto out;
+	/* GPU0_UPD self-clears when the configuration becomes valid. */
+	for (u_int elapsed = 0;; elapsed += GPU_UPDATE_POLL_US) {
+		if ((CCU_READ(sc, GPU0_CLK_REG) & GPU_CLK_UPDATE) == 0)
+			break;
+		if (elapsed == GPU_UPDATE_TIMEOUT_US) {
+			error = ETIMEDOUT;
+			break;
+		}
+		delay(GPU_UPDATE_POLL_US);
+	}
 out:
 	mutex_exit(&sun60i_gpu_lease.lock);
 	return error;
