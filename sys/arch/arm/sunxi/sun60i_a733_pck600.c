@@ -182,10 +182,18 @@ sun60i_pck600_set(device_t dev, const uint32_t *data, bool enable)
 	return error;
 }
 
+struct sun60i_pck600_observation {
+	uint32_t sample[2][3];
+	bool enabled;
+	int state_error;
+};
+
 static int
-sun60i_pck600_state(struct sun60i_pck600_softc *sc, u_int id, bool *enabled)
+sun60i_pck600_observe(struct sun60i_pck600_softc *sc, u_int id,
+    struct sun60i_pck600_observation *state)
 {
 	const bus_size_t base = id * PCK600_DOMAIN_SIZE;
+	struct sun60i_pck600_observation observed = { 0 };
 	uint32_t policy, status, emulation;
 
 	KASSERT(mutex_owned(&sc->sc_lock));
@@ -194,31 +202,82 @@ sun60i_pck600_state(struct sun60i_pck600_softc *sc, u_int id, bool *enabled)
 	if (sc->sc_failed[id])
 		return EIO;
 
-	policy = sun60i_pck600_read(sc, base + PCK600_PWPR);
-	emulation = sun60i_pck600_read(sc, base + PCK600_PMER);
-	status = sun60i_pck600_read(sc, base + PCK600_PWSR);
-	/* Detect a changing firmware snapshot without requesting a transition. */
-	if (policy != sun60i_pck600_read(sc, base + PCK600_PWPR) ||
-	    emulation != sun60i_pck600_read(sc, base + PCK600_PMER) ||
-	    status != sun60i_pck600_read(sc, base + PCK600_PWSR))
-		return EBUSY;
+	for (u_int i = 0; i < 2; i++) {
+		observed.sample[i][0] = sun60i_pck600_read(sc, base + PCK600_PWPR);
+		observed.sample[i][1] = sun60i_pck600_read(sc, base + PCK600_PMER);
+		observed.sample[i][2] = sun60i_pck600_read(sc, base + PCK600_PWSR);
+	}
+	policy = observed.sample[0][0];
+	emulation = observed.sample[0][1];
+	status = observed.sample[0][2];
+	observed.state_error = EBUSY;
+	if (memcmp(observed.sample[0], observed.sample[1],
+	    sizeof(observed.sample[0])) != 0)
+		goto out;
+	observed.state_error = EOPNOTSUPP;
 	if (((policy | status) & PCK600_DYNAMIC) != 0 ||
 	    (emulation & PCK600_EMULATION) != 0)
-		return EOPNOTSUPP;
+		goto out;
+	observed.state_error = EBUSY;
 	if ((policy & PCK600_MODE) != (status & PCK600_MODE))
-		return EBUSY;
+		goto out;
 
 	/* A locked static policy can be observed without changing it. */
 	switch (status & PCK600_MODE) {
 	case PCK600_OFF:
-		*enabled = false;
-		return 0;
+		observed.enabled = false;
+		observed.state_error = 0;
+		break;
 	case PCK600_ON:
-		*enabled = true;
-		return 0;
+		observed.enabled = true;
+		observed.state_error = 0;
+		break;
 	default:
-		return EOPNOTSUPP;
+		observed.state_error = EOPNOTSUPP;
+		break;
 	}
+out:
+	*state = observed;
+	return 0;
+}
+
+static int
+sun60i_pck600_state(struct sun60i_pck600_softc *sc, u_int id, bool *enabled)
+{
+	struct sun60i_pck600_observation state;
+	int error;
+
+	error = sun60i_pck600_observe(sc, id, &state);
+	if (error != 0)
+		return error;
+	if (state.state_error != 0)
+		return state.state_error;
+	*enabled = state.enabled;
+	return 0;
+}
+
+static void
+sun60i_pck600_core_report(struct sun60i_pck600_softc *sc)
+{
+	struct sun60i_pck600_observation state;
+	int error;
+
+	mutex_enter(&sc->sc_lock);
+	error = sun60i_pck600_observe(sc, PCK600_GPU_CORE, &state);
+	mutex_exit(&sc->sc_lock);
+	if (error != 0) {
+		aprint_error_dev(sc->sc_dev, "GPU_CORE observation unavailable: "
+		    "%d\n", error);
+		return;
+	}
+	aprint_normal_dev(sc->sc_dev, "GPU_CORE observation: %s (error %d); "
+	    "not a GPU readiness guarantee\n", state.state_error != 0 ?
+	    "unsupported or unstable" : state.enabled ? "static ON" : "static OFF",
+	    state.state_error);
+	for (u_int i = 0; i < 2; i++)
+		aprint_normal_dev(sc->sc_dev, "GPU_CORE sample %u: PWPR "
+		    "0x%08x PMER 0x%08x PWSR 0x%08x\n", i,
+		    state.sample[i][0], state.sample[i][1], state.sample[i][2]);
 }
 
 static int
@@ -295,6 +354,7 @@ sun60i_pck600_attach(device_t parent, device_t self, void *aux)
 	}
 	aprint_naive("\n");
 	aprint_normal(": A733 PCK-600 power domains\n");
+	sun60i_pck600_core_report(sc);
 	return;
 unmap:
 	bus_space_unmap(sc->sc_bst, sc->sc_bsh, size);

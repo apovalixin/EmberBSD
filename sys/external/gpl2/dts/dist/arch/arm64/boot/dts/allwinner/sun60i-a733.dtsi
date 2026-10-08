@@ -732,11 +732,15 @@
 			resets = <&ccu RST_BUS_GPU0>;
 			power-domains = <&pck600 PD_GPU_TOP>;
 			netbsd,consumer-managed-power;
+			/* Local diagnostic stage: never map or read GPU registers. */
+			netbsd,observe-only;
 			status = "disabled";
 		};
 
 		ccu: clock-controller@2002000 {
 			compatible = "allwinner,sun60i-a733-ccu";
+			/* Local read-only hardware oscillator observation source. */
+			netbsd,dcxo-source = <&rtc>;
 			reg = <0x02002000 0x2000>;
 			clocks = <&osc24M>, <&osc32k>, <&iosc>, <&osc32k>;
 			clock-names = "hosc", "losc", "iosc", "losc-fanout";

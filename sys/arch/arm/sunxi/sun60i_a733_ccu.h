@@ -42,7 +42,7 @@ enum sun60i_a733_gpu_reason {
 	A733_GPU_RESET_ASSERTED, A733_GPU_MASTER_GATED, A733_GPU_REF_FLAGS,
 	A733_GPU_REF_RATE, A733_GPU_CORE_PARENT, A733_GPU_CORE_PLL,
 	A733_GPU_CORE_DIVIDER, A733_GPU_AHB_PARENT, A733_GPU_AHB_PLL,
-	A733_GPU_AHB_DIVIDER
+	A733_GPU_AHB_DIVIDER, A733_GPU_DCXO_CHANGED
 };
 
 /*
@@ -53,6 +53,8 @@ struct sun60i_a733_gpu_state {
 	uint32_t sample[2][A733_GPU_NREGS];
 	uint32_t changed;	/* One bit per register whose samples differ. */
 	u_int hosc_hz[2];
+	uint32_t dcxo_sample[2][2];	/* Queries bracketing the CCU reads. */
+	u_int dcxo_hz[2];
 	enum sun60i_a733_gpu_reason reason;
 	int readiness_error;
 	u_int core_hz, bus_hz;	/* Valid only when readiness_error is zero. */

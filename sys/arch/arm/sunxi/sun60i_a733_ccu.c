@@ -49,6 +49,24 @@ __KERNEL_RCSID(1, "$NetBSD$");
 
 #include <arm/sunxi/sunxi_ccu.h>
 #include <arm/sunxi/sun60i_a733_ccu.h>
+#include <arm/sunxi/sunxi_rtcvar.h>
+
+#include "sunxi_rtc.h"
+
+static const struct device_compatible_entry sun60i_a733_dcxo_compat[] = {
+	{ .compat = "allwinner,sun60i-a733-rtc" },
+	DEVICE_COMPAT_EOL
+};
+
+static int
+sun60i_a733_dcxo_query(int phandle, struct sunxi_rtc_dcxo_state *state)
+{
+#if NSUNXI_RTC > 0
+	return sunxi_rtc_dcxo_query(phandle, state);
+#else
+	return ENXIO;
+#endif
+}
 
 #define	PLL_REF_CTRL_REG		0x000
 #define	PLL_PERIPH0_CTRL_REG	0x0a0
@@ -687,6 +705,10 @@ sun60i_a733_gpu_evaluate(struct sun60i_a733_gpu_state *state)
 	state->reason = A733_GPU_SNAPSHOT_CHANGED;
 	if (state->changed != 0)
 		return EBUSY;
+	state->reason = A733_GPU_DCXO_CHANGED;
+	if (state->dcxo_sample[0][0] != state->dcxo_sample[1][0] ||
+	    state->dcxo_hz[0] != state->dcxo_hz[1])
+		return EBUSY;
 	state->reason = A733_GPU_HOSC_CHANGED;
 	if (state->hosc_hz[0] != state->hosc_hz[1])
 		return EBUSY;
@@ -712,7 +734,7 @@ sun60i_a733_gpu_evaluate(struct sun60i_a733_gpu_state *state)
 	state->reason = A733_GPU_REF_RATE;
 	ref_divisor = (__SHIFTOUT(val[A733_GPU_REF], __BITS(22,16)) + 1) *
 	    (__SHIFTOUT(val[A733_GPU_REF], ACCEL_PLL_P) + 1);
-	reference = (uint64_t)state->hosc_hz[0] *
+	reference = (uint64_t)state->dcxo_hz[0] *
 	    (__SHIFTOUT(val[A733_GPU_REF], ACCEL_PLL_N) + 1);
 	if (reference != UINT64_C(24000000) * ref_divisor)
 		return EOPNOTSUPP;
@@ -796,8 +818,10 @@ sun60i_a733_ccu_gpu_inspect(struct clk *gpu, struct sun60i_a733_gpu_state *resul
 		[A733_GPU_MASTER] = AHB_MASTER_GATE_REG,
 	};
 	struct sun60i_a733_gpu_state state = { 0 };
+	struct sunxi_rtc_dcxo_state dcxo[2];
 	struct sunxi_ccu_softc *sc;
 	struct clk *hosc;
+	int node, error;
 
 	if (result == NULL)
 		return EINVAL;
@@ -808,18 +832,32 @@ sun60i_a733_ccu_gpu_inspect(struct clk *gpu, struct sun60i_a733_gpu_state *resul
 	if (gpu->domain == NULL || gpu->domain->priv == NULL)
 		return ENXIO;
 	sc = gpu->domain->priv;
+	if (OF_getproplen(sc->sc_phandle, "netbsd,dcxo-source") != 4)
+		return EINVAL;
+	node = fdtbus_get_phandle(sc->sc_phandle, "netbsd,dcxo-source");
+	if (node <= 0)
+		return EINVAL;
+	if (!of_compatible_match(node, sun60i_a733_dcxo_compat))
+		return EOPNOTSUPP;
 	hosc = fdtbus_clock_get(sc->sc_phandle, "hosc");
 	if (hosc == NULL)
 		return ENXIO;
 	state.hosc_hz[0] = clk_get_rate(hosc);
-	/* The native A733 provider currently supports the 24 MHz crystal. */
-	if (state.hosc_hz[0] != 24000000)
-		return EOPNOTSUPP;
+	error = sun60i_a733_dcxo_query(node, &dcxo[0]);
+	if (error != 0)
+		return error;
 	for (u_int sample = 0; sample < 2; sample++) {
 		for (u_int i = 0; i < __arraycount(regs); i++)
 			state.sample[sample][i] = CCU_READ(sc, regs[i]);
 	}
 	state.hosc_hz[1] = clk_get_rate(hosc);
+	error = sun60i_a733_dcxo_query(node, &dcxo[1]);
+	if (error != 0)
+		return error;
+	for (u_int i = 0; i < 2; i++) {
+		memcpy(state.dcxo_sample[i], dcxo[i].sample, sizeof(dcxo[i].sample));
+		state.dcxo_hz[i] = dcxo[i].rate_hz;
+	}
 	for (u_int i = 0; i < __arraycount(regs); i++) {
 		if (state.sample[0][i] != state.sample[1][i])
 			state.changed |= __BIT(i);

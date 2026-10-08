@@ -49,6 +49,10 @@ struct clk_domain { void *priv; };
 struct clk { struct clk_domain *domain; const char *name; u_int flags; };
 struct fdt_attach_args { int faa_phandle; bus_space_tag_t faa_bst; };
 struct device_compatible_entry { const char *compat; };
+#ifndef NSUNXI_RTC
+#define NSUNXI_RTC 1
+#endif
+#include "sunxi_rtcvar.h"
 #include "sunxi_ccu.h"
 #include "sun60i_a733_ccu.h"
 #include "bindings.h"
@@ -58,6 +62,28 @@ static unsigned writes, barriers, checks, reads;
 static unsigned unstable_read, hosc_reads;
 static bus_size_t unstable_reg;
 static u_int hosc_rate = 24000000;
+static unsigned dcxo_queries;
+static int dcxo_len = 4, dcxo_node = 7, dcxo_error, dcxo_fail_query;
+static bool bad_dcxo, unstable_dcxo;
+static u_int dcxo_rate = 24000000;
+static uint32_t dcxo_raw;
+static int OF_getproplen(int node, const char *name) { return dcxo_len; }
+static int fdtbus_get_phandle(int node, const char *name) { return dcxo_node; }
+int
+sunxi_rtc_dcxo_query(int node, struct sunxi_rtc_dcxo_state *out)
+{
+	assert(node == 7);
+	assert(dcxo_queries == 0 ? reads == 0 : reads == 22);
+	dcxo_queries++;
+	if (dcxo_error != 0 && (dcxo_fail_query == 0 ||
+	    dcxo_queries == (unsigned)dcxo_fail_query))
+		return dcxo_error;
+	out->sample[0] = dcxo_raw ^ (unstable_dcxo && dcxo_queries == 2 ? 1 : 0);
+	out->sample[1] = out->sample[0];
+	out->rate_hz = dcxo_rate;
+	return 0;
+}
+
 static bool unstable_hosc, unstable_all;
 static bool reject_write, missing_hosc;
 static struct sunxi_ccu_softc state;
@@ -101,7 +127,8 @@ bus_space_barrier(bus_space_tag_t tag, bus_space_handle_t handle,
 static int
 of_compatible_match(int node, const struct device_compatible_entry *compat)
 {
-	return strcmp(compat[0].compat, "allwinner,sun60i-a733-ccu") == 0;
+	return strcmp(compat[0].compat, "allwinner,sun60i-a733-ccu") == 0 ||
+	    (!bad_dcxo && strcmp(compat[0].compat, "allwinner,sun60i-a733-rtc") == 0);
 }
 int
 sunxi_ccu_attach(struct sunxi_ccu_softc *sc)
@@ -178,10 +205,12 @@ reset(void)
 {
 	struct fdt_attach_args args = { 0 };
 	memset(registers, 0, sizeof(registers));
-	writes = barriers = reads = hosc_reads = 0;
+	writes = barriers = reads = hosc_reads = dcxo_queries = 0;
 	unstable_read = 0;
 	unstable_reg = SIZE_MAX;
-	unstable_hosc = unstable_all = false;
+	unstable_hosc = unstable_all = unstable_dcxo = bad_dcxo = false;
+	dcxo_len = 4; dcxo_node = 7; dcxo_error = dcxo_fail_query = 0;
+	dcxo_rate = 24000000; dcxo_raw = 0;
 	hosc_rate = 24000000;
 	reject_write = missing_hosc = false;
 	sun60i_a733_ccu_attach(NULL, &state, &args);
@@ -213,7 +242,7 @@ expect_ready(int error, u_int core_expected, u_int bus_expected)
 	int inspect_error;
 
 	memcpy(saved, registers, sizeof(saved));
-	reads = hosc_reads = 0;
+	reads = hosc_reads = dcxo_queries = 0;
 	CHECK(sun60i_a733_ccu_gpu_ready(CLOCK(A733_CLK_GPU0), &core, &bus) == error);
 	CHECK(core == (error == 0 ? core_expected : 111));
 	CHECK(bus == (error == 0 ? bus_expected : 222));
@@ -224,10 +253,10 @@ expect_ready(int error, u_int core_expected, u_int bus_expected)
 	memcpy(registers, saved, sizeof(registers));
 	memset(&observation, 0xa5, sizeof(observation));
 	memcpy(&saved_observation, &observation, sizeof(saved_observation));
-	reads = hosc_reads = 0;
+	reads = hosc_reads = dcxo_queries = 0;
 	inspect_error = sun60i_a733_ccu_gpu_inspect(CLOCK(A733_CLK_GPU0),
 	    &observation);
-	if (reads == 0) {
+	if (inspect_error != 0) {
 		CHECK(inspect_error == error);
 		CHECK(memcmp(&observation, &saved_observation,
 		    sizeof(observation)) == 0);
@@ -253,7 +282,7 @@ expect_inspect(enum sun60i_a733_gpu_reason reason, int error)
 
 	for (u_int i = 0; i < __arraycount(regs); i++)
 		first[i] = REG(regs[i]);
-	reads = hosc_reads = 0;
+	reads = hosc_reads = dcxo_queries = 0;
 	CHECK(sun60i_a733_ccu_gpu_inspect(CLOCK(A733_CLK_GPU0),
 	    &observation) == 0);
 	CHECK(reads == 22 && hosc_reads == 2);
@@ -410,8 +439,9 @@ test_gpu_ready(void)
 	CHECK(reads == 0);
 	missing_hosc = false;
 	hosc_rate = 19200000;
-	expect_ready(EOPNOTSUPP, 0, 0);
-	CHECK(reads == 0);
+	/* Fixed hosc is retained only as a diagnostic, never as DCXO input. */
+	expect_ready(0, 1200000000, 600000000);
+	CHECK(reads == 22);
 	hosc_rate = 24000000;
 	unstable_hosc = true;
 	expect_ready(EBUSY, 0, 0);
@@ -520,6 +550,56 @@ test_gpu_ready(void)
 	printf("A733 GPU readiness: %u production checks passed\n", checks - start);
 }
 
+static void
+test_dcxo(void)
+{
+	struct sun60i_a733_gpu_state observation;
+	const int errors[] = { ENXIO, EIO, EBUSY, EOPNOTSUPP };
+	const u_int rates[] = { 19200000, 24000000, 26000000 };
+	const u_int n[] = { 124, 99, 95 }, m[] = { 99, 99, 103 };
+
+	for (u_int i = 0; i < __arraycount(rates); i++) {
+		ready_fixture();
+		dcxo_rate = rates[i];
+		dcxo_raw = i << 14;
+		REG(PLL_REF_CTRL_REG) = __BITS(31,27) | (n[i] << 8) | (m[i] << 16);
+		REG(GPU0_CLK_REG) = ACCEL_CLK_ENABLE | (3 << 24);
+		REG(AHB_CFG_REG) = (3 << 24) | 2;
+		expect_ready(0, 400000000, 200000000);
+		CHECK(dcxo_queries == 2 && hosc_rate == 24000000);
+		reads = hosc_reads = dcxo_queries = 0;
+		CHECK(sun60i_a733_ccu_gpu_inspect(CLOCK(A733_CLK_GPU0), &observation) == 0);
+		CHECK(observation.dcxo_hz[0] == rates[i] && observation.dcxo_hz[1] == rates[i]);
+		CHECK(observation.dcxo_sample[0][0] == dcxo_raw &&
+		    observation.dcxo_sample[1][1] == dcxo_raw);
+	}
+	/* Captured REF f8675f00 requires hardware-classified 26 MHz. */
+	ready_fixture(); REG(PLL_REF_CTRL_REG) = 0xf8675f00;
+	dcxo_rate = 26000000; expect_ready(0, 1200000000, 600000000);
+	dcxo_rate = 24000000; expect_ready(EOPNOTSUPP, 0, 0);
+	ready_fixture(); unstable_dcxo = true;
+	expect_ready(EBUSY, 0, 0);
+	reads = hosc_reads = dcxo_queries = 0;
+	CHECK(sun60i_a733_ccu_gpu_inspect(CLOCK(A733_CLK_GPU0), &observation) == 0);
+	CHECK(observation.reason == A733_GPU_DCXO_CHANGED);
+	for (u_int i = 0; i < __arraycount(errors); i++) {
+		for (int query = 1; query <= 2; query++) {
+			ready_fixture(); dcxo_error = errors[i]; dcxo_fail_query = query;
+			expect_ready(errors[i], 0, 0);
+			CHECK(reads == (query == 1 ? 0U : 22U));
+			CHECK(dcxo_queries == (u_int)query);
+		}
+	}
+	for (int len = -1; len <= 12; len++) {
+		if (len == 4) continue;
+		ready_fixture(); dcxo_len = len; expect_ready(EINVAL, 0, 0);
+		CHECK(reads == 0 && dcxo_queries == 0);
+	}
+	ready_fixture(); dcxo_node = 0; expect_ready(EINVAL, 0, 0);
+	ready_fixture(); bad_dcxo = true; expect_ready(EOPNOTSUPP, 0, 0);
+	CHECK(reads == 0 && dcxo_queries == 0);
+}
+
 int
 main(void)
 {
@@ -534,6 +614,13 @@ main(void)
 	uint32_t val, old;
 	u_int before;
 
+	if (NSUNXI_RTC == 0) {
+		ready_fixture();
+		expect_ready(ENXIO, 0, 0);
+		CHECK(reads == 0 && dcxo_queries == 0);
+		puts("PASS: CCU without RTC rejects observation before MMIO");
+		return 0;
+	}
 	reset();
 	CHECK(sun60i_a733_ccu_match(NULL, NULL,
 	    &(struct fdt_attach_args){ 0 }) != 0);
@@ -652,6 +739,7 @@ main(void)
 	CHECK(writes == 0 && barriers == 0);
 	test_gpu_ready();
 	test_gpu_inspect();
+	test_dcxo();
 	printf("A733 accelerator clocks: %u production checks passed\n", checks);
 	return 0;
 }

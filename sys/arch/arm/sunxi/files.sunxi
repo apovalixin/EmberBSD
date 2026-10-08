@@ -224,7 +224,7 @@ file	arch/arm/sunxi/sunxi_rsb.c		sunxi_rsb
 # RTC
 device	sunxirtc
 attach	sunxirtc at fdt with sunxi_rtc
-file	arch/arm/sunxi/sunxi_rtc.c		sunxi_rtc
+file	arch/arm/sunxi/sunxi_rtc.c		sunxi_rtc needs-flag
 
 # EMAC (common)
 device	emac: arp, ether, ifnet, mii

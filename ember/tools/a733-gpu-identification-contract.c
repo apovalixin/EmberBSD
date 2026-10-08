@@ -95,7 +95,7 @@ struct clk { int acquired; };
 #include "sun60i_a733_ccu.h"
 
 static uint32_t pd[2], clocks[2], power_cells, clock_cells;
-static int pd_len, clock_len, managed_len, supply_len;
+static int pd_len, clock_len, managed_len, supply_len, observe_len;
 static bool bad_power_compat, bad_pmic, bad_supply;
 static bool missing_supply, missing_clock;
 static int reg_error, state_error, voltage_error, power_error, ready_error;
@@ -134,6 +134,8 @@ swap32(uint32_t value)
 static int
 OF_getproplen(int phandle, const char *name)
 {
+	if (strcmp(name, "netbsd,observe-only") == 0)
+		return observe_len;
 	if (strcmp(name, "netbsd,consumer-managed-power") == 0)
 		return managed_len;
 	assert(strcmp(name, "gpu-supply") == 0);
@@ -347,6 +349,7 @@ reset(void)
 	power_cells = clock_cells = 1;
 	pd_len = clock_len = 8;
 	managed_len = 0;
+	observe_len = -1;
 	supply_len = 4;
 	bad_power_compat = bad_pmic = bad_supply = false;
 	missing_supply = missing_clock = false;
@@ -390,6 +393,7 @@ test_clock_observation(void)
 	} failures[] = {
 		{ A733_GPU_SNAPSHOT_CHANGED, EBUSY, "CCU snapshot changed" },
 		{ A733_GPU_HOSC_CHANGED, EBUSY, "oscillator rate changed" },
+		{ A733_GPU_DCXO_CHANGED, EBUSY, "DCXO status changed" },
 		{ A733_GPU_MODULE_GATED, EBUSY, "GPU module gated" },
 		{ A733_GPU_UPDATE_PENDING, EBUSY, "GPU update pending" },
 		{ A733_GPU_BUS_GATED, EBUSY, "GPU bus gated" },
@@ -619,7 +623,31 @@ main(void)
 		CHECK(strstr(normal_output, "(expected A733 GPU)") == NULL);
 		CHECK(strstr(error_output, "PBVNC value") != NULL);
 	}
+	/* Diagnostic binding must block MMIO even with completely ready inputs. */
+	for (u_int ready = 0; ready < 2; ready++) {
+		reset(); observe_len = 0;
+		clock_observation.dcxo_hz[0] = clock_observation.dcxo_hz[1] = 26000000;
+		clock_observation.dcxo_sample[0][0] = clock_observation.dcxo_sample[0][1] = 0x8003;
+		clock_observation.dcxo_sample[1][0] = clock_observation.dcxo_sample[1][1] = 0x8003;
+		if (!ready) {
+			clock_observation.reason = A733_GPU_MODULE_GATED;
+			clock_observation.readiness_error = EBUSY;
+		}
+		sun60i_gpu_attach(&soc_device, &gpu_device, (void *)&faa);
+		config_finalize();
+		CHECK(maps == 0 && peeks == 0 && unmaps == 0 && !sc.sc_have_id);
+		CHECK(strcmp(events, "ASVPCQcs") == 0);
+		CHECK(strstr(normal_output, "observation only; GPU registers not mapped or read") != NULL);
+		CHECK(strstr(normal_output, "DCXO before CCU: 0x00008003 / 0x00008003, 26000000 Hz") != NULL);
+		CHECK(strstr(normal_output, "DCXO after CCU: 0x00008003 / 0x00008003, 26000000 Hz") != NULL);
+		CHECK(strstr(normal_output, "PBVNC") == NULL);
+		CHECK(sun60i_gpu_finalize(&gpu_device) == 0 && maps == 0);
+	}
+	for (int len = 1; len < 9; len++) {
+		reset(); observe_len = len; unavailable(EINVAL); CHECK(nevents == 0);
+	}
 	test_clock_observation();
+
 	printf("PASS: %u A733 GPU identification checks\n", checks);
 	return 0;
 }

@@ -80,6 +80,7 @@ sun60i_gpu_clock_report(struct sun60i_gpu_softc *sc,
 		[A733_GPU_READY] = "ready",
 		[A733_GPU_SNAPSHOT_CHANGED] = "CCU snapshot changed",
 		[A733_GPU_HOSC_CHANGED] = "oscillator rate changed",
+		[A733_GPU_DCXO_CHANGED] = "DCXO status changed",
 		[A733_GPU_MODULE_GATED] = "GPU module gated",
 		[A733_GPU_UPDATE_PENDING] = "GPU update pending",
 		[A733_GPU_BUS_GATED] = "GPU bus gated",
@@ -114,8 +115,13 @@ sun60i_gpu_clock_report(struct sun60i_gpu_softc *sc,
 	aprint_normal_dev(sc->sc_dev, "CCU observation: %s (error %d), "
 	    "DCDC4 %u uV, changed 0x%03x\n", reason, state->readiness_error,
 	    sc->sc_uvol, state->changed);
-	aprint_normal_dev(sc->sc_dev, "hosc %u / %u Hz\n",
+	aprint_normal_dev(sc->sc_dev, "fixed hosc %u / %u Hz\n",
 	    state->hosc_hz[0], state->hosc_hz[1]);
+	for (u_int i = 0; i < 2; i++)
+		aprint_normal_dev(sc->sc_dev, "DCXO %s CCU: 0x%08x / "
+		    "0x%08x, %u Hz\n", i == 0 ? "before" : "after",
+		    state->dcxo_sample[i][0], state->dcxo_sample[i][1],
+		    state->dcxo_hz[i]);
 	for (u_int i = 0; i < __arraycount(names); i++) {
 		if (state->sample[0][i] == state->sample[1][i])
 			aprint_normal_dev(sc->sc_dev, "%s 0x%08x\n", names[i],
@@ -140,12 +146,16 @@ sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
 	uint32_t cells;
 	uint64_t id;
 	int len, node, error;
-	bool enabled;
+	bool enabled, observe_only;
 
 	sc->sc_have_id = false;
 	sc->sc_stage = "binding";
 	if (OF_getproplen(sc->sc_phandle, "netbsd,consumer-managed-power") != 0)
 		return EINVAL;
+	len = OF_getproplen(sc->sc_phandle, "netbsd,observe-only");
+	if (len != -1 && len != 0)
+		return EINVAL;
+	observe_only = len == 0;
 	error = fdtbus_get_reg(sc->sc_phandle, 0, &addr, &size);
 	if (error != 0)
 		return error;
@@ -210,8 +220,11 @@ sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
 	if (error != 0)
 		goto out;
 	error = clocks_state.readiness_error;
-	if (error != 0) {
+	if (error != 0 || observe_only) {
 		sun60i_gpu_clock_report(sc, &clocks_state);
+		if (observe_only)
+			aprint_normal_dev(sc->sc_dev, "observation only; "
+			    "GPU registers not mapped or read\n");
 		goto out;
 	}
 	sc->sc_core_hz = clocks_state.core_hz;

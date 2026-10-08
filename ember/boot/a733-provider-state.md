@@ -12,6 +12,33 @@ preserves I2C errors. Its voltage query returns the programmed setting,
 not a physical measurement. Querying or acquiring a regulator does not reserve
 it against another consumer.
 
+## Hardware oscillator
+
+`sunxi_rtc_dcxo_query(rtc_phandle, &state)` reads A733 RTC `+0x160`
+twice under the RTC mutex. It uses the existing mapping and registers before
+the clock-less RTC attachment returns. Only the native A733 compatible, a
+mapping covering the register, and a unique phandle can register. Missing
+providers return `ENXIO`, invalid arguments return `EINVAL`, and different
+samples return `EBUSY`. Errors leave the output unchanged. The result contains
+both raw words and the hardware-classified oscillator rate: status bits 15:14
+map 0/3 to 24 MHz, 1 to 19.2 MHz, and 2 to 26 MHz. This is a hardware status
+classification, not an independent frequency measurement. No register is written.
+
+The CCU's local `netbsd,dcxo-source = <&rtc>` binding requires exactly one
+phandle referencing the native A733 RTC. It is an EmberBSD observation binding,
+not an upstream clock-tree replacement. Absent/malformed references fail with
+`EINVAL`; a different compatible fails with `EOPNOTSUPP`. A kernel without RTC
+support returns `ENXIO`. There is no fixed-clock fallback. Existing global
+`hosc` providers and their consumers are unchanged.
+
+The status table comes from the pinned BSP's `ccu-sun60iw2-rtc.c`, revision
+`2ac08e8c7cdc28abbdc5c9a9dd812f887ae9c79f`, SHA256
+`484ef6c6cbdac224484f22ca57db8063e2f83404bfe18c18e32c12ab1bc0a3ea`.
+Linux commit [`0a136efc0fc2d53b1b1389b3c3fb0f76edca38bf`](https://git.zx2c4.com/linux-rng/commit/?id=0a136efc0fc2d53b1b1389b3c3fb0f76edca38bf)
+describes automatic oscillator detection and uses these bits as a read-only
+divider selector, including the 0/3 alias. RTC attachment prints one bounded
+observation independently of GPU readiness.
+
 ## Power domain
 
 `fdtbus_powerdomain_is_enabled_index(phandle, index, &enabled)` is a strict
@@ -27,6 +54,11 @@ An inconsistent snapshot returns `EBUSY`; dynamic policies, emulation and
 other modes return `EOPNOTSUPP`. A previously failed transition remains
 quarantined and returns `EIO` without MMIO. A locked static policy can be
 observed. Queries never alter timing registers or clear quarantine.
+At successful PCK attachment, an internal observation of GPU_CORE domain 6
+prints two complete PWPR/PMER/PWSR samples and their classification. This uses
+the same locked reader as the strict state API. An unknown or unstable mode
+is reported with its error, never as OFF. The diagnostic neither changes the
+GPU consumer's TOP5 binding nor proves GPU readiness; it performs no transition.
 
 ## GPU register clock path
 
@@ -42,19 +74,27 @@ provider returns `EOPNOTSUPP`. Changing or inactive required hardware returns
 readiness. A nonzero return leaves `state` unchanged. Zero means a complete
 observation: `readiness_error` still determines whether the path is ready.
 The result includes two samples of eleven CCU registers, their changed-bit
-mask, two oscillator rates, and the first failed condition. Derived core and
+mask, two fixed-hosc rates, bracketing hardware DCXO observations, and the
+first failed condition. Derived core and
 bus rates are valid only when `readiness_error` is zero; otherwise they are
 zero. The existing `gpu_ready` wrapper retains its errors and output rules.
 
-After handle/provider and 24 MHz oscillator validation, inspection always
-performs exactly 22 CCU reads and a second oscillator-rate query. It neither
-polls nor writes, including when the samples differ. Snapshot changes take
-priority, followed by oscillator changes, module gate/update, bus gate/reset,
-AHB master gate, PLL_REF, GPU parent/divider, and AHB parent/divider checks.
-The raw samples retain evidence of other failed conditions as well.
+After handle/provider validation, inspection queries RTC, performs exactly
+22 CCU reads, then queries RTC again: four RTC reads in total. Both queries
+must succeed. A failure of either query leaves the complete inspection output
+unchanged, including after the CCU reads. Different CCU samples take priority,
+followed by changed DCXO raw status/rate, changed fixed-hosc diagnostic rate,
+and the existing gate/reset/PLL checks. There are no retries or writes.
+Matching endpoints do not reserve either provider or exclude intervening changes.
 
-The observation supports the current 24 MHz crystal and verifies PLL_REF's
-actual normalization. It decodes integer PLL_GPU0 and PLL_PERIPH0 input and
+PLL_REF normalization uses the hardware-classified 19.2/24/26 MHz DCXO value,
+never fixed-hosc. Exact integer arithmetic must prove a 24 MHz reference
+before any derived rate is published. For example, the physical #5 REF
+`0xf8675f00` describes N=96, M=104, P=1: 26 MHz normalizes to 24 MHz;
+24 MHz does not. The next hardware observation must establish the actual
+DCXO status. Fixed-hosc remains diagnostic only.
+
+It decodes integer PLL_GPU0 and PLL_PERIPH0 input and
 output dividers, lock/enables, and the selected output gate. Both SDM enable
 locations must be clear for each required PLL. All six GPU parents and the
 five documented GPU dividers are supported. AHB may use SYS24M or the decoded
@@ -75,12 +115,16 @@ and cold-start sequencing remain separate work.
 
 ## Software checks
 
-Run `regulator-state-contract.sh`, `a733-power-contract.sh`,
+Run `a733-rtc-contract.sh`, `regulator-state-contract.sh`, `a733-power-contract.sh`,
 `fdt-power-attach-contract.sh`, and `a733-accelerator-clock-contract.sh` from
 `ember/tools`. They execute the production bodies with fake I2C/MMIO and
 check success, failure propagation, state preservation, stable reads, and
-absence of writes during queries. The CCU contract also checks each refusal
+absence of writes during queries. RTC checks execute the full production
+driver, including registration before its clock-less early return. CCU checks
+bracket ordering, query errors, normalization for all supported rates, and a
+build without RTC support. The CCU contract also checks each refusal
 reason, simultaneous failures, complete differing samples, unchanged outputs
 on acquisition errors, and the compatibility wrapper. Existing transition and
-attach tests remain controls. Passing these contracts and focused cross-compilation is separate
+attach tests remain controls. Passing these contracts and focused
+cross-compilation is separate
 from physical identification or accelerator workload acceptance.

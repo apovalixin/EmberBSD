@@ -1,12 +1,16 @@
 # Firmware-ready A733 GPU identification
 
-The native `sun60igpuid` consumer identifies an already prepared A733 GPU.
+The native `sun60igpuid` consumer can identify an already prepared A733 GPU.
+The current A733 DT enables its diagnostic `netbsd,observe-only` stage, which
+never maps or reads GPU registers, even when the queried providers are ready.
 It does not initialize or power the GPU, load firmware, establish interrupts,
 allocate DMA, submit commands, expose a DRM device, or provide acceleration.
 The [driver](https://github.com/oxtech-ember/EmberBSD/blob/main/sys/arch/arm/sunxi/sun60i_a733_gpu.c)
 is owned by EmberBSD. Software contracts, the complete GCC16 kernel build
 and physical attachment on Zero 3W are verified. Physical GPU identification
-has not yet been accepted.
+has not yet been accepted. The physical result below applies to #5; the new
+RTC/DCXO and GPU_CORE observations have passed software contracts and focused
+cross-compilation, but still require a matched kernel boot.
 
 ## Physical result, 2026-10-08
 
@@ -59,11 +63,15 @@ The local binding requires:
 
 - A single register range at `0x01800000`, covering PBVNC at `+0x20`.
   The DT preserves the BSP range size `0x8ffff`; the consumer maps only `0x28`
-  bytes and performs one 64-bit fault-aware read.
+  bytes and performs one 64-bit fault-aware read only outside observe-only mode.
 - One `core` clock, `<&ccu CLK_GPU0>`, from the native A733 CCU.
 - One domain, `<&pck600 PD_GPU_TOP>`, with domain ID 5 and one argument cell.
 - `gpu-supply` referencing the AXP8191 `dcdc4` regulator node.
 - The empty boolean property `netbsd,consumer-managed-power`.
+- The current DT also sets empty `netbsd,observe-only`, a local EmberBSD
+  diagnostic opt-in. Nonempty values fail with `EINVAL`. It preserves provider
+  error handling but exits after completed CCU observation, before OPP checks
+  or GPU mapping, including when readiness succeeds.
 
 The hardware description also records GPU reset and SPI interrupt 63, but
 the identification consumer does not acquire or operate them. CCU readiness
@@ -111,7 +119,7 @@ query, writes, or GPU MMIO. Acquisition errors do not print an unavailable
 snapshot. The reported supply setting is not a physical voltage measurement;
 the 800000-microvolt operating-point check follows CCU readiness.
 
-After all checks pass, `bus_space_peek_8` reads PBVNC. The driver prints the
+Outside observe-only mode, after all checks pass, `bus_space_peek_8` reads PBVNC. The driver prints the
 actual raw value and four 16-bit fields. Expected A733 identity is
 `36.56.104.183`, raw `0x00240038006800b7`. Every other value, including zero
 and all ones, is reported as unexpected and rejected with `ENODEV`; a bus
@@ -125,6 +133,10 @@ synchronous faults but do not guarantee that a stalled bus transaction will
 finish. The consumer has no cold-start path or retry policy; firmware that
 leaves the GPU OFF produces an explicit unavailable result. GPU_CORE domain 6
 is not requested by the pinned BSP GPU binding and is not operated here.
+The PCK provider separately reports its raw state at attachment. That earlier
+observation is not consumed as a GPU readiness guarantee or power capability.
+The pinned DDK selects a live `USE_FPGA` path that operates CORE6 directly;
+this must be resolved before a native cold-start implementation.
 
 ## Sources and software checks
 
@@ -151,4 +163,5 @@ checks that every acquired handle and mapping is released. It reproduces the
 late `/soc` child queue hazard and checks finalizer completion, provider
 failure and repeated hook passes. Clock diagnostics test both acquisition and
 readiness errors, actual queried voltage, raw samples, and rejection before
-GPU mapping. These checks do not prove physical GPU identity or acceleration.
+GPU mapping. Observe-only checks run the real finalizer with both ready and
+unready fake providers and require zero GPU mapping and reads. These checks do not prove physical GPU identity or acceleration.

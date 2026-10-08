@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #include <errno.h>
 #include <limits.h>
@@ -39,6 +40,19 @@ typedef struct { bool initialized, held; } kmutex_t;
 #define aprint_debug_dev(...) ((void)0)
 #define aprint_error_dev(...) ((void)0)
 #define aprint_error(...) ((void)0)
+static char core_output[1024];
+static void
+aprint_normal_dev(device_t dev, const char *fmt, ...)
+{
+	va_list ap;
+	size_t len = strlen(core_output);
+	int n;
+	va_start(ap, fmt);
+	n = vsnprintf(core_output + len, sizeof(core_output) - len, fmt, ap);
+	va_end(ap);
+	assert(n >= 0 && (size_t)n < sizeof(core_output) - len);
+}
+
 #define aprint_normal(...) ((void)0)
 #define aprint_naive(...) ((void)0)
 static uint32_t
@@ -209,6 +223,7 @@ reset_fixture(void)
 	specifier[0] = swap32(1);
 	specifier[1] = swap32(4);
 	prop_len = 8;
+	core_output[0] = 0;
 	cases++;
 }
 static void
@@ -217,7 +232,8 @@ attach_controller(void)
 	sun60i_pck600_attach(NULL, &sc, &attach_args);
 	assert(mapped == 1 && unmapped == 0 && clock_fixture.enabled == 1);
 	assert(LIST_FIRST(&fdtbus_powerdomain_controllers) != NULL);
-	assert(reads == 0 && writes == 0); /* attach leaves every domain alone */
+	assert(reads == 6 && writes == 0); /* CORE6 observation only. */
+	reads = 0;
 }
 static void
 legacy_set(device_t dev, const uint32_t *data, bool enable)
@@ -357,7 +373,7 @@ test_read_state(void)
 			enabled = true;
 			assert(fdtbus_powerdomain_is_enabled_index(2, 0,
 			    &enabled) == EBUSY && enabled);
-			assert(reads == unstable_read && writes == 0);
+			assert(reads == 6 && writes == 0);
 			registers[unstable_reg / 4] ^= __BIT(3);
 			unstable_read = 0;
 			state_checks++;
@@ -379,8 +395,50 @@ test_read_state(void)
 	printf("PASS: %u PCK600/FDT read-only state checks\n", state_checks);
 }
 
+static void
+test_core_observation(void)
+{
+	struct sun60i_pck600_observation observation, saved;
+	const bus_size_t base = 6 * PCK600_DOMAIN_SIZE;
+	const char *expect;
+	for (u_int scenario = 0; scenario < 6; scenario++) {
+		reset_fixture();
+		registers[base / 4] = registers[(base + 8) / 4] = PCK600_ON;
+		expect = "static ON (error 0)";
+		if (scenario == 1) {
+			registers[base / 4] = registers[(base + 8) / 4] = 0;
+			expect = "static OFF (error 0)";
+		}
+		if (scenario == 2) registers[base / 4] |= PCK600_DYNAMIC;
+		if (scenario == 3) registers[(base + 4) / 4] = PCK600_EMULATION;
+		if (scenario == 4) registers[(base + 8) / 4] = 0;
+		if (scenario == 5) { unstable_reg = base; unstable_read = 4; }
+		if (scenario >= 2) expect = "unsupported or unstable";
+		required_read_lock = &sc.sc_lock;
+		sun60i_pck600_attach(NULL, &sc, &attach_args);
+		assert(reads == 6 && writes == 0 && barriers == 0 && delay_us == 0);
+		assert(strstr(core_output, expect) != NULL);
+		assert(strstr(core_output, "not a GPU readiness guarantee") != NULL);
+		assert(strstr(core_output, "GPU_CORE sample 0: PWPR") != NULL);
+		assert(strstr(core_output, "GPU_CORE sample 1: PWPR") != NULL);
+		assert(strstr(core_output, "PMER 0x") != NULL && strstr(core_output, "PWSR 0x") != NULL);
+		assert(!sc.sc_lock.held && !sc.sc_failed[6]);
+	}
+	memset(&observation, 0xa5, sizeof(observation)); saved = observation;
+	reads = 0; sc.sc_failed[6] = true;
+	mutex_enter(&sc.sc_lock);
+	assert(sun60i_pck600_observe(&sc, 6, &observation) == EIO);
+	assert(memcmp(&observation, &saved, sizeof(saved)) == 0 && reads == 0);
+	mutex_exit(&sc.sc_lock);
+	sun60i_pck600_core_report(&sc);
+	assert(reads == 0 && writes == 0);
+	reset_fixture();
+	printf("PASS: 6 CORE6 attach observations and quarantined-state control\n");
+}
+
 int
 main(void)
+
 {
 	static const struct fdtbus_powerdomain_controller_func legacy = {
 		.pdc_enable = legacy_set,
@@ -496,6 +554,7 @@ main(void)
 	assert(fdtbus_register_powerdomain_controller(&sc, 1, &empty) == EINVAL);
 	binding_cells = UINT32_MAX;
 	assert(fdtbus_register_powerdomain_controller(&sc, 1, &checked) == EINVAL);
+	test_core_observation();
 	printf("PASS: %u A733 PCK600/FDT production regression scenarios\n", cases);
 	reset_fixture();
 	return 0;
