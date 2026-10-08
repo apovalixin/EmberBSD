@@ -9,6 +9,7 @@
 #include <string.h>
 #include <errno.h>
 #include <limits.h>
+#include <dt-bindings/power/rk3399-power.h>
 
 typedef unsigned int u_int;
 typedef void *device_t;
@@ -31,11 +32,15 @@ static TAILQ_HEAD(, fdt_node) fdt_nodes = TAILQ_HEAD_INITIALIZER(fdt_nodes);
 static struct fdt_node node;
 static struct fdt_softc bus;
 static uint32_t specifier[4];
+static uint32_t provider_cells[4];
+static bool provider_cells_missing[4];
 static bool property_present, pin_init, late_match, attach_fails;
+static bool match_available, match_requires_provider;
 static int property_length, checked_error, pin_error, last_error;
 static unsigned int checked_calls, legacy_calls, power_disables;
 static unsigned int attach_calls, found_calls, post_calls, pin_calls;
 static unsigned int init_calls, errors, diagnostics, checks;
+static unsigned int search_calls;
 static char event_log[128];
 static size_t event_count;
 static void
@@ -65,7 +70,10 @@ static int
 of_getprop_uint32(int phandle, const char *name, uint32_t *value)
 {
 
-	*value = 1;
+	assert(strcmp(name, "#power-domain-cells") == 0);
+	if (phandle < 2 || phandle > 3 || provider_cells_missing[phandle])
+		return -1;
+	*value = provider_cells[phandle];
 	return 0;
 }
 static const void *
@@ -86,7 +94,7 @@ static int
 fdtbus_get_phandle_from_native(int phandle)
 {
 
-	return phandle;
+	return phandle >= 2 && phandle <= 3 ? phandle : -1;
 }
 
 #include "power.h"
@@ -176,6 +184,26 @@ struct fixture_cfargs {
 	const char *iattr;
 };
 #define CFARGS(...) (&(struct fixture_cfargs){ __VA_ARGS__ })
+static cfdata_t
+config_search(device_t parent, void *aux, struct fixture_cfargs *args)
+{
+	struct fdt_attach_args *faa = aux;
+
+	assert(faa->faa_quiet);
+	search_calls++;
+	if (!match_available ||
+	    (match_requires_provider && fdtbus_powerdomain_lookup(2) == NULL))
+		return NULL;
+	return &bus;
+}
+
+static int
+config_match(device_t parent, cfdata_t cf, void *aux)
+{
+
+	return 1;
+}
+
 static device_t
 config_attach(device_t parent, cfdata_t cf, void *aux,
     int (*print)(void *, const char *), struct fixture_cfargs *args)
@@ -189,7 +217,9 @@ static device_t
 config_found(device_t parent, void *aux,
     int (*print)(void *, const char *), struct fixture_cfargs *args)
 {
+	struct fdt_attach_args *faa = aux;
 
+	assert(!faa->faa_quiet);
 	found_calls++;
 	if (!args->submatch(parent, (cfdata_t)&bus, args->locators, aux)) {
 		diagnostics++;
@@ -243,15 +273,19 @@ reset(int pass)
 	TAILQ_INSERT_TAIL(&fdt_nodes, &node, n_nodes);
 	property_present = pin_init = true;
 	late_match = attach_fails = false;
+	match_available = match_requires_provider = false;
 	property_length = 8;
 	specifier[0] = swap32(2);
 	specifier[1] = swap32(4);
 	specifier[2] = swap32(3);
 	specifier[3] = swap32(5);
+	provider_cells[2] = provider_cells[3] = 1;
+	provider_cells_missing[2] = provider_cells_missing[3] = false;
 	checked_error = pin_error = last_error = 0;
 	checked_calls = legacy_calls = power_disables = 0;
 	attach_calls = found_calls = post_calls = pin_calls = 0;
 	init_calls = errors = diagnostics = 0;
+	search_calls = 0;
 	event_count = 0;
 	event_log[0] = '\0';
 }
@@ -284,6 +318,7 @@ main(void)
 {
 	const int failures[] = { EINVAL, ENXIO, EIO, ETIMEDOUT };
 	const int bad_lengths[] = { 0, 3, 4, 7 };
+	const int rk3399_domains[] = { RK3399_PD_SD, RK3399_PD_EMMC };
 
 	for (int mode = 0; mode < 2; mode++) {
 		const int pass = mode ? FDTCF_PASS_DEFAULT : 3;
@@ -304,16 +339,52 @@ main(void)
 			unattached(EINVAL);
 			CHECK(checked_calls == 0);
 		}
+		/* rk3399.dtsi SD/eMMC use a one-cell, unsupported provider. */
+		for (u_int i = 0; i < sizeof(rk3399_domains) / sizeof(int); i++) {
+			reset(pass);
+			specifier[1] = swap32(rk3399_domains[i]);
+			CHECK(fdtbus_powerdomain_enable(1) == ENXIO);
+			CHECK(fdtbus_powerdomain_enable_index(1, 0) == ENXIO);
+			CHECK(fdtbus_powerdomain_disable(1) == ENXIO);
+			CHECK(fdtbus_powerdomain_disable_index(1, 0) == ENXIO);
+			fdt_scan(&bus, pass);
+			CHECK(node.n_dev != NULL && post_calls == 1 && errors == 0);
+			CHECK(checked_calls == 0 && legacy_calls == 0);
+			CHECK(strcmp(event_log, mode ? "IFOD" : "IAOD") == 0);
+			/* Registration does not reattach a successful firmware user. */
+			add_provider(2, false);
+			fdt_scan(&bus, pass);
+			CHECK(post_calls == 1 && checked_calls == 0 && pin_calls == 2);
+			/* A subsequent explicit request now reaches the provider. */
+			CHECK(fdtbus_powerdomain_enable(1) == 0);
+			CHECK(checked_calls == 1);
+		}
+
+		/* Unsupported providers still require a well-formed DT record. */
+		for (u_int i = 0; i < sizeof(bad_lengths) / sizeof(int); i++) {
+			reset(pass);
+			property_length = bad_lengths[i];
+			fdt_scan(&bus, pass);
+			unattached(EINVAL);
+			CHECK(checked_calls == 0 && legacy_calls == 0);
+		}
+		for (int invalid = 0; invalid < 3; invalid++) {
+			reset(pass);
+			if (invalid == 0)
+				provider_cells_missing[2] = true;
+			else if (invalid == 1)
+				provider_cells[2] = UINT32_MAX;
+			else
+				specifier[0] = swap32(99); /* Invalid phandle. */
+			fdt_scan(&bus, pass);
+			unattached(EINVAL);
+		}
 		reset(pass);
+		provider_cells[2] = 0;
+		property_length = 4;
 		fdt_scan(&bus, pass);
-		unattached(ENXIO); /* Provider not registered yet. */
-		add_provider(2, false);
-		fdt_scan(&bus, pass);
-		CHECK(node.n_dev != NULL && post_calls == 1 && checked_calls == 1);
-		CHECK(pin_calls == 3 && errors == 1);
-		/* Successful nodes are not enabled/attached twice on another scan. */
-		fdt_scan(&bus, pass);
-		CHECK(post_calls == 1 && checked_calls == 1 && pin_calls == 3);
+		CHECK(node.n_dev != NULL && post_calls == 1 && errors == 0);
+		CHECK(checked_calls == 0 && legacy_calls == 0);
 
 		for (u_int i = 0; i < sizeof(failures) / sizeof(int); i++) {
 			reset(pass);
@@ -352,6 +423,55 @@ main(void)
 		CHECK(legacy_calls == 1 && checked_calls == 0);
 		CHECK(strcmp(event_log, "ILE") == 0);
 
+		/* Missing first provider must not hide a checked second error. */
+		for (u_int i = 0; i < sizeof(failures) / sizeof(int); i++) {
+			reset(pass);
+			add_provider(3, false);
+			property_length = 16;
+			checked_error = failures[i];
+			fdt_scan(&bus, pass);
+			unattached(failures[i]);
+			CHECK(checked_calls == 1 && strcmp(event_log, "IPE") == 0);
+			checked_error = 0;
+			add_provider(2, true); /* Late registration participates. */
+			fdt_scan(&bus, pass);
+			CHECK(node.n_dev != NULL && post_calls == 1);
+			CHECK(legacy_calls == 1 && checked_calls == 2);
+			CHECK(power_disables == 0);
+		}
+
+		/* A trailing unsupported domain preserves earlier transitions. */
+		reset(pass);
+		add_provider(2, true);
+		property_length = 16;
+		fdt_scan(&bus, pass);
+		CHECK(node.n_dev != NULL && post_calls == 1 && legacy_calls == 1);
+		CHECK(checked_calls == 0 && power_disables == 0);
+		reset(pass);
+		add_provider(2, true);
+		property_length = 12; /* Unsupported second record is truncated. */
+		fdt_scan(&bus, pass);
+		unattached(EINVAL);
+		CHECK(legacy_calls == 1 && checked_calls == 0);
+		CHECK(strcmp(event_log, "ILE") == 0);
+
+		/* Skipping one provider must not skip later malformed records. */
+		reset(pass);
+		property_length = 12;
+		fdt_scan(&bus, pass);
+		unattached(EINVAL);
+		CHECK(legacy_calls == 0 && checked_calls == 0);
+
+		reset(pass);
+		add_provider(3, false);
+		provider_cells[2] = 0;
+		specifier[1] = swap32(3);
+		specifier[2] = swap32(5);
+		property_length = 12; /* Zero-cell fallback, then one-cell provider. */
+		fdt_scan(&bus, pass);
+		CHECK(node.n_dev != NULL && post_calls == 1 && checked_calls == 1);
+		CHECK(strcmp(event_log, mode ? "IPFOD" : "IPAOD") == 0);
+
 		reset(pass);
 		add_provider(2, false);
 		pin_init = false;
@@ -380,6 +500,39 @@ main(void)
 		fdt_scan(&bus, pass);
 		CHECK(node.n_dev != NULL && checked_calls == 1 && post_calls == 1);
 	}
+
+	/* A provider attaches after the initial match but before default pass. */
+	reset(FDTCF_PASS_DEFAULT);
+	match_available = match_requires_provider = true;
+	fdt_scan_best(&bus, &node);
+	CHECK(node.n_cf == NULL && node.n_cfpass == FDTCF_PASS_DEFAULT);
+	CHECK(search_calls == FDTCF_PASS_DEFAULT + 1);
+	add_provider(2, false);
+	fdt_scan(&bus, FDTCF_PASS_DEFAULT);
+	CHECK(node.n_dev != NULL && node.n_cf != NULL && post_calls == 1);
+	CHECK(search_calls == FDTCF_PASS_DEFAULT + 2);
+	CHECK(found_calls == 1 && checked_calls == 1 && diagnostics == 0);
+	CHECK(strcmp(event_log, "IPFOD") == 0);
+	CHECK(node.n_cfpass == FDTCF_PASS_DEFAULT);
+
+	/* A newly matched device cannot bypass the power-domain error gate. */
+	for (u_int i = 0; i < sizeof(failures) / sizeof(int); i++) {
+		reset(FDTCF_PASS_DEFAULT);
+		match_available = match_requires_provider = true;
+		fdt_scan_best(&bus, &node);
+		CHECK(node.n_cf == NULL);
+		add_provider(2, false);
+		checked_error = failures[i];
+		fdt_scan(&bus, FDTCF_PASS_DEFAULT);
+		unattached(failures[i]);
+		CHECK(node.n_cf != NULL && node.n_cfpass == FDTCF_PASS_DEFAULT);
+		CHECK(strcmp(event_log, "IPE") == 0);
+		checked_error = 0;
+		fdt_scan(&bus, FDTCF_PASS_DEFAULT);
+		CHECK(node.n_dev != NULL && post_calls == 1 && checked_calls == 2);
+		CHECK(search_calls == FDTCF_PASS_DEFAULT + 2);
+	}
+
 	reset(3); /* Release the fixture providers for sanitizer checking. */
 	printf("FDT power attach: %u production checks passed\n", checks);
 	return 0;

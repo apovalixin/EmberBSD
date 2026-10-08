@@ -13,12 +13,13 @@ sed -n '/^struct fdtbus_powerdomain_controller_func {/,/^};/p' \
     "$src/sys/dev/fdt/fdtvar.h" > "$work/interface.h"
 sed '/^#include /d; /^__KERNEL_RCSID(/d' \
     "$src/sys/dev/fdt/fdt_powerdomain.c" > "$work/power.h"
-# Preserve the original notice and compile the actual scan/pre/post bodies.
+# Preserve the original notice and compile the actual match/scan/attach bodies.
 sed -n '1,/^#include /p' "$bus" | sed '/^#include /d' > "$work/attach.h"
-printf 'static int\n' >> "$work/attach.h"
-sed -n '/^fdt_scan_nomatch(/,/^fdt_add_node(/p' "$bus" |
+printf 'static void\n' >> "$work/attach.h"
+sed -n '/^fdt_scan_best(/,/^fdt_add_node(/p' "$bus" |
     sed '$d' | sed '$d' >> "$work/attach.h"
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
     ${FDT_ATTACH_TEST_CFLAGS:-} -I"$work" \
+    -I"$src/sys/external/gpl2/dts/dist/include" \
     "$tools/fdt-power-attach-contract.c" -o "$work/test"
 "$work/test"

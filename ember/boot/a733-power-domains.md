@@ -61,13 +61,28 @@ DT specifiers are rejected before entering either callback.
 
 The FDT bus checks power-domain errors before attaching a matched consumer.
 A missing `power-domains` property retains ordinary attachment. A present
-malformed property, missing provider or failed transition prints the node
-name and error, and prevents both attach and post-attach callbacks. The
+malformed property or registered provider failure prints the node name and
+error, and prevents both attach and post-attach callbacks. The
 node stays unattached so a later scan can retry it.
 
-Unmatched nodes keep the default-pass `not configured` diagnostic without
-pre-attach pinctrl or power operations. A late match during that diagnostic
-cannot bypass pre-attach; a rescan must first select a matching driver.
+Automatic attachment uses `fdtbus_powerdomain_enable_on_attach`. An
+unregistered provider retains the firmware-managed state: its DT
+`#power-domain-cells` and specifier bounds are validated, then that entry
+is skipped. The parser continues through other domains and never suppresses
+registered callback errors, including `ENXIO`. This preserves existing
+SD/eMMC attachment with the unsupported power controller described by
+[RK3399's DT](../../sys/external/gpl2/dts/dist/arch/arm64/boot/dts/rockchip/rk3399.dtsi).
+An invalid phandle, missing cell count or truncated entry still fails.
+
+Explicit enable/disable APIs remain strict and return `ENXIO` for an
+unregistered provider. A future A733 consumer must explicitly require its
+providers before MMIO; automatic attach success is not proof of power.
+
+Previously unmatched nodes get a fresh match search in the default pass,
+so providers attached earlier in the same boot can make a driver available.
+The new match must pass pre-attach before attaching. Still-unmatched nodes
+keep the `not configured` diagnostic without pre-attach pinctrl or power
+operations; a new match during that diagnostic cannot bypass pre-attach.
 Successfully attached nodes are not powered or attached again on a retry.
 
 This preserves pinctrl-before-power ordering for matched consumers. A
@@ -80,8 +95,9 @@ Run `sh ember/tools/fdt-power-attach-contract.sh` for the production scan,
 pre/post-attach and power API regression. Use
 `FDT_ATTACH_TEST_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer'`
 for sanitizer checks. The contract covers quiet/default passes, absent
-and malformed properties, missing providers, checked and legacy callbacks,
-errors, retries, unmatched diagnostics and preserved side effects.
+and malformed properties, RK3399 SD/eMMC firmware fallback, strict explicit
+requests, checked and legacy callbacks, mixed domains, errors, retries,
+late provider matches, unmatched diagnostics and preserved side effects.
 
 ## Reproduce the software checks
 

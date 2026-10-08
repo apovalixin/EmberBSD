@@ -97,8 +97,10 @@ fdtbus_powerdomain_lookup(int phandle)
 	return NULL;
 }
 
+/* Origin: EmberBSD; AI-assisted firmware-compatible automatic attachment. */
 static int
-fdtbus_powerdomain_enable_internal(int phandle, int index, bool enable)
+fdtbus_powerdomain_enable_internal(int phandle, int index, bool enable,
+    bool allow_unregistered)
 {
 	int len;
 	const uint32_t *pds = fdtbus_get_prop(phandle, "power-domains", &len);
@@ -107,20 +109,31 @@ fdtbus_powerdomain_enable_internal(int phandle, int index, bool enable)
 		return EINVAL;
 
 	for (const uint32_t *pd = pds; pd < pds + len / sizeof(*pd); index--) {
-		uint32_t pd_node =
+		const int pd_node =
 		   fdtbus_get_phandle_from_native(be32toh(pd[0]));
 		struct fdtbus_powerdomain_controller *pdc =
 		    fdtbus_powerdomain_lookup(pd_node);
+		int cells;
 
-		if (pdc == NULL)
-			return ENXIO;
+		if (pdc == NULL) {
+			uint32_t ncells;
+
+			if (!allow_unregistered)
+				return ENXIO;
+			/* Keep firmware-managed domains during automatic attach. */
+			if (of_getprop_uint32(pd_node, "#power-domain-cells",
+			    &ncells) != 0 || ncells > INT_MAX)
+				return EINVAL;
+			cells = ncells;
+		} else {
+			cells = pdc->pdc_cells;
+		}
 
 		/* Do not pass a truncated specifier to a controller. */
-		if (pdc->pdc_cells < 0 ||
-		    pdc->pdc_cells >= pds + len / sizeof(*pd) - pd)
+		if (cells < 0 || cells >= pds + len / sizeof(*pd) - pd)
 			return EINVAL;
 
-		if (index <= 0) {
+		if (index <= 0 && pdc != NULL) {
 			if (pdc->pdc_funcs->pdc_set != NULL) {
 				const int error = pdc->pdc_funcs->pdc_set(
 				    pdc->pdc_dev, pd, enable);
@@ -134,7 +147,7 @@ fdtbus_powerdomain_enable_internal(int phandle, int index, bool enable)
 		if (index == 0)
 			break;
 
-		pd += pdc->pdc_cells + 1;
+		pd += cells + 1;
 	}
 
 	return 0;
@@ -143,13 +156,19 @@ fdtbus_powerdomain_enable_internal(int phandle, int index, bool enable)
 int
 fdtbus_powerdomain_enable_index(int phandle, int index)
 {
-	return fdtbus_powerdomain_enable_internal(phandle, index, true);
+	return fdtbus_powerdomain_enable_internal(phandle, index, true, false);
 }
 
 int
 fdtbus_powerdomain_disable_index(int phandle, int index)
 {
-	return fdtbus_powerdomain_enable_internal(phandle, index, false);
+	return fdtbus_powerdomain_enable_internal(phandle, index, false, false);
+}
+
+int
+fdtbus_powerdomain_enable_on_attach(int phandle)
+{
+	return fdtbus_powerdomain_enable_internal(phandle, -1, true, true);
 }
 
 int

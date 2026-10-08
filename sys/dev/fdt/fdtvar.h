@@ -526,6 +526,8 @@ int		fdtbus_powerdomain_enable(int);
 int		fdtbus_powerdomain_enable_index(int, int);
 int		fdtbus_powerdomain_disable(int);
 int		fdtbus_powerdomain_disable_index(int, int);
+/* Origin: EmberBSD; automatic attach permits unregistered DT providers. */
+int		fdtbus_powerdomain_enable_on_attach(int);
 
 struct syscon *	fdtbus_syscon_acquire(int, const char *);
 struct syscon *	fdtbus_syscon_lookup(int);

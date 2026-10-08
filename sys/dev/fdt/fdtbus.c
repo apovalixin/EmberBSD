@@ -425,6 +425,16 @@ fdt_scan(struct fdt_softc *sc, int pass)
 			continue;
 		}
 
+		if (!quiet && node->n_cf == NULL) {
+			/* A provider attached since the initial match may help. */
+			faa.faa_quiet = true;
+			node->n_cf = config_search(node->n_bus, &faa,
+			    CFARGS(.submatch = fdt_scan_submatch,
+				   .iattr = "fdt",
+				   .locators = locs));
+			faa.faa_quiet = false;
+		}
+
 		/*
 		 * Attach the device.
 		 */
@@ -481,7 +491,7 @@ fdt_pre_attach(struct fdt_node *node)
 		    cfgname, node->n_name, error);
 
 	if (of_hasprop(node->n_phandle, "power-domains")) {
-		error = fdtbus_powerdomain_enable(node->n_phandle);
+		error = fdtbus_powerdomain_enable_on_attach(node->n_phandle);
 		if (error != 0) {
 			aprint_error_dev(node->n_bus,
 			    "failed to enable power domains for %s: %d\n",
