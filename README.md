@@ -364,8 +364,7 @@ on every board in the hardware catalog.
   [accelerator clock providers](ember/boot/a733-accelerator-clocks.md) add module
   clocks, interface gates and resets while preserving firmware-owned PLLs.
   They pass 199 software assertions and GCC12/GCC16 object builds. A complete
-  GCC16.2 kernel boots on Zero 3W with both CCUs and PCK600 attached; physical
-  accelerator power/clock transitions are unverified. The read-only
+  GCC16.2 kernel boots on Zero 3W with both CCUs and PCK600 attached. The default read-only
   [GPU identification consumer](ember/boot/a733-gpu-identification.md) now
   attaches on Zero 3W. A stable physical CCU snapshot shows the GPU module
   and bus clocks gated and reset asserted, with DCDC4 programmed to 800 mV.
@@ -374,9 +373,11 @@ on every board in the hardware catalog.
   status, so the strict reader refuses readiness. The matched #7 kernel
   reads stable power-controller snapshots and identifies both GPU domains
   as single-Q-Channel PPUs; the inconsistent CORE state remains unresolved.
-  The observe-only probe
-  stops before GPU MMIO; the actual GPU identity remains unverified.
-  Power sequencing, shared clock arbitration, DMA/MMU
+  A matched #8 [clock-only experiment](ember/boot/a733-gpu-identification.md#experimental-clock-preparation)
+  completed its GPU-local clock/reset writes but timed out waiting for CORE
+  ON/Q acceptance. It stopped before GPU MMIO; the actual identity remains
+  unverified. Reboot restored the normal observe-only state and gated clocks.
+  The missing power handshake, general shared resource management, DMA/MMU
   and command submission still require porting. These are
   porting targets, not available EmberBSD acceleration. Board bring-up,
   driver/DMA integration, compatible runtime and real model execution must

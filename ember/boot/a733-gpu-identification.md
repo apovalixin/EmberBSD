@@ -8,17 +8,30 @@ allocate DMA, submit commands, expose a DRM device, or provide acceleration.
 The [driver](https://github.com/oxtech-ember/EmberBSD/blob/main/sys/arch/arm/sunxi/sun60i_a733_gpu.c)
 is owned by EmberBSD. Software contracts, the complete GCC16 kernel build
 and physical attachment on Zero 3W are verified. Physical GPU identification
-has not yet been accepted. The read-only RTC/DCXO and expanded GPU
-power-controller observations are verified in the matched #7 kernel below.
+has not yet been accepted. Read-only provider observations are verified;
+the separate #8 clock-only experiment timed out before GPU access.
 
 ## Physical result, 2026-10-08
 
-A 4 GiB Orange Pi Zero 3W booted the matched `EMBER64 #7` kernel, four
-modules and A733 DTBs from `dfe456bf1fba2ec41c0fe11a6a8469b1bd960b99`.
+A 4 GiB Orange Pi Zero 3W booted matched `EMBER64 #8`, four modules and the
+separate experimental DTB from `94ba2f5a99532e2f02720cb4172bcc9441e002ff`.
 The board revision was not recorded. Vendor boot0/U-Boot and the boot script
-were preserved. Eight CPUs, microSD root and Wi-Fi/SSH returned. Installed
-hashes matched the bundle; the previous #6 boot files were backed up on
-the board and development host before installation.
+were preserved. MicroSD root and Wi-Fi/SSH returned. The accepted #7 boot
+files were backed up on the board and development host before installation.
+
+The consumer reached its bounded CORE waiter after all four GPU-local CCU
+write/readback checks succeeded. The waiter returned `ETIMEDOUT` (60), with
+last CORE `PWPR=0x8`, `PWSR=0`, `MISR=0`. Resources were retained until reboot;
+there was no rollback or retry, and no GPU mapping or PBVNC read occurred.
+Clock-only preparation did not complete the pending transition in this test.
+The result does not distinguish a stalled PCSM phase from Q-Channel exit.
+Further sequencing needs verified A733 firmware and I/O integration facts;
+it does not justify a PWCR override, CORE power-off or relaxed readiness.
+The subsequent #8 reboot with the normal DTB restored observe-only operation
+and Wi-Fi/SSH. GPU_CLK/GPU_BGR returned to zero; PLL, RTC and AHB observations
+matched the baseline. Reboot ended the reservation; no GPU access occurred.
+
+The preceding #7 read-only baseline and #8 pre-attempt diagnostic agree:
 
 RTC status was stable at `0x183fb0f7`, classifying DCXO as 26 MHz. Both RTC
 queries bracketing the CCU snapshot agreed. The global fixed-hosc provider
@@ -40,10 +53,10 @@ CORE's static-ON policy and status remain inconsistent with the strict
 reader's readiness contract. MISR reports sampled input levels, not the
 controller's transition phase or its request output. These observations
 do not establish the cause or justify overriding the handshake enables.
-No register writes or GPU accesses were added by this diagnostic.
+The provider diagnostic itself makes no register writes or GPU accesses.
 
-`sun60igpuid0` reports `GPU module gated (error 16)`, with DCDC4 programmed to
-800000 microvolts and GPU_TOP statically ON. Both complete CCU snapshots
+In #7, `sun60igpuid0` reported `GPU module gated (error 16)`, with DCDC4
+programmed to 800000 microvolts and GPU_TOP statically ON. Both CCU snapshots
 match (`changed 0x000`), retaining the #5 values:
 
 | Register | Value | Observation |
@@ -52,23 +65,20 @@ match (`changed 0x000`), retaining the #5 values:
 | GPU_BGR, `0xb24` | `0x00000000` | Bus gate is clear and reset is asserted |
 | PLL_GPU0, `0x0e0` | `0x41104500` | Raw dedicated GPU PLL state; it is not changed |
 
-The explicit observe-only path did not map/read GPU registers or change
-power, clocks or reset. The actual PBVNC and active preparation remain
-unverified. Programmed regulator voltage is not a physical measurement.
-This was a short reboot/observation check, not a sustained run.
+The #8 preconditions accepted enabled DCDC4 programmed to 800000 microvolts
+and the existing 400 MHz source. Neither voltage nor frequency was physically
+measured. These were short boot checks, not sustained runs or acceleration.
 
-RTC, CCU, PCK and GPU contracts pass 134, 14,997, 1,661 and 864 assertions
-with fake hardware on the host and under #5; PCK also passes 45 scenarios.
-The expanded PCK diagnostic adds 236 scenarios, accepted on the host and
-under physical #6 with fake MMIO; host ASan/UBSan and eight rejecting
-mutation controls pass. The prior native kernel suite is reused because
-all 14 source inputs are unchanged. The #7 build includes current CTF tools;
-its 20,792 CTF types and split-debug CRC checks pass.
-These software results do not substitute for physical GPU identification.
+The three exact target contracts passed on the real Zero 3W CPU under #7:
+15,188 CCU checks, 1,102 consumer checks, and 133 new PCK ownership/wait cases
+plus its existing matrices. They use fake MMIO and do not test GPU hardware.
+Host ASan/UBSan and eleven rejecting causal mutants also pass. The prior
+native kernel suite is reused because all 14 source inputs are unchanged.
+The #8 CTF decoder checks 20,802 types and its split-debug CRC matches.
 Native image SHA256:
-`8dcabd7fda12aa3af054bdb771b303df11885f5351aebf36147b10a836ef9f3e`;
-Zero 3W DTB SHA256:
-`a2bd07430948db61140040a1a5c0d5872f5797a4719d7af6ff00b6c0d8d88113`.
+`eb1e35340f0869d0e532025cf74e93e0119c2966f249d82bcc26f6a7f35b0808`;
+experimental Zero 3W DTB SHA256:
+`7a840baec0c4c76455b1ce8b2252e63bfea7a121e88c38c43c413ab1575dab7c`.
 
 ## Local binding
 
@@ -111,8 +121,8 @@ providers.
 
 A consumer carrying this property owns all domain sequencing and error
 handling. It must use strict provider APIs and must not interpret a missing
-provider as readiness. This identification consumer requires the opt-in and
-only queries state; it never invokes enable, disable, reset or voltage writes.
+provider as readiness. This consumer requires the opt-in. Its normal path
+only queries state; the separate experimental path below owns local CCU writes.
 
 ## Readiness and result
 
@@ -153,7 +163,7 @@ snapshots cannot exclude every intervening change. Fault-aware reads handle
 synchronous faults but do not guarantee that a stalled bus transaction will
 finish. The normal consumer has no cold-start path or retry policy; firmware that
 leaves the GPU OFF produces an explicit unavailable result. GPU_CORE domain 6
-is not requested by the pinned BSP GPU binding and is not operated here.
+is not requested by the pinned BSP GPU binding or operated by the normal path.
 The PCK provider separately reports its raw state at attachment. That earlier
 observation is not consumed as a GPU readiness guarantee or power capability.
 The pinned DDK selects a live `USE_FPGA` path that operates CORE6 directly;
@@ -161,7 +171,7 @@ the experimental path below preserves that handshake instead of copying the writ
 
 ## Experimental clock preparation
 
-This unaccepted hardware experiment has a separate, empty local property:
+This experiment has not achieved identification. Its separate, empty property is
 `netbsd,experimental-clock-prepare`. It is mutually exclusive with
 `netbsd,observe-only`; malformed or conflicting properties fail before any
 provider action. The normal board DTS files remain observe-only. Build a
@@ -205,8 +215,8 @@ The production-body contracts cover reservation, ordering, failures at each
 write, bounded waiting, conflicting opt-ins and retention. Run the three
 existing A733 clock/power/identification contracts and
 `sh ember/tools/a733-gpu-prepare-mutations.sh` for the causal negatives.
-Cross-compilation and software checks do not establish physical identification
-or acceleration. The last accepted hardware result remains the read-only #7.
+The physical #8 attempt timed out before identification. The experiment stays
+disabled in normal board DTBs; further active sequencing requires new evidence.
 
 ## Sources and software checks
 
