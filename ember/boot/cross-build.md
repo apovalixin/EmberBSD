@@ -59,6 +59,13 @@ are still built from the selected source revision. In particular, host
 Binutils supplies BFD for `dbsym` and `mdsetimage`; an external compiler
 prefix alone does not provide those libraries.
 
+BFD source generators use explicit template paths for both GNU make and
+BSD make. The former BSD-only automatic variable expanded to an empty input
+under the GNU make used by host Binutils. The regression
+`ember/tools/binutils-generators-contract.sh` executes all 18 recipes from
+both source Makefiles with each make and three source-directory layouts;
+216 generated outputs match. This is separate from a complete tools build.
+
 ```sh
 EMBER_BUILD_MODE=cross EMBER_EXTERNAL_TOOLCHAIN=/absolute/cross-prefix \
     NETBSD2_JOBS=6 sh "$src/ember/build-kernel.sh" /absolute/new-output EMBER64
