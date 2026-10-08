@@ -40,3 +40,4 @@ device rtl8723dsprobe
 attach rtl8723dsprobe at sdmmc
 file	dev/sdmmc/rtl8723ds_probe.c	rtl8723dsprobe
 file	dev/sdmmc/rtl8723ds_read.c	rtl8723dsprobe
+file	dev/sdmmc/rtl8723ds_function.c	rtl8723dsprobe

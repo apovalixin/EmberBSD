@@ -1,4 +1,4 @@
-/* Origin: EmberBSD - read-only RTL8723DS attachment for the inspected YS-M33. */
+/* Origin: EmberBSD - guarded RTL8723DS diagnostics for the inspected YS-M33. */
 /*-
  * Copyright (c) 2026 Anton and EmberBSD contributors
  * All rights reserved.
@@ -35,8 +35,11 @@
 #include <dev/sdmmc/sdmmcvar.h>
 #include <dev/sdmmc/sdmmc_ioreg.h>
 #include <dev/sdmmc/rtl8723ds_read.h>
+#include <dev/sdmmc/rtl8723ds_function.h>
 
 struct rtl8723ds_probe_softc {
+	struct sdmmc_function *sc_sf;
+	bool sc_function_probe;
 	uint32_t sc_cfg1, sc_cfg2;
 	int sc_error;
 };
@@ -81,13 +84,17 @@ rtl8723ds_probe_match(device_t parent, cfdata_t cf, void *aux)
 static int
 rtl8723ds_probe_command(void *cookie, uint32_t argument, uint32_t *response)
 {
-	struct sdmmc_function *sf = cookie;
+	struct rtl8723ds_probe_softc *sc = cookie;
+	struct sdmmc_function *sf = sc->sc_sf;
 	struct sdmmc_command cmd;
 	int error;
 
 	/* The attachment task serializes this one-shot probe; no async handler. */
 	KASSERT(curlwp == sf->sc->sc_tskq_lwp);
-	if ((argument & (SD_ARG_CMD52_WRITE | SD_ARG_CMD52_EXCHANGE)) != 0)
+	if ((argument & SD_ARG_CMD52_EXCHANGE) != 0)
+		return EACCES;
+	if ((argument & SD_ARG_CMD52_WRITE) != 0 &&
+	    !rtl8723ds_function_write_allowed(sc->sc_function_probe, argument))
 		return EACCES;
 	memset(&cmd, 0, sizeof(cmd));
 	cmd.c_opcode = SD_IO_RW_DIRECT;
@@ -100,19 +107,34 @@ rtl8723ds_probe_command(void *cookie, uint32_t argument, uint32_t *response)
 }
 
 static void
+rtl8723ds_probe_wait(void *cookie, unsigned int ms)
+{
+	kpause("rtwready", false, MAX(1, mstohz(ms)), NULL);
+}
+
+static void
 rtl8723ds_probe_attach(device_t parent, device_t self, void *aux)
 {
 	struct rtl8723ds_probe_softc *sc = device_private(self);
 	const struct sdmmc_attach_args *saa = aux;
 	struct sdmmc_function *sf = saa->sf;
-	const struct rtl8723ds_read_ops ops = { rtl8723ds_probe_command, sf };
+	const struct rtl8723ds_read_ops ops = { rtl8723ds_probe_command, sc };
+	const struct rtl8723ds_function_ops function_ops = {
+	    rtl8723ds_probe_command, rtl8723ds_probe_wait, sc
+	};
+	struct rtl8723ds_function_state function_state;
 	uint32_t repeat;
 	uint8_t enable, ready, suspend;
 	const char *stage = "select card";
-	int error;
+	bool changed;
+	int error, len, restore_error;
+
+	sc->sc_sf = sf;
+	sc->sc_function_probe = fdt_getprop(fdtbus_get_data(), 0,
+	    "ember,ys-m33-rtl8723ds-function-probe", &len) != NULL && len == 0;
 
 	aprint_naive("\n");
-	aprint_normal(": RTL8723DS read-only diagnostic (no network interface)\n");
+	aprint_normal(": RTL8723DS diagnostic (no network interface)\n");
 	aprint_normal_dev(self, "CIS card=%04x:%04x function=%04x:%04x\n",
 	    sf->sc->sc_fn0->cis.manufacturer, sf->sc->sc_fn0->cis.product,
 	    saa->manufacturer, saa->product);
@@ -153,6 +175,34 @@ rtl8723ds_probe_attach(device_t parent, device_t self, void *aux)
 		goto fail;
 	}
 	aprint_normal_dev(self, "CMD52 reads completed; radio not initialized\n");
+	if (!sc->sc_function_probe)
+		return;
+	stage = "function enable/ready";
+	error = rtl8723ds_function_enable(&function_ops, &function_state);
+	changed = function_state.changed;
+	if (error == 0) {
+		aprint_normal_dev(self, "function 1 ready=%02x; original IOEx=%02x\n",
+		    function_state.ready, function_state.original);
+		stage = "enabled SYS_CFG1";
+		error = rtl8723ds_read32(&ops, 0x102600f0, &repeat);
+		if (error == 0 && repeat != sc->sc_cfg1)
+			error = EAGAIN;
+	}
+	restore_error = rtl8723ds_function_restore(&function_ops, &function_state);
+	if (restore_error != 0) {
+		aprint_error_dev(self, "function restore failed: error %d\n",
+		    restore_error);
+		if (error == 0) {
+			error = restore_error;
+			stage = "function restore";
+		}
+	} else if (changed) {
+		aprint_normal_dev(self, "function enable restored to %02x\n",
+		    function_state.original);
+	}
+	if (error != 0)
+		goto fail;
+	aprint_normal_dev(self, "function lifecycle completed; radio not initialized\n");
 	return;
 fail:
 	sc->sc_error = error;
@@ -162,6 +212,6 @@ fail:
 static int
 rtl8723ds_probe_detach(device_t self, int flags)
 {
-	/* No interrupts, callbacks, allocations or card state changes to release. */
+	/* The one-shot function probe restores IOEx before returning. */
 	return 0;
 }
