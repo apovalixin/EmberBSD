@@ -1,4 +1,5 @@
 #!/bin/sh
+# Origin: EmberBSD - validate the opt-in SDIO adapter against synthetic resources.
 set -eu
 src=${1:-$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)}
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/a133-sdio.XXXXXXXX")

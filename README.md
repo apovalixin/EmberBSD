@@ -72,7 +72,7 @@ application stacks, adaptations and runnable checks. Small installations
 can keep only the components they need. Upstream components retain their
 own licenses and authorship.
 
-Status updated **2026-10-07**; linked component documents record their own
+Status updated **2026-10-08**; linked component documents record their own
 validation dates. Application tests on an AArch64 VM do not establish support
 on every board in the hardware catalog.
 
@@ -362,7 +362,7 @@ listed revision; it does not imply full peripheral or long-run support.
 | [Orange Pi Zero 4](ember/boards/orange-pi-zero-4.md) | AArch64 / Allwinner A733 | Eight cores, SDR104, Ethernet, Wi-Fi, classic Bluetooth, thermal/frequency control and USB 2.0 data; SuperSpeed unconfirmed |
 | [Orange Pi Zero 3W](ember/boards/orange-pi-zero-3w.md) | AArch64 / Allwinner A733 | Eight cores, SDR104, Wi-Fi, Bluetooth inquiry and thermal/frequency control; USB devices and Bluetooth pairing not tested |
 | [ESP32-S31 development board](ember/boards/esp32-s31.md) | RISC-V 32 / ESP32-S31 | Flash boot, Ethernet and WPA2 Wi-Fi in 16 MB; one core, vendor radio libraries, no BLE/USB |
-| [YS-M33 tablet](ember/boards/ys-m33-a133.md) | AArch64 / Allwinner A133 | Experimental eMMC boot, Ethernet, upright awesomeWM and touch on one sample; guarded audio(4) driver boots and enumerates with routes disabled, physical streaming/capture and Wi-Fi remain unverified |
+| [YS-M33 tablet](ember/boards/ys-m33-a133.md) | AArch64 / Allwinner A133 | Experimental eMMC boot, Ethernet, upright awesomeWM and touch on one sample; audio(4) enumerates with routes disabled, physical streaming/capture unverified; opt-in SDIO RAM probe identifies the radio card, no Wi-Fi driver/association |
 
 The [board catalog](ember/boards/README.md) defines validation terms and links
 to VM and research targets. To contribute another board, follow
