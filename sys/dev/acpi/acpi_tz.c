@@ -46,6 +46,7 @@ __KERNEL_RCSID(0, "$NetBSD: acpi_tz.c,v 1.91 2022/05/22 11:27:35 andvar Exp $");
 #include <dev/acpi/acpireg.h>
 #include <dev/acpi/acpivar.h>
 #include <dev/acpi/acpi_power.h>
+#include <dev/sysmon/sysmon_taskq.h>
 
 #define _COMPONENT		ACPI_TZ_COMPONENT
 ACPI_MODULE_NAME		("acpi_tz")
@@ -248,6 +249,9 @@ acpitz_detach(device_t self, int flags)
 	pmf_device_deregister(self);
 	acpi_deregister_notify(sc->sc_node);
 
+	/* Drain queued thermal callbacks after stopping all their producers. */
+	sysmon_task_queue_barrier(0);
+
 	/*
 	 * Although the device itself should not contain any power
 	 * resources, we have possibly used the resources of active
@@ -284,6 +288,7 @@ static void
 acpitz_get_zone_quiet(void *opaque)
 {
 	acpitz_get_zone(opaque, 0);
+	acpitz_get_status(opaque);
 }
 
 static void
