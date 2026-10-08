@@ -3,7 +3,8 @@
 EmberBSD supplies a native FDT power-domain provider for Allwinner A733.
 It is a prerequisite for device drivers, including GPU/NPU drivers; it does
 not expose an accelerator, submit commands or claim hardware acceleration.
-The owner is this OS repository. Physical operation remains unverified.
+The owner is this OS repository. Provider attachment is verified on Zero
+3W; physical accelerator-domain transitions remain unverified.
 
 ## Interface and limits
 
@@ -124,12 +125,17 @@ The GCC16 objects retain DWARF5 and CTF, with strict kernel warnings enabled.
 Both Zero 3W and Zero 4 DTBs compiled and decoded with the provider present.
 The existing `/soc` unit-address warning remains; no new DT warning appeared.
 
-For a complete candidate build use the [cross-build instructions](cross-build.md)
-from a clean commit, including matched board modules and DTBs. A focused
-object build does not establish a linked/booted kernel. No board was deployed,
-rebooted, or subjected to accelerator MMIO in this check. Supplies, GPU/NPU
-clocks/resets, identification, DMA/MMU, IRQs and command execution remain
-separate hardware acceptance steps.
+The complete GCC16.2 `EMBER64` kernel, four matching modules and both A733
+DTBs subsequently cross-built on macOS. On 2026-10-08 the matched Zero 3W
+bundle booted through vendor boot0/U-Boot. Its log identifies `sun60ipck0`
+and both A733 CCU providers; Wi-Fi/SSH and 37 local-socket checks passed.
+The booted ELF SHA256 is
+`b66cf8eae6199946810ea6e67d77b716aaa5b7b61357c096d8f6dff53f65cbbe`.
+This verifies provider attachment, not accelerator power transitions.
+No GPU/NPU consumer node is enabled. Supplies, device clocks/resets,
+identification, DMA/MMU, IRQs and command execution remain separate steps.
+Use the [cross-build instructions](cross-build.md) from a clean commit,
+including matching modules and DTBs; do not mix these artifacts across builds.
 
 ## Provenance
 

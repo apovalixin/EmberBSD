@@ -279,6 +279,11 @@ on every board in the hardware catalog.
   See the [VirtGPU implementation](sys/external/bsd/drm2/virtio/README.md),
   [DRM identity checks](ember/boot/drm-native-identity.md) and
   [graphics probes](https://github.com/neonix20b/EmberBSD-Examples/tree/main/desktop/wayland-utm).
+  [Local socket fixes](ember/boot/local-socket-compatibility.md) restore
+  per-call nonblocking sends and socketpair peer identity. All 37 regression
+  cases pass on Zero 3W, followed by all 26 enabled upstream tests of the
+  installed Ports Wayland 1.26.0nb1 package. This validates the IPC/library
+  layer; a compositor and accelerated session need separate acceptance.
   Ports owns the [current Mesa 26.2.4 source adaptation](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/wayland-utm),
   with native DSO-lifetime/numeric regressions under GCC 16.2 and
   common-toolchain staging rules. A [common graphics source profile](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/common-graphics)
@@ -342,8 +347,9 @@ on every board in the hardware catalog.
   Its 38 software cases and GCC16 cross object builds pass. The
   [accelerator clock providers](ember/boot/a733-accelerator-clocks.md) add module
   clocks, interface gates and resets while preserving firmware-owned PLLs.
-  They pass 199 software assertions and GCC12/GCC16 object builds; physical
-  power/clock transitions are unverified. On the available Zero 3W, accelerator
+  They pass 199 software assertions and GCC12/GCC16 object builds. A complete
+  GCC16.2 kernel boots on Zero 3W with both CCUs and PCK600 attached; physical
+  accelerator power/clock transitions are unverified. On that board, accelerator
   drivers are not attached. Power sequencing, shared clock arbitration, DMA/MMU
   and command submission still require porting. These are
   porting targets, not available EmberBSD acceleration. Board bring-up,

@@ -70,10 +70,12 @@ substitute for a consumer that owns and unwinds the full power sequence.
 
 The pinned BSP NPU sequence deasserts AHB, AXI and CORE resets, then enables
 AHB, configures rate, enables MBUS and bus gates, and finally the module.
-The GPU path enables parent clocks, releases its bus reset, enables bus
-and core clocks, and requests runtime power. Supplies are managed outside
-these clock helpers. This is source evidence, not a validated native
-sequence; the BSP does not sequence the new SRAM reset.
+The GPU clock helper enables parents, releases its bus reset and enables
+bus/core clocks. The initial BSP platform setup orders supply, runtime
+domain, clocks and rate; its resume path instead orders clocks before
+runtime power. These paths are not one interchangeable cold-start recipe.
+This is source evidence, not a validated native sequence; the BSP does not
+sequence the new SRAM reset.
 
 The next hardware milestone is a narrowly scoped identification consumer:
 resolve the board supplies and power sequence, select a supported parent
@@ -126,6 +128,7 @@ Use `CLOCK_TEST_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer'`
 for the sanitizer run. No Python or board access is required.
 
 The contract and GCC 12.5/16 AArch64 kernel-object cross-builds have passed.
-This is software-contract and compilation evidence. These new providers
-have not been exercised on the physical A733, and do not establish GPU
+The complete GCC16.2 kernel also boots on Zero 3W with both CCUs and PCK600
+attached; see the [hardware boundary](a733-power-domains.md). Accelerator
+clock/reset transitions have not been exercised on that board and do not establish GPU
 rendering or NPU inference support.
