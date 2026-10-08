@@ -57,6 +57,32 @@ are not automatically rolled back. Existing `pdc_enable` callbacks retain
 their previous void-callback behavior; Apple PMGR is unchanged. Truncated
 DT specifiers are rejected before entering either callback.
 
+## FDT attachment failures
+
+The FDT bus checks power-domain errors before attaching a matched consumer.
+A missing `power-domains` property retains ordinary attachment. A present
+malformed property, missing provider or failed transition prints the node
+name and error, and prevents both attach and post-attach callbacks. The
+node stays unattached so a later scan can retry it.
+
+Unmatched nodes keep the default-pass `not configured` diagnostic without
+pre-attach pinctrl or power operations. A late match during that diagnostic
+cannot bypass pre-attach; a rescan must first select a matching driver.
+Successfully attached nodes are not powered or attached again on a retry.
+
+This preserves pinctrl-before-power ordering for matched consumers. A
+failure does not undo the selected pinctrl state or earlier successful
+domains in a multi-domain request. Supply/clock sequencing and shared
+resource ownership still need a separate consumer design before GPU/NPU
+nodes are enabled; this check introduces no sequencing opt-out interface.
+
+Run `sh ember/tools/fdt-power-attach-contract.sh` for the production scan,
+pre/post-attach and power API regression. Use
+`FDT_ATTACH_TEST_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer'`
+for sanitizer checks. The contract covers quiet/default passes, absent
+and malformed properties, missing providers, checked and legacy callbacks,
+errors, retries, unmatched diagnostics and preserved side effects.
+
 ## Reproduce the software checks
 
 The contract compiles the actual driver and FDT implementation, with bus,

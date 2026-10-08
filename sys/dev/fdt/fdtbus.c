@@ -84,7 +84,7 @@ static void	fdt_scan_best(struct fdt_softc *, struct fdt_node *);
 static void	fdt_scan(struct fdt_softc *, int);
 static void	fdt_add_node(struct fdt_node *);
 static u_int	fdt_get_order(int);
-static void	fdt_pre_attach(struct fdt_node *);
+static int	fdt_pre_attach(struct fdt_node *);
 static void	fdt_post_attach(struct fdt_node *);
 
 static const struct device_compatible_entry compat_data[] = {
@@ -395,6 +395,13 @@ fdt_scan_best(struct fdt_softc *sc, struct fdt_node *node)
 	node->n_cfpass = best_pass;
 }
 
+/* Origin: EmberBSD; AI-assisted checked power-domain attachment. */
+static int
+fdt_scan_nomatch(device_t parent, cfdata_t cf, const int *locs, void *aux)
+{
+	return 0;
+}
+
 static void
 fdt_scan(struct fdt_softc *sc, int pass)
 {
@@ -421,7 +428,8 @@ fdt_scan(struct fdt_softc *sc, int pass)
 		/*
 		 * Attach the device.
 		 */
-		fdt_pre_attach(node);
+		if (node->n_cf != NULL && fdt_pre_attach(node) != 0)
+			continue;
 
 		devhandle_t nodeh = device_handle(node->n_bus);
 
@@ -434,11 +442,14 @@ fdt_scan(struct fdt_softc *sc, int pass)
 							 node->n_phandle)));
 		} else {
 			/*
-			 * Default pass.
+			 * Default pass. Keep the diagnostic for unmatched nodes,
+			 * without powering them or allowing a new match to bypass
+			 * pre-attach. A rescan can reconsider their match later.
 			 */
 			node->n_dev = config_found(node->n_bus, &faa,
 			    fdtbus_print,
-			    CFARGS(.submatch = fdt_scan_submatch,
+			    CFARGS(.submatch = node->n_cf != NULL ?
+				       fdt_scan_submatch : fdt_scan_nomatch,
 				   .iattr = "fdt",
 				   .locators = locs,
 				   .devhandle =
@@ -451,7 +462,7 @@ fdt_scan(struct fdt_softc *sc, int pass)
 	}
 }
 
-static void
+static int
 fdt_pre_attach(struct fdt_node *node)
 {
 	const char *cfgname;
@@ -469,7 +480,17 @@ fdt_pre_attach(struct fdt_node *node)
 		    "failed to set %s config on %s: %d\n",
 		    cfgname, node->n_name, error);
 
-	fdtbus_powerdomain_enable(node->n_phandle);
+	if (of_hasprop(node->n_phandle, "power-domains")) {
+		error = fdtbus_powerdomain_enable(node->n_phandle);
+		if (error != 0) {
+			aprint_error_dev(node->n_bus,
+			    "failed to enable power domains for %s: %d\n",
+			    node->n_name, error);
+			return error;
+		}
+	}
+
+	return 0;
 }
 
 static void
