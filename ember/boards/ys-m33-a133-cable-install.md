@@ -218,6 +218,10 @@ The [capture binding checker](ys-m33-a133-backup-recovery.md#bind-a-trusted-capt
 freshly verifies the full backup and four critical copies against a trusted
 record and explicit serial/CID. Its offline binding does not replace live USB
 identity, retained hardware/mutable copies or accepted first boot.
+The [read-only USB backup collector](ys-m33-a133-usb-backup.md) acquires a raw
+full snapshot, critical copies and boot0/boot1 from a root-readable source.
+Its actual-dd host contract does not establish coherent Android or physical
+restore acceptance; recovery setup and accepted first boot remain separate.
 
 The first closed-enclosure installation is an experimental hardware result,
 not a released fleet installer. Repeat the complete procedure without UART:

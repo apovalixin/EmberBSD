@@ -371,6 +371,9 @@ with full readback hashes; this is an API primitive, with physical acceptance
 and a released fleet installer still pending. A [capture checker](ember/boards/ys-m33-a133-backup-recovery.md#bind-a-trusted-capture-record-and-critical-copies)
 freshly verifies full backup and critical copies against recorded serial/CID;
 trusted provenance and live device binding remain separate checks.
+A [read-only USB backup collector](ember/boards/ys-m33-a133-usb-backup.md)
+acquires full/critical/hardware boot copies into private storage, tested through
+actual-dd source files; coherent Android and physical restoration remain unaccepted.
 A [private session coordinator](ember/boards/ys-m33-a133-install-session.md)
 rechecks live ranges on repeat and keeps recovery protected after failed writes;
 its filesystem/resume contract is tested on a file-backed host fixture.

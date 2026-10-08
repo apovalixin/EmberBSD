@@ -56,7 +56,7 @@ a cached success receipt cannot replace those reads.
 Keep a capture manifest in the same private directory as its five files.
 Directory mode must be0700, every input file0600, owned by the current UID,
 regular and single-linked. Leaf symlinks, hardlinks and unsafe modes are
-refused. All six input descriptors remain open across the checks, with distinct
+refused. All input descriptors remain open across the checks, with distinct
 device/inode identities. Names differing only by case cannot masquerade as
 separate copies on a case-insensitive filesystem. Changed stat/inode/path or
 a deadline prevents success; an early copy is checked again after later reads.
@@ -98,6 +98,15 @@ mutable copies, hardware boot0/1, release authenticity and first boot remain
 separate prerequisites. Do not persist this receipt as proof for a later write;
 freshly verify the capture again in the consuming invocation.
 
+Schema2 keeps those fields and adds `capture_state` (device/recovery),
+`root_method` (vendor_su/adbd), and exactly two `hardware_boot` objects with
+role/file/bytes/sha256 for boot0/boot1. Area sizes are equal, positive512-byte
+multiples, at most32MiB each. Their files use the same private/inode/lifetime
+guards and fresh hashes. Schema2 returns hardware_boot_copies_verified=true;
+schema1 explicitly returns false. Recorded geometry and hashes remain trusted
+input, not hardware discovery or authenticity. Acquisition from a root-readable
+USB source is provided by the [backup collector](ys-m33-a133-usb-backup.md).
+
 ## Prepare a one-shot recovery environment copy
 
 Read the exact original 128 KiB environment prefix from this particular tablet
@@ -137,6 +146,7 @@ ruby ember/tools/a133-backup-check-test.rb
 ruby ember/tools/a133-backup-library-test.rb
 ruby ember/tools/a133-capture-check-test.rb
 ruby ember/tools/a133-capture-regression-test.rb
+ruby ember/tools/a133-capture-hardware-test.rb
 ruby ember/tools/a133-recovery-env-test.rb
 ruby ember/tools/a133-env-edit-test.rb
 ruby ember/tools/a133-install-bundle-test.rb
