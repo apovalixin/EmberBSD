@@ -409,6 +409,12 @@ on every board in the hardware catalog.
   porting targets, not available EmberBSD acceleration. Board bring-up,
   driver/DMA integration, compatible runtime and real model execution must
   all pass before an accelerated AI workflow is claimed.
+  For the Raspberry Pi firmware path, [native mailbox transactions](ember/boot/bcmmbox-transactions.md)
+  now share a bounded TX/RX deadline and validate the echoed DMA address.
+  Unknown completion retains the buffer and closes that channel until reboot,
+  while unrelated channels can progress. Seventy software-contract cases pass
+  on macOS and in an AArch64 VM, plus cross-compilation of the native attachment
+  objects. Physical CM5 firmware acceptance and a V3D driver remain unverified.
 
 ### Board support and system builds
 
