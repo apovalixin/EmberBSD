@@ -422,7 +422,10 @@ on every board in the hardware catalog.
   while unrelated channels can progress. Seventy software-contract cases pass
   on macOS and in an AArch64 VM. The complete GCC16 EMBER64 kernel and matched
   modules build; that kernel also boots and shuts down in an isolated AArch64 VM.
-  Physical CM5 firmware acceptance and a V3D driver remain unverified.
+  On physical CM5, a normal reboot and 128 firmware clock reads through four
+  processes plus 32 temperature/throttle checks pass with that matched build.
+  This validates the ACPI polling/DMA success path; hardware IRQ/fault handling
+  and a V3D driver remain unverified.
 
 ### Board support and system builds
 

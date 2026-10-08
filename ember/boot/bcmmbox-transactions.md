@@ -90,6 +90,45 @@ objects with `-Werror`. The same 70 fake-I/O cases also passed as an AArch64
 executable in an isolated EmberBSD/NetBSD 11 VM. This is target software
 contract acceptance, not physical firmware, interrupt or DMA validation.
 
+## Compute Module 5 hardware acceptance
+
+On 2026-10-08, the complete GCC16.2 `EMBER64` kernel from
+[`eec8a2229dd592ec0d9cd7dd58f1407dcddc4f19`](https://github.com/oxtech-ember/EmberBSD/commit/eec8a2229dd592ec0d9cd7dd58f1407dcddc4f19)
+booted on a Raspberry Pi Compute Module 5, board revision `C04180`.
+EDK2 reported version `rpi5-20260730.1`, date `20260928`.
+The kernel ELF SHA256 was
+`8d67ee425c4fb52df276df266864aa6a9bfff634f2ab5701133cf7465d9d06e4`.
+Its four board module files matched the same build; `if_cemac_acpi` and
+`rpi5button` loaded normally. SSH returned after the normal reboot.
+
+Run the read-only property-consumer check on the board as root, using a
+new output directory:
+
+```sh
+sh ember/tools/bcmmbox-hardware-read.sh /var/tmp/mailbox-read-check
+```
+
+The [runner](../tools/bcmmbox-hardware-read.sh) makes 128 clock requests in
+32 rounds of four processes, reads temperature/throttle sensors each round,
+and makes a final clock request. It checks all exit statuses, numeric bounds,
+valid temperature, clear voltage/throttle flags, and unchanged kernel messages.
+Each `machdep.cpu.frequency.current` read invokes a firmware GET_CLOCKRATE;
+it is not a cached frequency result. The script creates only its output
+directory and logs. It changes no frequency, power, network or boot setting.
+A failure retains the partial logs. Run it on an otherwise quiet board;
+unrelated new kernel diagnostics also prevent a PASS.
+
+The hardware run passed all requests and sensor checks in 34 seconds.
+This validates successful firmware transactions, including real DMA buffers
+and address echoes. **ACPI uses polling:** interrupt establishment remains
+disabled in that attachment even though its ACPI resource includes an IRQ.
+No malformed response, hardware timeout, quarantine, VCHIQ operation or
+long-duration stress was injected. These results do not establish IRQ
+handling or V3D acceleration. The preceding AArch64 VM also booted this
+exact kernel, ran both A733 software fixtures, and shut down normally.
+
+## Source references
+
 The reviewed baseline is EmberBSD
 [`dd6b5815f5f82446a5d652dd2dd491e078aeb140`](https://github.com/oxtech-ember/EmberBSD/commit/dd6b5815f5f82446a5d652dd2dd491e078aeb140).
 The earlier [polling timeout adaptation](../patches/bcmmbox-timeout.diff)
@@ -103,4 +142,5 @@ The register distinction is confirmed by Raspberry Pi Linux
 requires the response to preserve the buffer address. These are protocol
 references; no Linux implementation is imported. NetBSD licenses and
 upstream identifiers remain intact. Source contracts and cross-compilation
-do not establish physical mailbox or GPU acceptance.
+alone do not establish physical mailbox or GPU acceptance; the bounded
+CM5 successful-request scenario above is a separate hardware result.
