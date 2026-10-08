@@ -490,6 +490,18 @@ fdt_pre_attach(struct fdt_node *node)
 		    "failed to set %s config on %s: %d\n",
 		    cfgname, node->n_name, error);
 
+	/* This explicit opt-in transfers domain sequencing to the consumer. */
+	if (of_hasprop(node->n_phandle, "netbsd,consumer-managed-power")) {
+		if (OF_getproplen(node->n_phandle,
+		    "netbsd,consumer-managed-power") != 0) {
+			aprint_error_dev(node->n_bus,
+			    "invalid consumer-managed power property for %s: %d\n",
+			    node->n_name, EINVAL);
+			return EINVAL;
+		}
+		return 0;
+	}
+
 	if (of_hasprop(node->n_phandle, "power-domains")) {
 		error = fdtbus_powerdomain_enable_on_attach(node->n_phandle);
 		if (error != 0) {

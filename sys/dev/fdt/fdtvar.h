@@ -221,6 +221,8 @@ struct fdtbus_powerdomain_controller_func {
 	void 	(*pdc_enable)(device_t, const uint32_t *, bool);
 	/* Optional checked operation; takes precedence over pdc_enable. */
 	int	(*pdc_set)(device_t, const uint32_t *, bool);
+	/* Optional observation; output is valid only on success. */
+	int	(*pdc_get)(device_t, const uint32_t *, bool *);
 };
 
 
@@ -241,6 +243,8 @@ struct fdtbus_regulator_controller_func {
 	int	(*enable)(device_t, bool);
 	int	(*set_voltage)(device_t, u_int, u_int);
 	int	(*get_voltage)(device_t, u_int *);
+	/* Optional observation; output is valid only on success. */
+	int	(*is_enabled)(device_t, bool *);
 };
 
 
@@ -502,6 +506,8 @@ struct fdtbus_regulator *
 void		fdtbus_regulator_release(struct fdtbus_regulator *);
 int		fdtbus_regulator_enable(struct fdtbus_regulator *);
 int		fdtbus_regulator_disable(struct fdtbus_regulator *);
+/* The result is unchanged on error, including unsupported providers. */
+int		fdtbus_regulator_is_enabled(struct fdtbus_regulator *, bool *);
 int		fdtbus_regulator_set_voltage(struct fdtbus_regulator *,
 		    u_int, u_int);
 int		fdtbus_regulator_get_voltage(struct fdtbus_regulator *,
@@ -526,7 +532,9 @@ int		fdtbus_powerdomain_enable(int);
 int		fdtbus_powerdomain_enable_index(int, int);
 int		fdtbus_powerdomain_disable(int);
 int		fdtbus_powerdomain_disable_index(int, int);
-/* Origin: EmberBSD; automatic attach permits unregistered DT providers. */
+/* Strict query: missing providers are errors; output survives errors. */
+int		fdtbus_powerdomain_is_enabled_index(int, int, bool *);
+/* Origin: EmberBSD; checked power and regulator state interfaces. */
 int		fdtbus_powerdomain_enable_on_attach(int);
 
 struct syscon *	fdtbus_syscon_acquire(int, const char *);

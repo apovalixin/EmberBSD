@@ -11,6 +11,7 @@
 #include <dt-bindings/clock/allwinner,sun60i-a733-r-ccu.h>
 #include <dt-bindings/reset/allwinner,sun60i-a733-ccu.h>
 #include <dt-bindings/reset/allwinner,sun60i-a733-r-ccu.h>
+#include <dt-bindings/power/allwinner,sun60i-a733-pck-600.h>
 
 / {
 	interrupt-parent = <&gic>;
@@ -718,6 +719,20 @@
 				function = "uart1";
 				allwinner,pinmux = <2>;
 			};
+		};
+
+		/* Origin: EmberBSD; GPU identity only, no automatic power-on. */
+		gpu: gpu@1800000 {
+			compatible = "allwinner,sun60i-a733-gpu",
+				     "img,img-bxm-4-64", "img,img-rogue";
+			reg = <0x01800000 0x8ffff>;
+			interrupts = <GIC_SPI 63 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&ccu CLK_GPU0>;
+			clock-names = "core";
+			resets = <&ccu RST_BUS_GPU0>;
+			power-domains = <&pck600 PD_GPU_TOP>;
+			netbsd,consumer-managed-power;
+			status = "disabled";
 		};
 
 		ccu: clock-controller@2002000 {

@@ -97,7 +97,7 @@ fdtbus_powerdomain_lookup(int phandle)
 	return NULL;
 }
 
-/* Origin: EmberBSD; AI-assisted firmware-compatible automatic attachment. */
+/* Origin: EmberBSD; checked power operations and read-only state queries. */
 static int
 fdtbus_powerdomain_enable_internal(int phandle, int index, bool enable,
     bool allow_unregistered)
@@ -181,4 +181,51 @@ int
 fdtbus_powerdomain_disable(int node)
 {
 	return fdtbus_powerdomain_disable_index(node, -1);
+}
+
+int
+fdtbus_powerdomain_is_enabled_index(int phandle, int index, bool *enabled)
+{
+	const uint32_t *pds, *pd;
+	int len;
+
+	if (index < 0 || enabled == NULL)
+		return EINVAL;
+	pds = fdtbus_get_prop(phandle, "power-domains", &len);
+	if (pds == NULL || len <= 0 || len % sizeof(*pds) != 0)
+		return EINVAL;
+
+	for (pd = pds; pd < pds + len / sizeof(*pd); index--) {
+		const int pd_node =
+		    fdtbus_get_phandle_from_native(be32toh(pd[0]));
+		struct fdtbus_powerdomain_controller *pdc =
+		    fdtbus_powerdomain_lookup(pd_node);
+		uint32_t cells;
+		bool state;
+		int error;
+
+		if (pdc != NULL) {
+			cells = pdc->pdc_cells;
+		} else if (of_getprop_uint32(pd_node, "#power-domain-cells",
+		    &cells) != 0 || cells > INT_MAX) {
+			return EINVAL;
+		}
+		if (cells >= (size_t)(pds + len / sizeof(*pd) - pd))
+			return EINVAL;
+		if (index == 0) {
+			if (pdc == NULL)
+				return ENXIO;
+			if (pdc->pdc_funcs->pdc_get == NULL)
+				return EOPNOTSUPP;
+			error = pdc->pdc_funcs->pdc_get(pdc->pdc_dev, pd,
+			    &state);
+			if (error != 0)
+				return error;
+			*enabled = state;
+			return 0;
+		}
+		pd += cells + 1;
+	}
+
+	return ENOENT;
 }

@@ -35,6 +35,8 @@ static uint32_t specifier[4];
 static uint32_t provider_cells[4];
 static bool provider_cells_missing[4];
 static bool property_present, pin_init, late_match, attach_fails;
+static bool managed_power;
+static int managed_length;
 static bool match_available, match_requires_provider;
 static int property_length, checked_error, pin_error, last_error;
 static unsigned int checked_calls, legacy_calls, power_disables;
@@ -58,7 +60,9 @@ swap32(uint32_t val)
 
 	return *(const unsigned char *)&test == 1 ? __builtin_bswap32(val) : val;
 }
+#ifndef be32toh
 #define be32toh(v) swap32(v)
+#endif
 static void *
 kmem_alloc(size_t size, int flags)
 {
@@ -87,8 +91,17 @@ static bool
 of_hasprop(int phandle, const char *name)
 {
 
+	if (strcmp(name, "netbsd,consumer-managed-power") == 0)
+		return managed_power;
 	assert(strcmp(name, "power-domains") == 0);
 	return property_present;
+}
+static int
+OF_getproplen(int phandle, const char *name)
+{
+
+	assert(strcmp(name, "netbsd,consumer-managed-power") == 0);
+	return managed_power ? managed_length : -1;
 }
 static int
 fdtbus_get_phandle_from_native(int phandle)
@@ -119,7 +132,8 @@ static void
 error_message(device_t dev, const char *fmt, const char *name, int e)
 {
 
-	assert(strstr(fmt, "failed to enable power domains") != NULL);
+	assert(strstr(fmt, "failed to enable power domains") != NULL ||
+	    strstr(fmt, "invalid consumer-managed power property") != NULL);
 	assert(strcmp(name, "test-device") == 0);
 	last_error = e;
 	errors++;
@@ -282,6 +296,8 @@ reset(int pass)
 	provider_cells[2] = provider_cells[3] = 1;
 	provider_cells_missing[2] = provider_cells_missing[3] = false;
 	checked_error = pin_error = last_error = 0;
+	managed_power = false;
+	managed_length = 0;
 	checked_calls = legacy_calls = power_disables = 0;
 	attach_calls = found_calls = post_calls = pin_calls = 0;
 	init_calls = errors = diagnostics = 0;
@@ -322,6 +338,29 @@ main(void)
 
 	for (int mode = 0; mode < 2; mode++) {
 		const int pass = mode ? FDTCF_PASS_DEFAULT : 3;
+
+		for (u_int i = 0; i < sizeof(failures) / sizeof(int); i++) {
+			reset(pass);
+			managed_power = true;
+			add_provider(2, false);
+			checked_error = failures[i];
+			fdt_scan(&bus, pass);
+			CHECK(node.n_dev != NULL && post_calls == 1);
+			CHECK(checked_calls == 0 && legacy_calls == 0 && errors == 0);
+			CHECK(strcmp(event_log, mode ? "IFOD" : "IAOD") == 0);
+		}
+		reset(pass);
+		managed_power = true;
+		managed_length = 4;
+		add_provider(2, true);
+		fdt_scan(&bus, pass);
+		unattached(EINVAL);
+		CHECK(checked_calls == 0 && legacy_calls == 0);
+		/* Removing the explicit opt-in restores the legacy operation. */
+		managed_power = false;
+		fdt_scan(&bus, pass);
+		CHECK(node.n_dev != NULL && legacy_calls == 1 && post_calls == 1);
+
 		reset(pass);
 		property_present = false;
 		fdt_scan(&bus, pass);

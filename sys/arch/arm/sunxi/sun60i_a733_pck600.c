@@ -182,8 +182,62 @@ sun60i_pck600_set(device_t dev, const uint32_t *data, bool enable)
 	return error;
 }
 
+static int
+sun60i_pck600_state(struct sun60i_pck600_softc *sc, u_int id, bool *enabled)
+{
+	const bus_size_t base = id * PCK600_DOMAIN_SIZE;
+	uint32_t policy, status, emulation;
+
+	KASSERT(mutex_owned(&sc->sc_lock));
+	if (id >= PCK600_NDOMAINS)
+		return EINVAL;
+	if (sc->sc_failed[id])
+		return EIO;
+
+	policy = sun60i_pck600_read(sc, base + PCK600_PWPR);
+	emulation = sun60i_pck600_read(sc, base + PCK600_PMER);
+	status = sun60i_pck600_read(sc, base + PCK600_PWSR);
+	/* Detect a changing firmware snapshot without requesting a transition. */
+	if (policy != sun60i_pck600_read(sc, base + PCK600_PWPR) ||
+	    emulation != sun60i_pck600_read(sc, base + PCK600_PMER) ||
+	    status != sun60i_pck600_read(sc, base + PCK600_PWSR))
+		return EBUSY;
+	if (((policy | status) & PCK600_DYNAMIC) != 0 ||
+	    (emulation & PCK600_EMULATION) != 0)
+		return EOPNOTSUPP;
+	if ((policy & PCK600_MODE) != (status & PCK600_MODE))
+		return EBUSY;
+
+	/* A locked static policy can be observed without changing it. */
+	switch (status & PCK600_MODE) {
+	case PCK600_OFF:
+		*enabled = false;
+		return 0;
+	case PCK600_ON:
+		*enabled = true;
+		return 0;
+	default:
+		return EOPNOTSUPP;
+	}
+}
+
+static int
+sun60i_pck600_get(device_t dev, const uint32_t *data, bool *enabled)
+{
+	struct sun60i_pck600_softc * const sc = device_private(dev);
+	const u_int id = be32toh(data[1]);
+	int error;
+
+	mutex_enter(&sc->sc_lock);
+	error = sun60i_pck600_state(sc, id, enabled);
+	mutex_exit(&sc->sc_lock);
+
+	return error;
+}
+
 static const struct fdtbus_powerdomain_controller_func sun60i_pck600_funcs = {
 	.pdc_set = sun60i_pck600_set,
+	.pdc_get = sun60i_pck600_get,
 };
 
 static int

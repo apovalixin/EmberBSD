@@ -15,12 +15,24 @@ typedef void *cfdata_t;
 typedef void *bus_space_tag_t;
 typedef unsigned int bus_space_handle_t;
 typedef size_t bus_size_t;
+#ifndef __BIT
 #define __BIT(n) (UINT32_C(1) << (n))
+#endif
+#ifndef __BITS
 #define __BITS(h, l) ((UINT32_MAX >> (31 - (h))) & (UINT32_MAX << (l)))
+#endif
+#ifndef __SHIFTOUT
 #define __SHIFTOUT(v, m) (((v) & (m)) >> __builtin_ctz(m))
+#endif
+#ifndef __SHIFTIN
 #define __SHIFTIN(v, m) (((v) << __builtin_ctz(m)) & (m))
+#endif
+#ifndef __SHIFTOUT_MASK
 #define __SHIFTOUT_MASK(m) __SHIFTOUT(m, m)
+#endif
+#ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
+#endif
 #define howmany(x, y) (((x) + ((y) - 1)) / (y))
 #define KASSERT(c) assert(c)
 #define BUS_SPACE_BARRIER_READ 1
@@ -33,7 +45,7 @@ typedef size_t bus_size_t;
 #define aprint_normal(...) ((void)0)
 #define aprint_naive(...) ((void)0)
 #define delay(n) ((void)0)
-struct clk_domain { int unused; };
+struct clk_domain { void *priv; };
 struct clk { struct clk_domain *domain; const char *name; u_int flags; };
 struct fdt_attach_args { int faa_phandle; bus_space_tag_t faa_bst; };
 struct device_compatible_entry { const char *compat; };
@@ -42,7 +54,11 @@ struct device_compatible_entry { const char *compat; };
 #include "bindings.h"
 
 static uint32_t registers[0x1500 / 4], last_write;
-static unsigned writes, barriers, checks;
+static unsigned writes, barriers, checks, reads;
+static unsigned unstable_read, hosc_reads;
+static bus_size_t unstable_reg;
+static u_int hosc_rate = 24000000;
+static bool unstable_hosc;
 static bool reject_write, missing_hosc;
 static struct sunxi_ccu_softc state;
 static struct clk hosc = { .name = "hosc" };
@@ -59,6 +75,9 @@ static uint32_t
 bus_space_read_4(bus_space_tag_t tag, bus_space_handle_t handle, bus_size_t off)
 {
 	assert(off < sizeof(registers) && off % 4 == 0);
+	reads++;
+	if (reads == unstable_read && off == unstable_reg)
+		registers[off / 4] ^= __BIT(0);
 	return registers[off / 4];
 }
 static void
@@ -83,7 +102,14 @@ of_compatible_match(int node, const struct device_compatible_entry *compat)
 {
 	return strcmp(compat[0].compat, "allwinner,sun60i-a733-ccu") == 0;
 }
-int sunxi_ccu_attach(struct sunxi_ccu_softc *sc) { return 0; }
+int
+sunxi_ccu_attach(struct sunxi_ccu_softc *sc)
+{
+	sc->sc_clkdom.priv = sc;
+	for (u_int i = 0; i < sc->sc_nclks; i++)
+		sc->sc_clks[i].base.domain = &sc->sc_clkdom;
+	return 0;
+}
 void sunxi_ccu_print(struct sunxi_ccu_softc *sc) {}
 struct sunxi_ccu_clk *
 sunxi_ccu_clock_find(struct sunxi_ccu_softc *sc, const char *name)
@@ -101,7 +127,11 @@ static struct clk *clk_get_parent(struct clk *clk)
 }
 static u_int clk_get_rate(struct clk *clk)
 {
-	return clk == &hosc ? 24000000 : sunxi_ccu_clock_get_rate(&state, clk);
+	if (clk == &hosc) {
+		hosc_reads++;
+		return unstable_hosc && hosc_reads > 1 ? 0 : hosc_rate;
+	}
+	return sunxi_ccu_clock_get_rate(&state, clk);
 }
 static int clk_set_rate(struct clk *clk, u_int rate)
 {
@@ -121,14 +151,19 @@ static int clk_set_parent(struct clk *clk, struct clk *parent)
 }
 #include "sunxi_ccu_gate.c"
 #include "sunxi_ccu_div.c"
-#ifdef __clang__
 /* Unrelated upstream NM code uses abs() on an unsigned subtraction. */
+#ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wabsolute-value"
+#elif defined(__GNUC__) && __GNUC__ >= 16
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wabsolute-value"
 #endif
 #include "sunxi_ccu_nm.c"
 #ifdef __clang__
 #pragma clang diagnostic pop
+#elif defined(__GNUC__) && __GNUC__ >= 16
+#pragma GCC diagnostic pop
 #endif
 #include "sunxi_ccu_nkmp.c"
 #include "sunxi_ccu_fixed_factor.c"
@@ -142,13 +177,187 @@ reset(void)
 {
 	struct fdt_attach_args args = { 0 };
 	memset(registers, 0, sizeof(registers));
-	writes = barriers = 0;
+	writes = barriers = reads = hosc_reads = 0;
+	unstable_read = 0;
+	unstable_reg = SIZE_MAX;
+	unstable_hosc = false;
+	hosc_rate = 24000000;
 	reject_write = missing_hosc = false;
 	sun60i_a733_ccu_attach(NULL, &state, &args);
 	CHECK(writes == 0);
 	/* Firmware peripheral VCO=2400 MHz, 2x=/2, 800M=/3, 480M=/5. */
 	REG(PLL_PERIPH0_CTRL_REG) = __BIT(31) | (99 << 8) |
 	    (1 << 20) | (2 << 16) | (4 << 2);
+}
+
+static void
+ready_fixture(void)
+{
+	reset();
+	REG(PLL_REF_CTRL_REG) = __BITS(31,27) | (99 << 8) | (99 << 16);
+	REG(PLL_PERIPH0_CTRL_REG) |= __BITS(30,25);
+	REG(PLL_GPU0_CTRL_REG) = __BITS(31,27) | (99 << 8) | (1 << 20);
+	REG(GPU0_CLK_REG) = ACCEL_CLK_ENABLE;
+	REG(GPU0_BGR_REG) = __BIT(0) | __BIT(16);
+	REG(AHB_CFG_REG) = 3 << 24;
+	REG(AHB_MASTER_GATE_REG) = __BIT(7);
+}
+
+static void
+expect_ready(int error, u_int core_expected, u_int bus_expected)
+{
+	uint32_t saved[__arraycount(registers)];
+	u_int core = 111, bus = 222;
+
+	memcpy(saved, registers, sizeof(saved));
+	reads = hosc_reads = 0;
+	CHECK(sun60i_a733_ccu_gpu_ready(CLOCK(A733_CLK_GPU0), &core, &bus) == error);
+	CHECK(core == (error == 0 ? core_expected : 111));
+	CHECK(bus == (error == 0 ? bus_expected : 222));
+	CHECK(writes == 0 && barriers == 0 && reads <= 22);
+	if (unstable_read == 0)
+		CHECK(memcmp(saved, registers, sizeof(saved)) == 0);
+}
+
+static void
+test_gpu_ready(void)
+{
+	const u_int parents[] = { 1200000000, 800000000, 600000000,
+	    400000000, 300000000, 200000000 };
+	const u_int divs[] = { 1, 2, 4, 8, 16 };
+	const u_int raw[] = { 0, 8, 12, 14, 15 };
+	const bus_size_t snapshots[] = { 0, 0xa0, 0xa8, 0xac, 0xe0,
+	    0xe8, 0xec, 0xb20, 0xb24, 0x500, 0x5c0 };
+	u_int core = 111, bus = 222, start = checks;
+
+	ready_fixture();
+	CHECK(sun60i_a733_ccu_gpu_ready(NULL, &core, &bus) == ENXIO);
+	CHECK(sun60i_a733_ccu_gpu_ready(&hosc, &core, &bus) == EOPNOTSUPP);
+	CHECK(sun60i_a733_ccu_gpu_ready(CLOCK(A733_CLK_GPU0), NULL, &bus) == EINVAL);
+	CHECK(sun60i_a733_ccu_gpu_ready(CLOCK(A733_CLK_GPU0), &core, NULL) == EINVAL);
+	CHECK(sun60i_a733_ccu_gpu_ready(CLOCK(A733_CLK_GPU0), &core, &core) == EINVAL);
+	CHECK(core == 111 && bus == 222 && reads == 0 && writes == 0);
+	CLOCK(A733_CLK_GPU0)->domain = NULL;
+	expect_ready(ENXIO, 0, 0);
+	CHECK(reads == 0);
+	CLOCK(A733_CLK_GPU0)->domain = &state.sc_clkdom;
+	state.sc_clkdom.priv = NULL;
+	expect_ready(ENXIO, 0, 0);
+	CHECK(reads == 0);
+	state.sc_clkdom.priv = &state;
+	missing_hosc = true;
+	expect_ready(ENXIO, 0, 0);
+	CHECK(reads == 0);
+	missing_hosc = false;
+	hosc_rate = 19200000;
+	expect_ready(EOPNOTSUPP, 0, 0);
+	CHECK(reads == 0);
+	hosc_rate = 24000000;
+	unstable_hosc = true;
+	expect_ready(EBUSY, 0, 0);
+	unstable_hosc = false;
+
+	for (u_int sel = 0; sel < __arraycount(parents); sel++) {
+		for (u_int div = 0; div < __arraycount(divs); div++) {
+			for (u_int ahb = 1; ahb <= 32; ahb++) {
+				REG(GPU0_CLK_REG) = ACCEL_CLK_ENABLE |
+				    (sel << 24) | raw[div];
+				REG(AHB_CFG_REG) = (3 << 24) | (ahb - 1);
+				expect_ready(600000000 % ahb == 0 ? 0 : EOPNOTSUPP,
+				    parents[sel] / divs[div], 600000000 / ahb);
+			}
+		}
+	}
+	for (u_int sel = 6; sel < 8; sel++) {
+		REG(GPU0_CLK_REG) = ACCEL_CLK_ENABLE | (sel << 24);
+		expect_ready(EOPNOTSUPP, 0, 0);
+	}
+	for (u_int div = 0; div < 16; div++) {
+		REG(GPU0_CLK_REG) = ACCEL_CLK_ENABLE | div;
+		REG(AHB_CFG_REG) = 0;
+		expect_ready(div == 0 || div == 8 || div == 12 || div >= 14 ?
+		    0 : EOPNOTSUPP, 1200000000 / 16 * (16 - div), 24000000);
+	}
+	for (u_int sel = 1; sel <= 2; sel++) {
+		REG(GPU0_CLK_REG) = ACCEL_CLK_ENABLE;
+		REG(AHB_CFG_REG) = sel << 24;
+		expect_ready(EOPNOTSUPP, 0, 0);
+	}
+	ready_fixture();
+	for (u_int bit = 27; bit <= 31; bit++) {
+		REG(PLL_REF_CTRL_REG) &= ~__BIT(bit);
+		expect_ready(EBUSY, 0, 0);
+		REG(PLL_REF_CTRL_REG) |= __BIT(bit);
+		REG(PLL_GPU0_CTRL_REG) &= ~__BIT(bit);
+		expect_ready(EBUSY, 0, 0);
+		REG(PLL_GPU0_CTRL_REG) |= __BIT(bit);
+		REG(PLL_PERIPH0_CTRL_REG) &= ~__BIT(bit);
+		expect_ready(EBUSY, 0, 0);
+		REG(PLL_PERIPH0_CTRL_REG) |= __BIT(bit);
+	}
+	REG(PLL_REF_CTRL_REG) |= ACCEL_PLL_P;
+	expect_ready(EOPNOTSUPP, 0, 0);
+	REG(PLL_REF_CTRL_REG) = (REG(PLL_REF_CTRL_REG) & ~ACCEL_PLL_N) | (199 << 8);
+	expect_ready(0, 1200000000, 600000000);
+	REG(PLL_GPU0_CTRL_REG) |= ACCEL_PLL_P;
+	REG(PLL_PERIPH0_CTRL_REG) |= ACCEL_PLL_P;
+	expect_ready(0, 600000000, 300000000);
+	/* Each peripheral output has its own gate and output divider. */
+	REG(GPU0_CLK_REG) |= 1 << 24;
+	expect_ready(0, 400000000, 300000000);
+	REG(PLL_PERIPH0_CTRL_REG) &= ~__BIT(26);
+	expect_ready(EBUSY, 0, 0);
+	REG(PLL_PERIPH0_CTRL_REG) |= __BIT(26);
+	for (u_int sel = 1; sel <= 5; sel++) {
+		REG(GPU0_CLK_REG) = ACCEL_CLK_ENABLE | (sel << 24);
+		expect_ready(0, parents[sel] / 2, 300000000);
+	}
+	ready_fixture();
+	REG(PLL_GPU0_CTRL_REG) &= ~ACCEL_PLL_N;
+	expect_ready(EOPNOTSUPP, 0, 0);
+	ready_fixture();
+	REG(PLL_GPU0_CTRL_REG) = (REG(PLL_GPU0_CTRL_REG) & ~ACCEL_PLL_M) | (6 << 20);
+	expect_ready(EOPNOTSUPP, 0, 0);
+	ready_fixture();
+	REG(PLL_GPU0_CTRL_REG) = (REG(PLL_GPU0_CTRL_REG) &
+	    ~(ACCEL_PLL_N | ACCEL_PLL_M)) | (255 << 8);
+	expect_ready(ERANGE, 0, 0);
+	for (u_int pll = 0; pll < 2; pll++) {
+		const bus_size_t reg = pll == 0 ? PLL_GPU0_CTRL_REG : PLL_PERIPH0_CTRL_REG;
+
+		ready_fixture();
+		REG(reg + 8) = __BIT(31);
+		expect_ready(EOPNOTSUPP, 0, 0);
+		REG(reg + 8) = 0;
+		REG(reg + 12) = __BIT(27);
+		expect_ready(EOPNOTSUPP, 0, 0);
+		REG(reg + 12) = 0;
+		expect_ready(0, 1200000000, 600000000);
+	}
+	for (u_int i = 0; i < 5; i++) {
+		const bus_size_t regs[] = { GPU0_CLK_REG, GPU0_CLK_REG,
+		    GPU0_BGR_REG, GPU0_BGR_REG, AHB_MASTER_GATE_REG };
+		const uint32_t masks[] = { __BIT(31), __BIT(27), __BIT(0),
+		    __BIT(16), __BIT(7) };
+
+		ready_fixture();
+		REG(regs[i]) ^= masks[i];
+		expect_ready(EBUSY, 0, 0);
+	}
+	for (u_int i = 0; i < __arraycount(snapshots); i++) {
+		ready_fixture();
+		unstable_reg = snapshots[i];
+		unstable_read = 12 + i;
+		expect_ready(EBUSY, 0, 0);
+		CHECK(reads == unstable_read);
+	}
+	ready_fixture();
+	REG(AHB_CFG_REG) = 0;
+	/* Unused peripheral PLL state is not required for a PLL_GPU path. */
+	REG(PLL_PERIPH0_CTRL_REG) = 0;
+	REG(PLL_PERIPH0_CTRL_REG + 8) = __BIT(31);
+	expect_ready(0, 1200000000, 24000000);
+	printf("A733 GPU readiness: %u production checks passed\n", checks - start);
 }
 
 int
@@ -281,6 +490,7 @@ main(void)
 		missing_hosc = false;
 	}
 	CHECK(writes == 0 && barriers == 0);
+	test_gpu_ready();
 	printf("A733 accelerator clocks: %u production checks passed\n", checks);
 	return 0;
 }

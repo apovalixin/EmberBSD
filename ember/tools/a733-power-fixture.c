@@ -18,9 +18,15 @@ typedef unsigned int bus_space_handle_t;
 typedef size_t bus_size_t;
 typedef uintptr_t bus_addr_t;
 typedef struct { bool initialized, held; } kmutex_t;
+#ifndef __BIT
 #define __BIT(n) (UINT32_C(1) << (n))
+#endif
+#ifndef __BITS
 #define __BITS(hi, lo) ((__BIT((hi) + 1) - 1) & ~(__BIT(lo) - 1))
+#endif
+#ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
+#endif
 #define KASSERT(c) assert(c)
 #define BUS_SPACE_BARRIER_READ 1
 #define BUS_SPACE_BARRIER_WRITE 2
@@ -43,7 +49,9 @@ swap32(uint32_t v)
 	memcpy(&native, probe, sizeof(native));
 	return native == 1 ? __builtin_bswap32(v) : v;
 }
+#ifndef be32toh
 #define be32toh(v) swap32(v)
+#endif
 
 struct clk { int enabled; };
 struct fdt_attach_args { int faa_phandle; bus_space_tag_t faa_bst; };
@@ -59,6 +67,11 @@ static unsigned int reads, writes, barriers, mapped, unmapped, delay_us;
 static unsigned int poll_reads, complete_after, deny_after, policy_written;
 static bus_size_t fail_write;
 static int legacy_calls, checked_calls, checked_error;
+static int checked_get_calls;
+static bool checked_state;
+static kmutex_t *required_read_lock;
+static bus_size_t unstable_reg;
+static unsigned int unstable_read, state_checks;
 static struct clk clock_fixture;
 
 static void *kmem_alloc(size_t n, int flags) { return calloc(1, n); }
@@ -120,7 +133,11 @@ static uint32_t
 bus_space_read_4(bus_space_tag_t tag, bus_space_handle_t handle, bus_size_t off)
 {
 	assert(off < sizeof(registers) && off % 4 == 0);
+	if (required_read_lock != NULL)
+		assert(required_read_lock->held);
 	reads++;
+	if (reads == unstable_read && off == unstable_reg)
+		registers[off / 4] ^= __BIT(3);
 	if (policy_written && off % 0x1000 == 8) {
 		poll_reads++;
 		if (complete_after && poll_reads >= complete_after)
@@ -183,6 +200,11 @@ reset_fixture(void)
 	poll_reads = complete_after = deny_after = policy_written = 0;
 	clock_fixture.enabled = 0;
 	legacy_calls = checked_calls = checked_error = 0;
+	checked_get_calls = 0;
+	checked_state = false;
+	required_read_lock = NULL;
+	unstable_reg = SIZE_MAX;
+	unstable_read = 0;
 	fail_write = SIZE_MAX;
 	specifier[0] = swap32(1);
 	specifier[1] = swap32(4);
@@ -208,6 +230,155 @@ checked_set(device_t dev, const uint32_t *data, bool enable)
 	checked_calls++;
 	return checked_error;
 }
+
+static int
+checked_get(device_t dev, const uint32_t *data, bool *enabled)
+{
+	checked_get_calls++;
+	*enabled = checked_state;
+	return checked_error;
+}
+
+static void
+expect_state(int index, int error, bool state)
+{
+	bool enabled;
+	unsigned int i;
+
+	for (i = 0; i < 2; i++) {
+		enabled = i != 0;
+		assert(fdtbus_powerdomain_is_enabled_index(2, index,
+		    &enabled) == error);
+		assert(enabled == (error == 0 ? state : i != 0));
+		assert(writes == 0 && barriers == 0 && delay_us == 0);
+		assert(!sc.sc_lock.held);
+		state_checks++;
+	}
+}
+
+static void
+test_read_state(void)
+{
+	static const struct fdtbus_powerdomain_controller_func legacy = {
+		.pdc_enable = legacy_set,
+	}, checked = { .pdc_set = checked_set, .pdc_get = checked_get };
+	const int errors[] = { ENXIO, EIO, ETIMEDOUT, EOPNOTSUPP };
+	u_int id, mode, lock, i;
+	bool enabled = true;
+
+	reset_fixture();
+	expect_state(0, ENXIO, false);
+	assert(fdtbus_powerdomain_is_enabled_index(2, 0, NULL) == EINVAL);
+	expect_state(-1, EINVAL, false);
+	for (i = 0; i < 4; i++) {
+		prop_len = (int[]){ -1, 0, 3, 4 }[i];
+		expect_state(0, EINVAL, false);
+	}
+	prop_len = 8;
+	binding_cells = UINT_MAX;
+	expect_state(0, EINVAL, false);
+	binding_cells = 1;
+	assert(fdtbus_register_powerdomain_controller(NULL, 1, &legacy) == 0);
+	expect_state(0, EOPNOTSUPP, false);
+	expect_state(1, ENOENT, false);
+	assert(legacy_calls == 0 && checked_calls == 0 && reads == 0);
+
+	reset_fixture();
+	assert(fdtbus_register_powerdomain_controller(NULL, 1, &checked) == 0);
+	for (i = 0; i < __arraycount(errors); i++) {
+		checked_error = errors[i];
+		checked_state = i % 2 != 0;
+		expect_state(0, errors[i], false);
+	}
+	checked_error = 0;
+	for (i = 0; i < 2; i++) {
+		checked_state = i != 0;
+		expect_state(0, 0, checked_state);
+	}
+	assert(legacy_calls == 0 && checked_calls == 0 && reads == 0);
+	/* Skip an unregistered earlier domain using its binding metadata. */
+	specifier[0] = swap32(3);
+	specifier[2] = swap32(1);
+	specifier[3] = swap32(5);
+	prop_len = 16;
+	i = checked_get_calls;
+	expect_state(0, ENXIO, false);
+	assert(checked_get_calls == (int)i);
+	expect_state(1, 0, true);
+	/* A provider registered later makes the same strict query usable. */
+	assert(fdtbus_register_powerdomain_controller(NULL, 3, &checked) == 0);
+	expect_state(0, 0, true);
+	prop_len = 12;
+	expect_state(1, EINVAL, false);
+
+	reset_fixture();
+	binding_cells = 0;
+	prop_len = 4;
+	assert(fdtbus_register_powerdomain_controller(NULL, 1, &checked) == 0);
+	expect_state(0, 0, false);
+
+	for (id = 0; id < PCK600_NDOMAINS; id++) {
+		const bus_size_t base = id * PCK600_DOMAIN_SIZE;
+
+		reset_fixture();
+		attach_controller();
+		required_read_lock = &sc.sc_lock;
+		specifier[1] = swap32(id);
+		for (mode = 0; mode < 16; mode++) {
+			for (lock = 0; lock < 4; lock++) {
+				registers[base / 4] = mode |
+				    (lock & 1 ? PCK600_LOCK : 0);
+				registers[(base + 8) / 4] = mode |
+				    (lock & 2 ? PCK600_LOCK : 0);
+				expect_state(0, mode == PCK600_ON ||
+				    mode == PCK600_OFF ? 0 : EOPNOTSUPP,
+				    mode == PCK600_ON);
+			}
+		}
+		registers[base / 4] = PCK600_ON;
+		registers[(base + 8) / 4] = PCK600_OFF;
+		expect_state(0, EBUSY, false);
+		registers[(base + 8) / 4] = PCK600_ON;
+		for (i = 0; i < 4; i++) {
+			const bus_size_t reg = base + (i < 2 ? 0 : 8);
+			const uint32_t bit = __BIT(i % 2 ? 24 : 8);
+
+			registers[reg / 4] |= bit;
+			expect_state(0, EOPNOTSUPP, false);
+			registers[reg / 4] &= ~bit;
+		}
+		registers[(base + 4) / 4] = PCK600_EMULATION;
+		expect_state(0, EOPNOTSUPP, false);
+		registers[(base + 4) / 4] = 0;
+		for (i = 0; i < 3; i++) {
+			unstable_reg = base + i * 4;
+			unstable_read = i + 4;
+			reads = 0;
+			enabled = true;
+			assert(fdtbus_powerdomain_is_enabled_index(2, 0,
+			    &enabled) == EBUSY && enabled);
+			assert(reads == unstable_read && writes == 0);
+			registers[unstable_reg / 4] ^= __BIT(3);
+			unstable_read = 0;
+			state_checks++;
+		}
+		assert(!sc.sc_failed[id]);
+		expect_state(0, 0, true);
+		sc.sc_failed[id] = true;
+		reads = 0;
+		expect_state(0, EIO, false);
+		assert(reads == 0 && sc.sc_failed[id]);
+	}
+	reset_fixture();
+	attach_controller();
+	specifier[1] = swap32(PCK600_NDOMAINS);
+	expect_state(0, EINVAL, false);
+	specifier[1] = swap32(UINT_MAX);
+	expect_state(0, EINVAL, false);
+	assert(reads == 0);
+	printf("PASS: %u PCK600/FDT read-only state checks\n", state_checks);
+}
+
 int
 main(void)
 {
@@ -216,6 +387,9 @@ main(void)
 	}, checked = { .pdc_enable = legacy_set, .pdc_set = checked_set }, empty = {0};
 	const bus_size_t base = 4 * 0x1000;
 	unsigned int old_writes, old_reads;
+
+	test_read_state();
+	cases = 0;
 
 	reset_fixture();
 	assert(sun60i_pck600_match(NULL, NULL, &attach_args));

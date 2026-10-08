@@ -27,6 +27,11 @@
 #ifndef _SUN60I_A733_CCU_H
 #define _SUN60I_A733_CCU_H
 
+struct clk;
+
+/* Read-only readiness observation, not a reservation against future writers. */
+int	sun60i_a733_ccu_gpu_ready(struct clk *, u_int *, u_int *);
+
 /*
  * Clock and reset numbers follow the device tree binding
  * allwinner,sun60i-a733-ccu as posted for Linux (v3, September 2026).
