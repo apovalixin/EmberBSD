@@ -107,9 +107,11 @@ On 2026-10-08 installed host ADB was 37.0.1; its help confirms `shell -T`
 disables PTY and keeps remote exit codes/stdout-stderr separation. No Android
 ADB device was attached; the working EmberBSD reference was not rewritten.
 
-Ruby 4.0.5 and compatibility Ruby 2.6.10 passed 12 channel cases and 41 transfer
+Ruby 4.0.5 and compatibility Ruby 2.6.10 passed 13 channel cases and 41 transfer
 cases. Independent review reproduced a device-mapper alias bypass and observed
 an intermittent EPERM cleanup failure; both received failing regressions before
 fixes. A stored factory-model mismatch was also reproduced and fixed using the
-recorded `a133` metadata. Private images/IDs and physical acceptance are outside
+recorded `a133` metadata. Cleanup also rejects failure when called from an
+outer rescue; body completion is tracked explicitly rather than inferred from $!.
+Private images/IDs and physical acceptance are outside
 these host receipts.

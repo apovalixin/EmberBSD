@@ -24,6 +24,7 @@ module A133Usb
       digest = Digest::SHA256.new
       input, out, err, waiter = Open3.popen3(@adb, *arguments, pgroup: true)
       workers = []
+      body_completed = false
       begin
         [input, out, err].each(&:binmode)
         writer = Thread.new do
@@ -65,12 +66,12 @@ module A133Usb
           raise Invalid, 'usb_command_failed' unless waiter.value.success?
           raise Invalid, 'usb_diagnostics' if noisy
         end
+        body_completed = true
       rescue Timeout::Error
         raise Invalid, 'usb_timeout'
       rescue SystemCallError, IOError
         raise Invalid, 'usb_pipe_failed'
       ensure
-        primary = $!
         cleanup_failed = false
         begin
           Process.kill('KILL', -waiter.pid)
@@ -96,7 +97,7 @@ module A133Usb
         end
         # Non-block Open3 avoids its automatic, unbounded wait_thr.join.
         cleanup_failed = true unless waiter.join(1)
-        raise Invalid, 'usb_cleanup_failed' if cleanup_failed && !primary
+        raise Invalid, 'usb_cleanup_failed' if cleanup_failed && body_completed
       end
       {output: output, input_sha256: source ? digest.hexdigest : nil}
     rescue Errno::ENOENT, Errno::EACCES

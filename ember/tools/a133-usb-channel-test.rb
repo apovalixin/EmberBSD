@@ -125,11 +125,22 @@ Dir.mktmpdir('a133-channel-') do |dir|
     abort 'FAIL: successful cleanup claim after signal failure'
   rescue A133Usb::Invalid => error
     abort 'FAIL: cleanup failure reason' unless error.message == 'usb_cleanup_failed'
+    begin
+      raise RuntimeError, 'outer caller failure'
+    rescue RuntimeError
+      begin
+        channel.run(['echo'])
+        abort 'FAIL: inherited rescue concealed cleanup failure'
+      rescue A133Usb::Invalid => nested
+        abort 'FAIL: nested cleanup reason' unless nested.message == 'usb_cleanup_failed'
+      end
+    end
   ensure
     Process.define_singleton_method(:kill,original_kill)
   end
   checks += 1
   # Simulate a real signal refusal while the actual child remains alive.
+  checks += 1
   blocked_pid = nil
   Process.define_singleton_method(:kill) do |_,group|
     blocked_pid = -group
