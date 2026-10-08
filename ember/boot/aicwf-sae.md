@@ -18,7 +18,8 @@ passing the software checks alone is not a WPA3 support claim.
 SAE configuration is privileged. A generation and peer bind commands to one
 association. Authentication frames must have bounded length, the selected
 AP's addresses and SAE algorithm; fragments, foreign peers and other frame
-types are rejected. Firmware response status must be present. IGTK hardware
+types are rejected. Firmware response status must be present. External-auth requests accept
+the two SAE selector byte orders supported by upstream wpa_supplicant. IGTK hardware
 slots are separate from the pairwise-data-key slot.
 
 Use the [SAE profile and client build guide](bwfm-sae.md#configuration-and-verification),
@@ -37,6 +38,7 @@ records actual physical results separately.
 ```sh
 sh ember/tests/aicwf-sae.sh
 sh ember/tests/aicwf-scan.sh
+sh ember/tests/aicwf-command.sh
 ```
 
 The first runs bounded AIC request/frame/IGTK checks and the shared RSN

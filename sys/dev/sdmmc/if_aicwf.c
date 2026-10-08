@@ -2184,7 +2184,9 @@ aicwf_rx_data(struct aicwf_softc *sc, const uint8_t *pkt, size_t mpdu_len)
 	if (!sc->sc_if_attached || (flags & AICWF_RX_FLAG_UPLOAD) == 0)
 		return;
 	if (mpdu_len >= 2 && wh[0] == IEEE80211_FC0_SUBTYPE_AUTH) {
-		if (((flags >> 8) & 0xff) == sc->sc_vif)
+		/* Unassociated management frames can have no firmware VIF. */
+		const uint8_t vif = (flags >> 8) & 0xff;
+		if (vif == sc->sc_vif || vif == 0xff)
 			aicwf_sae_event(sc, false, wh, mpdu_len);
 		return;
 	}
