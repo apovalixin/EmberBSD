@@ -192,6 +192,23 @@ remain separate steps.
 Use the [cross-build instructions](cross-build.md) from a clean commit,
 including matching modules and DTBs; do not mix these artifacts across builds.
 
+## Experimental GPU reservation
+
+The separate `sun60i_a733_pck_gpu_*` API resolves a registered native provider
+by phandle and reserves TOP5/CORE6 without hardware writes. Ordinary `pdc_get`
+remains strict; `pdc_set` returns `EBUSY` only for reserved TOP/CORE. Other
+operations retain their behavior. The bounded waiter requires stable ON and
+Q acceptance. Pending status, faults and unsupported modes remain failures.
+Ownership retained before clock preparation lasts until reboot; see the
+[experimental consumer](a733-gpu-identification.md#experimental-clock-preparation).
+
+DEN0051E Figure 4-21 places PCSM completion before isolation release,
+clock/reset sequencing and Q acceptance. Arm [IHI0068D](https://documentation-service.arm.com/static/617a637283e60c5c768e2241)
+sections 2.1.2/2.3 permit reset release from Q_STOPPED/Q_EXIT, but require
+Q_STOPPED before clock removal. This justifies failure retention, not a claim
+that clocks caused the pending CORE transition. The experiment never changes
+PWCR, supplies, PCK delays or power policy, and never requests CORE power-off.
+
 ## Provenance
 
 Register facts were checked on 2026-10-08 against these primary sources:

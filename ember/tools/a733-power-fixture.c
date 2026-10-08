@@ -86,6 +86,8 @@ static bool checked_state;
 static kmutex_t *required_read_lock;
 static bus_size_t unstable_reg;
 static unsigned int unstable_read, state_checks;
+static bool lease_test;
+static unsigned lease_complete_peek;
 static unsigned int peeks, fail_peek, change_peek;
 static bus_size_t peek_trace[80];
 static bus_size_t read_trace[6];
@@ -172,8 +174,13 @@ bus_space_peek_4(bus_space_tag_t tag, bus_space_handle_t handle,
 {
 	assert(off < sizeof(registers) && off % 4 == 0);
 	assert(required_read_lock != NULL && required_read_lock->held);
-	assert(peeks < __arraycount(peek_trace));
-	peek_trace[peeks++] = off;
+	assert(lease_test || peeks < __arraycount(peek_trace));
+	peek_trace[peeks % __arraycount(peek_trace)] = off;
+	if (lease_test && lease_complete_peek != 0 && peeks == lease_complete_peek) {
+		registers[0x6008 / 4] = 8;
+		registers[0x6014 / 4] = 0x100;
+	}
+	peeks++;
 	if (peeks == fail_peek)
 		return 1;
 	if (peeks == change_peek)
@@ -223,6 +230,7 @@ reset_fixture(void)
 		LIST_REMOVE(pdc, pdc_next);
 		free(pdc);
 	}
+	LIST_INIT(&sun60i_pck600_providers);
 	memset(&sc, 0, sizeof(sc));
 	memset(registers, 0, sizeof(registers));
 	memset(specifier, 0, sizeof(specifier));
@@ -240,6 +248,7 @@ reset_fixture(void)
 	unstable_reg = SIZE_MAX;
 	unstable_read = 0;
 	peeks = fail_peek = change_peek = 0;
+	lease_complete_peek = 0;
 	memset(peek_trace, 0, sizeof(peek_trace));
 	memset(read_trace, 0, sizeof(read_trace));
 	fail_write = SIZE_MAX;
@@ -634,6 +643,102 @@ test_diagnostic(void)
 	printf("PASS: %u bounded TOP5/CORE6 diagnostic scenarios\n", checks);
 }
 
+static void
+lease_fixture(void)
+{
+	reset_fixture();
+	lease_test = true;
+	for (u_int d = 5; d <= 6; d++) {
+		const bus_size_t b = d * 0x1000;
+		registers[b / 4] = 8;
+		registers[(b + 8) / 4] = d == 5 ? 8 : 0;
+		registers[(b + 0x14) / 4] = d == 5 ? 0x100 : 0;
+		registers[(b + 0x20) / 4] = 0x101;
+		registers[(b + 0x170) / 4] = 0x1f1f1f;
+		registers[(b + 0x174) / 4] = 0x1f1f;
+		registers[(b + 0xfb0) / 4] = 0x10130101;
+		registers[(b + 0xfb4) / 4] = 2;
+		registers[(b + 0xfc8) / 4] = 0x0b61143b;
+		registers[(b + 0xfcc) / 4] = 0x11;
+	}
+	attach_controller();
+}
+
+static void
+test_gpu_lease(void)
+{
+	const int owner = 1, other = 2;
+	uint32_t id[2] = { 0, 0 };
+	unsigned checks = 0;
+
+	lease_fixture();
+	assert(sun60i_a733_pck_gpu_reserve(99, &owner) == ENXIO);
+	assert(sun60i_a733_pck_gpu_reserve(1, &owner) == 0);
+	assert(sun60i_a733_pck_gpu_reserve(1, &other) == EBUSY);
+	assert(writes == 0);
+	for (u_int d = 5; d <= 6; d++) {
+		id[1] = swap32(d);
+		assert(sun60i_pck600_set(&sc, id, true) == EBUSY);
+		assert(sun60i_pck600_set(&sc, id, false) == EBUSY);
+	}
+	id[1] = swap32(4);
+	assert(sun60i_pck600_set(&sc, id, false) == 0 && writes == 0);
+	assert(sun60i_a733_pck_gpu_release(1, &other) == EINVAL);
+	assert(sun60i_a733_pck_gpu_release(1, &owner) == 0);
+	id[1] = swap32(5);
+	assert(sun60i_pck600_set(&sc, id, true) == 0);
+	checks += 10;
+
+	for (unsigned test = 0; test < 16; test++) {
+		static const bus_size_t bad_regs[] = { 0x5000, 0x5004, 0x5008,
+		    0x5014, 0x5020, 0x5024, 0x5160, 0x5170, 0x5fb0,
+		    0x5fb4, 0x5fc8, 0x5fcc, 0x6000, 0x6008, 0x6014, 0x6020 };
+		lease_fixture();
+		registers[bad_regs[test] / 4] ^= 8;
+		assert(sun60i_a733_pck_gpu_reserve(1, &owner) != 0);
+		assert(sc.sc_gpu_owner == NULL && writes == 0);
+		checks++;
+	}
+	for (unsigned fault = 1; fault <= 80; fault++) {
+		lease_fixture(); fail_peek = fault;
+		assert(sun60i_a733_pck_gpu_reserve(1, &owner) == EFAULT);
+		assert(sc.sc_gpu_owner == NULL && writes == 0 && peeks == fault);
+		checks++;
+	}
+	for (unsigned change = 21; change <= 40; change++) {
+		lease_fixture(); change_peek = change;
+		assert(sun60i_a733_pck_gpu_reserve(1, &owner) != 0);
+		assert(sc.sc_gpu_owner == NULL && writes == 0);
+		checks++;
+	}
+	for (unsigned test = 0; test < 7; test++) {
+		lease_fixture();
+		assert(sun60i_a733_pck_gpu_reserve(1, &owner) == 0);
+		assert(sun60i_a733_pck_gpu_retain(1, &owner) == 0);
+		assert(sun60i_a733_pck_gpu_release(1, &owner) == EBUSY);
+		peeks = 0;
+		switch (test) {
+		case 0: lease_complete_peek = 80; break;
+		case 1: break; /* Never completes. */
+		case 2: fail_peek = 37; break;
+		case 3: registers[0x6000 / 4] = 0; break;
+		case 4: registers[0x6038 / 4] = 4; break;
+		case 5: registers[0x603c / 4] = 1; break;
+		case 6: registers[0x6008 / 4] = 8; break; /* No Q acceptance. */
+		}
+		int error = sun60i_a733_pck_gpu_wait(1, &owner);
+		assert(error == (test == 0 ? 0 : test == 2 ? EFAULT :
+		    test == 3 ? EOPNOTSUPP : test == 4 || test == 5 ? EIO : ETIMEDOUT));
+		assert(writes == 0 && sc.sc_gpu_retained && sc.sc_gpu_owner == &owner);
+		if (test == 0) assert(delay_us == 10 && peeks == 160);
+		if (test == 1 || test == 6) assert(delay_us == 10000 && peeks == 80080);
+		checks++;
+	}
+	lease_test = false;
+	reset_fixture();
+	printf("PASS: %u experimental PCK ownership/wait scenarios\n", checks);
+}
+
 int
 main(void)
 
@@ -644,6 +749,7 @@ main(void)
 	const bus_size_t base = 4 * 0x1000;
 	unsigned int old_writes, old_reads;
 
+	test_gpu_lease();
 	test_read_state();
 	cases = 0;
 

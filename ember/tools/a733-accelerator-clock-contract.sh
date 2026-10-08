@@ -25,7 +25,7 @@ sed -n '1,/^#include /p' "$src/sys/arch/arm/sunxi/sunxi_ccu.c" |
 sed -n '/^sunxi_ccu_clock_get_rate(/,/^static const struct clk_funcs/p' \
     "$src/sys/arch/arm/sunxi/sunxi_ccu.c" | sed '$d' |
     { printf 'static u_int\n'; cat; } >> "$work/dispatch.h"
-sed -n '/^sunxi_ccu_reset_assert(/,/^static const struct fdtbus_reset/p' \
+sed -n '/^sunxi_ccu_reset_assert_unguarded(/,/^static const struct fdtbus_reset/p' \
     "$src/sys/arch/arm/sunxi/sunxi_ccu.c" | sed '$d' |
     { printf 'static int\n'; cat; } >> "$work/dispatch.h"
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \

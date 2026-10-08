@@ -63,6 +63,11 @@ struct sun60i_a733_gpu_state {
 int	sun60i_a733_ccu_gpu_inspect(struct clk *,
 	    struct sun60i_a733_gpu_state *);
 
+/* Experimental boot ownership; release is forbidden after any attempted write. */
+int	sun60i_a733_ccu_gpu_reserve(struct clk *, const void *);
+int	sun60i_a733_ccu_gpu_prepare(struct clk *, const void *, bool *);
+int	sun60i_a733_ccu_gpu_release(struct clk *, const void *);
+
 /* Read-only readiness observation, not a reservation against future writers. */
 int	sun60i_a733_ccu_gpu_ready(struct clk *, u_int *, u_int *);
 

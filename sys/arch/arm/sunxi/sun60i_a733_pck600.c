@@ -39,6 +39,8 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/bus.h>
 #include <sys/device.h>
 #include <sys/mutex.h>
+#include <sys/queue.h>
+#include <arm/sunxi/sun60i_a733_pck600.h>
 #include <sys/systm.h>
 
 #include <dev/clk/clk_backend.h>
@@ -71,7 +73,14 @@ struct sun60i_pck600_softc {
 	bus_space_handle_t sc_bsh;
 	kmutex_t sc_lock;
 	bool sc_failed[PCK600_NDOMAINS];
+	int sc_phandle;
+	const void *sc_gpu_owner;
+	bool sc_gpu_retained;
+	LIST_ENTRY(sun60i_pck600_softc) sc_next;
 };
+
+static LIST_HEAD(, sun60i_pck600_softc) sun60i_pck600_providers =
+    LIST_HEAD_INITIALIZER(sun60i_pck600_providers);
 
 static const struct device_compatible_entry compat_data[] = {
 	{ .compat = "allwinner,sun60i-a733-pck-600" },
@@ -175,7 +184,11 @@ sun60i_pck600_set(device_t dev, const uint32_t *data, bool enable)
 	int error;
 
 	mutex_enter(&sc->sc_lock);
-	error = sun60i_pck600_transition(sc, id, enable);
+	if (sc->sc_gpu_owner != NULL &&
+	    (id == PCK600_GPU_TOP || id == PCK600_GPU_CORE))
+		error = EBUSY;
+	else
+		error = sun60i_pck600_transition(sc, id, enable);
 	mutex_exit(&sc->sc_lock);
 	if (error != 0)
 		aprint_error_dev(dev, "domain %u power %s failed: %d\n",
@@ -354,6 +367,147 @@ sun60i_pck600_channels(const struct sun60i_pck600_diagnostic *state, u_int d)
 	return channels;
 }
 
+/* A separate read-only waiter; pdc_get/set keep their strict transition rules. */
+static struct sun60i_pck600_softc *
+sun60i_pck600_gpu_provider(int phandle)
+{
+	struct sun60i_pck600_softc *sc;
+
+	LIST_FOREACH(sc, &sun60i_pck600_providers, sc_next)
+		if (sc->sc_phandle == phandle)
+			return sc;
+	return NULL;
+}
+
+static int
+sun60i_pck600_gpu_check(struct sun60i_pck600_softc *sc, bool initial,
+    uint32_t *last)
+{
+	struct sun60i_pck600_diagnostic state;
+	int error;
+
+	error = sun60i_pck600_inspect(sc, &state);
+	if (error != 0)
+		return error;
+	if (last != NULL) {
+		last[0] = state.sample[1][1][0];
+		last[1] = state.sample[1][1][2];
+		last[2] = state.sample[1][1][4];
+	}
+	for (u_int d = 0; d < 2; d++) {
+		const uint32_t *v = state.sample[d][0];
+
+		if (state.changed[d] != 0)
+			return EBUSY;
+		if (sun60i_pck600_channels(&state, d) != 1 ||
+		    v[0] != PCK600_ON || v[1] != 0 || v[6] != 0x101 ||
+		    v[7] != 0)
+			return EOPNOTSUPP;
+		if (v[12] != 0 || v[13] != 0 || v[14] != 0x1f1f1f ||
+		    v[15] != 0x1f1f || v[16] != 0x10130101 || v[17] != 2 ||
+		    v[18] != 0x0b61143b || v[19] != 0x11)
+			return EOPNOTSUPP;
+		if ((v[10] & __BIT(2)) != 0 || (v[11] & __BIT(0)) != 0 ||
+		    (v[4] & __BIT(16)) != 0)
+			return EIO;
+		if (d == 0 && (v[2] != PCK600_ON || v[4] != __BIT(8)))
+			return EBUSY;
+		if (d == 1 && initial && (v[2] != 0 || v[4] != 0))
+			return EBUSY;
+		if (d == 1 && !initial && (v[4] != __BIT(8) ||
+		    v[2] != PCK600_ON))
+			return EBUSY;
+	}
+	return 0;
+}
+
+int
+sun60i_a733_pck_gpu_reserve(int phandle, const void *owner)
+{
+	struct sun60i_pck600_softc *sc = sun60i_pck600_gpu_provider(phandle);
+	int error;
+
+	if (owner == NULL)
+		return EINVAL;
+	if (sc == NULL)
+		return ENXIO;
+	mutex_enter(&sc->sc_lock);
+	if (sc->sc_gpu_owner != NULL)
+		error = EBUSY;
+	else if ((error = sun60i_pck600_gpu_check(sc, true, NULL)) == 0)
+		sc->sc_gpu_owner = owner;
+	mutex_exit(&sc->sc_lock);
+	return error;
+}
+
+int
+sun60i_a733_pck_gpu_release(int phandle, const void *owner)
+{
+	struct sun60i_pck600_softc *sc = sun60i_pck600_gpu_provider(phandle);
+	int error = 0;
+
+	if (sc == NULL)
+		return ENXIO;
+	mutex_enter(&sc->sc_lock);
+	if (owner == NULL || sc->sc_gpu_owner != owner)
+		error = EINVAL;
+	else if (sc->sc_gpu_retained)
+		error = EBUSY;
+	else
+		sc->sc_gpu_owner = NULL;
+	mutex_exit(&sc->sc_lock);
+	return error;
+}
+
+int
+sun60i_a733_pck_gpu_retain(int phandle, const void *owner)
+{
+	struct sun60i_pck600_softc *sc = sun60i_pck600_gpu_provider(phandle);
+	int error;
+
+	if (sc == NULL)
+		return ENXIO;
+	mutex_enter(&sc->sc_lock);
+	if (owner == NULL || sc->sc_gpu_owner != owner || sc->sc_gpu_retained)
+		error = EBUSY;
+	else if ((error = sun60i_pck600_gpu_check(sc, true, NULL)) == 0)
+		sc->sc_gpu_retained = true;
+	mutex_exit(&sc->sc_lock);
+	return error;
+}
+
+int
+sun60i_a733_pck_gpu_wait(int phandle, const void *owner)
+{
+	struct sun60i_pck600_softc *sc = sun60i_pck600_gpu_provider(phandle);
+	uint32_t last[3] = { UINT32_MAX, UINT32_MAX, UINT32_MAX };
+	int error;
+
+	if (sc == NULL)
+		return ENXIO;
+	mutex_enter(&sc->sc_lock);
+	if (owner == NULL || sc->sc_gpu_owner != owner || !sc->sc_gpu_retained) {
+		error = EINVAL;
+		goto out;
+	}
+	for (u_int elapsed = 0; ; elapsed += PCK600_POLL_US) {
+		error = sun60i_pck600_gpu_check(sc, false, last);
+		if (error != EBUSY)
+			break;
+		if (elapsed == PCK600_TIMEOUT_US) {
+			error = ETIMEDOUT;
+			break;
+		}
+		delay(PCK600_POLL_US);
+	}
+	aprint_normal_dev(sc->sc_dev, "experimental CORE wait: %d; last "
+	    "PWPR/PWSR/MISR 0x%08x/0x%08x/0x%08x\n", error,
+	    last[0], last[1], last[2]);
+out:
+	mutex_exit(&sc->sc_lock);
+	return error;
+}
+
 static void
 sun60i_pck600_report(struct sun60i_pck600_softc *sc)
 {
@@ -432,6 +586,11 @@ sun60i_pck600_attach(device_t parent, device_t self, void *aux)
 	int error;
 
 	sc->sc_dev = self;
+	sc->sc_phandle = phandle;
+	if (sun60i_pck600_gpu_provider(phandle) != NULL) {
+		aprint_error(": duplicate power-domain provider\n");
+		return;
+	}
 	sc->sc_bst = faa->faa_bst;
 	if (of_getprop_uint32(phandle, "#power-domain-cells", &cells) != 0 ||
 	    cells != 1 || fdtbus_get_reg(phandle, 0, &addr, &size) != 0 ||
@@ -464,6 +623,7 @@ sun60i_pck600_attach(device_t parent, device_t self, void *aux)
 		clk_disable(clk);
 		goto unmap;
 	}
+	LIST_INSERT_HEAD(&sun60i_pck600_providers, sc, sc_next);
 	aprint_naive("\n");
 	aprint_normal(": A733 PCK-600 power domains\n");
 	sun60i_pck600_report(sc);

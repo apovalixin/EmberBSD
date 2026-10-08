@@ -29,7 +29,7 @@
 /*
  * Origin: EmberBSD; firmware-ready A733 GPU identification only.
  * Hardware facts: Orange Pi BSP 2ac08e8c7cdc28abbdc5c9a9dd812f887ae9c79f.
- * No clocks, resets, supplies or power domains are changed here.
+ * The explicit experimental binding may prepare GPU-local clocks and reset.
  */
 
 #include <sys/cdefs.h>
@@ -42,6 +42,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 
 #include <dev/fdt/fdtvar.h>
 #include <arm/sunxi/sun60i_a733_ccu.h>
+#include <arm/sunxi/sun60i_a733_pck600.h>
 
 #define A733_GPU_BASE		0x01800000
 #define A733_GPU_PBVNC		0x20
@@ -56,7 +57,7 @@ struct sun60i_gpu_softc {
 	const char *sc_stage;
 	uint64_t sc_bvnc;
 	u_int sc_core_hz, sc_bus_hz, sc_uvol;
-	bool sc_have_id, sc_probed;
+	bool sc_have_id, sc_probed, sc_retained;
 };
 
 static const struct device_compatible_entry compat_data[] = {
@@ -145,8 +146,9 @@ sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
 	bus_size_t size;
 	uint32_t cells;
 	uint64_t id;
-	int len, node, error;
-	bool enabled, observe_only;
+	int len, node, error, power_node;
+	bool enabled, observe_only, prepare;
+	bool power_reserved = false, clock_reserved = false;
 
 	sc->sc_have_id = false;
 	sc->sc_stage = "binding";
@@ -156,6 +158,12 @@ sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
 	if (len != -1 && len != 0)
 		return EINVAL;
 	observe_only = len == 0;
+	len = OF_getproplen(sc->sc_phandle, "netbsd,experimental-clock-prepare");
+	if (len != -1 && len != 0)
+		return EINVAL;
+	prepare = len == 0;
+	if (prepare && observe_only)
+		return EINVAL;
 	error = fdtbus_get_reg(sc->sc_phandle, 0, &addr, &size);
 	if (error != 0)
 		return error;
@@ -166,6 +174,7 @@ sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
 	    be32toh(pd[1]) != A733_GPU_TOP)
 		return EINVAL;
 	node = fdtbus_get_phandle_from_native(be32toh(pd[0]));
+	power_node = node;
 	if (!of_compatible_match(node, power_compat) ||
 	    of_getprop_uint32(node, "#power-domain-cells", &cells) != 0 ||
 	    cells != 1)
@@ -215,6 +224,52 @@ sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
 		error = ENXIO;
 		goto out;
 	}
+	if (prepare) {
+		sc->sc_stage = "experimental operating point";
+		if (sc->sc_uvol != 800000) {
+			error = EOPNOTSUPP;
+			goto out;
+		}
+		sc->sc_stage = "experimental domain reservation";
+		error = sun60i_a733_pck_gpu_reserve(power_node, sc);
+		if (error != 0)
+			goto out;
+		power_reserved = true;
+		sc->sc_stage = "experimental clock reservation";
+		error = sun60i_a733_ccu_gpu_reserve(gpu, sc);
+		if (error != 0)
+			goto out;
+		clock_reserved = true;
+		/* Last supply check before committing the boot-owned resources. */
+		sc->sc_stage = "experimental supply recheck";
+		error = fdtbus_regulator_is_enabled(supply, &enabled);
+		if (error != 0)
+			goto out;
+		if (!enabled) {
+			error = EBUSY;
+			goto out;
+		}
+		error = fdtbus_regulator_get_voltage(supply, &sc->sc_uvol);
+		if (error != 0)
+			goto out;
+		if (sc->sc_uvol != 800000) {
+			error = EOPNOTSUPP;
+			goto out;
+		}
+		sc->sc_stage = "experimental domain retention";
+		error = sun60i_a733_pck_gpu_retain(power_node, sc);
+		if (error != 0)
+			goto out;
+		sc->sc_retained = true;
+		sc->sc_stage = "experimental 400 MHz preparation";
+		error = sun60i_a733_ccu_gpu_prepare(gpu, sc, &sc->sc_retained);
+		if (error != 0)
+			goto out;
+		sc->sc_stage = "experimental CORE ON/Q acceptance";
+		error = sun60i_a733_pck_gpu_wait(power_node, sc);
+		if (error != 0)
+			goto out;
+	}
 	sc->sc_stage = "clock/reset state";
 	error = sun60i_a733_ccu_gpu_inspect(gpu, &clocks_state);
 	if (error != 0)
@@ -237,6 +292,38 @@ sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
 		goto out;
 	}
 
+	if (prepare) {
+		/* No GPU mapping is permitted on a lost supply or domain check. */
+		sc->sc_stage = "experimental final supply check";
+		error = fdtbus_regulator_is_enabled(supply, &enabled);
+		if (error != 0)
+			goto out;
+		if (!enabled) {
+			error = EBUSY;
+			goto out;
+		}
+		error = fdtbus_regulator_get_voltage(supply, &sc->sc_uvol);
+		if (error != 0)
+			goto out;
+		if (sc->sc_uvol != 800000) {
+			error = EOPNOTSUPP;
+			goto out;
+		}
+		sc->sc_stage = "experimental final CORE check";
+		error = sun60i_a733_pck_gpu_wait(power_node, sc);
+		if (error != 0)
+			goto out;
+		sc->sc_stage = "experimental final clock check";
+		error = sun60i_a733_ccu_gpu_ready(gpu,
+		    &sc->sc_core_hz, &sc->sc_bus_hz);
+		if (error != 0)
+			goto out;
+		if (sc->sc_core_hz != 400000000 || sc->sc_bus_hz != 200000000) {
+			error = EBUSY;
+			goto out;
+		}
+	}
+
 	sc->sc_stage = "register mapping";
 	error = bus_space_map(sc->sc_bst, addr, A733_GPU_ID_SIZE, 0, &bsh);
 	if (error != 0)
@@ -253,6 +340,12 @@ sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
 	sc->sc_stage = "PBVNC value";
 	error = id == A733_GPU_EXPECTED ? 0 : ENODEV;
 out:
+	if (!sc->sc_retained) {
+		if (clock_reserved)
+			(void)sun60i_a733_ccu_gpu_release(gpu, sc);
+		if (power_reserved)
+			(void)sun60i_a733_pck_gpu_release(power_node, sc);
+	}
 	if (gpu != NULL)
 		clk_put(gpu);
 	fdtbus_regulator_release(supply);
@@ -280,8 +373,13 @@ sun60i_gpu_finalize(device_t dev)
 		    error == 0 ? " (expected A733 GPU)" : " (unexpected)");
 	}
 	if (error != 0)
-		aprint_error_dev(dev, "identification unavailable at %s: %d; "
-		    "firmware state left unchanged\n", sc->sc_stage, error);
+		aprint_error_dev(dev, "identification unavailable at %s: %d; %s\n",
+		    sc->sc_stage, error, sc->sc_retained ?
+		    "experimental resources retained until reboot" :
+		    "firmware state left unchanged");
+	else if (sc->sc_retained)
+		aprint_normal_dev(dev,
+		    "experimental resources retained until reboot\n");
 	return 0;
 }
 

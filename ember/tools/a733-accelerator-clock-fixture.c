@@ -10,6 +10,13 @@
 #include <limits.h>
 
 typedef unsigned int u_int;
+typedef struct { bool held; } kmutex_t;
+#define MUTEX_DEFAULT 0
+#define IPL_NONE 0
+static void mutex_init(kmutex_t *m, int type, int level) { m->held = false; }
+static void mutex_enter(kmutex_t *m) { assert(!m->held); m->held = true; }
+static void mutex_exit(kmutex_t *m) { assert(m->held); m->held = false; }
+
 typedef void *device_t;
 typedef void *cfdata_t;
 typedef void *bus_space_tag_t;
@@ -58,11 +65,15 @@ struct device_compatible_entry { const char *compat; };
 #include "bindings.h"
 
 static uint32_t registers[0x1500 / 4], last_write;
+static unsigned reject_write_number;
+static bus_size_t write_regs[64];
+static uint32_t write_vals[64];
 static unsigned writes, barriers, checks, reads;
-static unsigned unstable_read, hosc_reads;
+static unsigned unstable_read, hosc_reads, parent_queries;
 static bus_size_t unstable_reg;
 static u_int hosc_rate = 24000000;
 static unsigned dcxo_queries;
+static bool prepare_test;
 static int dcxo_len = 4, dcxo_node = 7, dcxo_error, dcxo_fail_query;
 static bool bad_dcxo, unstable_dcxo;
 static u_int dcxo_rate = 24000000;
@@ -73,7 +84,8 @@ int
 sunxi_rtc_dcxo_query(int node, struct sunxi_rtc_dcxo_state *out)
 {
 	assert(node == 7);
-	assert(dcxo_queries == 0 ? reads == 0 : reads == 22);
+	if (!prepare_test)
+		assert(dcxo_queries == 0 ? reads == 0 : reads == 22);
 	dcxo_queries++;
 	if (dcxo_error != 0 && (dcxo_fail_query == 0 ||
 	    dcxo_queries == (unsigned)dcxo_fail_query))
@@ -112,9 +124,12 @@ bus_space_write_4(bus_space_tag_t tag, bus_space_handle_t handle,
     bus_size_t off, uint32_t val)
 {
 	assert(off < sizeof(registers) && off % 4 == 0);
+	if (writes < __arraycount(write_regs)) {
+		write_regs[writes] = off; write_vals[writes] = val;
+	}
 	writes++;
 	last_write = val;
-	if (!reject_write)
+	if (!reject_write && writes != reject_write_number)
 		registers[off / 4] = off == 0xb20 ? val & ~__BIT(27) : val;
 }
 static void
@@ -151,6 +166,7 @@ sunxi_ccu_clock_find(struct sunxi_ccu_softc *sc, const char *name)
 #include "dispatch.h"
 static struct clk *clk_get_parent(struct clk *clk)
 {
+	parent_queries++;
 	return clk == &hosc ? NULL : sunxi_ccu_clock_get_parent(&state, clk);
 }
 static u_int clk_get_rate(struct clk *clk)
@@ -205,7 +221,10 @@ reset(void)
 {
 	struct fdt_attach_args args = { 0 };
 	memset(registers, 0, sizeof(registers));
+	memset(&sun60i_gpu_lease, 0, sizeof(sun60i_gpu_lease));
 	writes = barriers = reads = hosc_reads = dcxo_queries = 0;
+	reject_write_number = 0;
+	prepare_test = false;
 	unstable_read = 0;
 	unstable_reg = SIZE_MAX;
 	unstable_hosc = unstable_all = unstable_dcxo = bad_dcxo = false;
@@ -600,6 +619,119 @@ test_dcxo(void)
 	CHECK(reads == 0 && dcxo_queries == 0);
 }
 
+static void
+prepare_fixture(void)
+{
+	ready_fixture();
+	prepare_test = true;
+	dcxo_rate = 26000000; dcxo_raw = 0x183fb0f7;
+	REG(PLL_REF_CTRL_REG) = 0xf8675f00;
+	REG(PLL_PERIPH0_CTRL_REG) = 0xff126310;
+	REG(PLL_PERIPH0_CTRL_REG + 12) = 0x30000000;
+	REG(PLL_GPU0_CTRL_REG) = 0x41104500;
+	REG(PLL_GPU0_CTRL_REG + 12) = 0x30000000;
+	REG(GPU0_CLK_REG) = 0;
+	REG(GPU0_BGR_REG) = __BIT(7); /* Preserve an unrelated field. */
+	REG(AHB_CFG_REG) = 0x03000002;
+	REG(AHB_MASTER_GATE_REG) = 0x110103ff;
+}
+
+static void
+test_gpu_prepare(void)
+{
+	const int owner = 1, other = 2;
+	const u_int protected[] = { A733_CLK_GPU0, A733_CLK_BUS_GPU0,
+	    A733_CLK_AHB_GPU0, A733_CLK_PLL_REF, A733_CLK_SYS_24M,
+	    A733_CLK_PLL_PERIPH0_4X, A733_CLK_PLL_PERIPH0_2X,
+	    A733_CLK_PLL_PERIPH0_800M, A733_CLK_PLL_PERIPH0_480M,
+	    A733_CLK_PLL_PERIPH0_600M, A733_CLK_PLL_PERIPH0_400M,
+	    A733_CLK_PLL_PERIPH0_300M, A733_CLK_PLL_PERIPH0_200M,
+	    A733_CLK_PLL_PERIPH0_160M, A733_CLK_PLL_PERIPH0_150M, A733_CLK_AHB };
+	bool retained, handled;
+	unsigned start = checks;
+
+	prepare_fixture();
+	CHECK(sun60i_a733_ccu_gpu_reserve(CLOCK(A733_CLK_GPU0), &owner) == 0);
+	CHECK(writes == 0);
+	CHECK(sun60i_a733_ccu_gpu_reserve(CLOCK(A733_CLK_GPU0), &other) == EBUSY);
+	for (u_int n = 0; n < __arraycount(protected); n++) {
+		struct clk *c = CLOCK(protected[n]);
+		parent_queries = 0;
+		CHECK(clk_enable(c) == (n < 3 ? EBUSY : 0));
+		CHECK(parent_queries == 0); /* Guard precedes parent recursion. */
+		CHECK(sunxi_ccu_clock_disable(&state, c) == EBUSY);
+		CHECK(clk_set_rate(c, 400000000) == EBUSY);
+		CHECK(clk_set_parent(c, CLOCK(A733_CLK_PLL_REF)) == EBUSY);
+		CHECK(writes == 0 && sun60i_gpu_lease.writers == 0);
+	}
+	CHECK(sunxi_ccu_reset_assert(&state,
+	    &state.sc_resets[A733_RST_BUS_GPU0]) == EBUSY);
+	CHECK(sunxi_ccu_reset_deassert(&state,
+	    &state.sc_resets[A733_RST_BUS_GPU0]) == EBUSY);
+	CHECK(writes == 0);
+	CHECK(clk_enable(CLOCK(A733_CLK_BUS_UART0)) == 0);
+	CHECK(writes == 1); /* Its borrowed ancestors caused no writes. */
+	CHECK(sunxi_ccu_reset_deassert(&state,
+	    &state.sc_resets[A733_RST_BUS_UART0]) == 0);
+	CHECK(writes == 2 && sun60i_gpu_lease.writers == 0);
+	CHECK(sun60i_a733_ccu_gpu_release(CLOCK(A733_CLK_GPU0), &other) == EINVAL);
+	CHECK(sun60i_a733_ccu_gpu_release(CLOCK(A733_CLK_GPU0), &owner) == 0);
+
+	prepare_fixture(); handled = false;
+	CHECK(sun60i_a733_gpu_guard_enter(&state, CLOCK(A733_CLK_BUS_UART0),
+	    NULL, SUNXI_CCU_ENABLE, &handled) == 0 && !handled);
+	CHECK(sun60i_a733_ccu_gpu_reserve(CLOCK(A733_CLK_GPU0), &owner) == EBUSY);
+	sun60i_a733_gpu_guard_exit(&state);
+	CHECK(sun60i_a733_ccu_gpu_reserve(CLOCK(A733_CLK_GPU0), &owner) == 0);
+	CHECK(writes == 0);
+
+	for (unsigned fail = 0; fail <= 4; fail++) {
+		prepare_fixture(); retained = false;
+		CHECK(sun60i_a733_ccu_gpu_reserve(CLOCK(A733_CLK_GPU0), &owner) == 0);
+		reject_write_number = fail;
+		CHECK(sun60i_a733_ccu_gpu_prepare(CLOCK(A733_CLK_GPU0),
+		    &owner, &retained) == (fail == 0 ? 0 : EIO));
+		CHECK(retained && writes == (fail == 0 ? 4 : fail));
+		CHECK(write_regs[0] == 0xb20 && write_vals[0] == 0x0b000000);
+		if (writes >= 2)
+			CHECK(write_regs[1] == 0xb24 && write_vals[1] == 0x00010080);
+		if (writes >= 3)
+			CHECK(write_regs[2] == 0xb24 && write_vals[2] == 0x00010081);
+		if (writes == 4)
+			CHECK(write_regs[3] == 0xb20 && write_vals[3] == 0x8b000000);
+		CHECK(REG(PLL_REF_CTRL_REG) == 0xf8675f00 &&
+		    REG(PLL_PERIPH0_CTRL_REG) == 0xff126310);
+		CHECK(sun60i_a733_ccu_gpu_release(CLOCK(A733_CLK_GPU0), &owner) == EBUSY);
+		unsigned before = writes;
+		CHECK(sun60i_a733_ccu_gpu_prepare(CLOCK(A733_CLK_GPU0),
+		    &owner, &retained) == EBUSY && writes == before);
+	}
+	/* Changed sources between reservation and first write are not activated. */
+	prepare_fixture(); retained = false;
+	CHECK(sun60i_a733_ccu_gpu_reserve(CLOCK(A733_CLK_GPU0), &owner) == 0);
+	REG(PLL_PERIPH0_CTRL_REG) ^= __BIT(8);
+	CHECK(sun60i_a733_ccu_gpu_prepare(CLOCK(A733_CLK_GPU0), &owner,
+	    &retained) == EBUSY && !retained && writes == 0);
+	CHECK(sun60i_a733_ccu_gpu_release(CLOCK(A733_CLK_GPU0), &owner) == 0);
+	for (unsigned test = 0; test < 8; test++) {
+		prepare_fixture();
+		switch (test) {
+		case 0: REG(GPU0_CLK_REG) = __BIT(31); break;
+		case 1: REG(GPU0_BGR_REG) |= __BIT(16); break;
+		case 2: REG(GPU0_BGR_REG) |= __BIT(0); break;
+		case 3: REG(PLL_PERIPH0_CTRL_REG) &= ~__BIT(28); break;
+		case 4: REG(PLL_PERIPH0_CTRL_REG + 8) |= __BIT(31); break;
+		case 5: dcxo_rate = 24000000; break;
+		case 6: REG(AHB_MASTER_GATE_REG) &= ~__BIT(7); break;
+		case 7: REG(AHB_CFG_REG) = 0; break;
+		}
+		CHECK(sun60i_a733_ccu_gpu_reserve(CLOCK(A733_CLK_GPU0), &owner) != 0);
+		CHECK(sun60i_gpu_lease.owner == NULL && writes == 0);
+	}
+	prepare_test = false;
+	printf("A733 experimental CCU ownership: %u checks passed\n", checks - start);
+}
+
 int
 main(void)
 {
@@ -740,6 +872,7 @@ main(void)
 	test_gpu_ready();
 	test_gpu_inspect();
 	test_dcxo();
+	test_gpu_prepare();
 	printf("A733 accelerator clocks: %u production checks passed\n", checks);
 	return 0;
 }

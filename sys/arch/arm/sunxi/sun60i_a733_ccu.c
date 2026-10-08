@@ -43,6 +43,7 @@ __KERNEL_RCSID(1, "$NetBSD$");
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/device.h>
+#include <sys/mutex.h>
 #include <sys/systm.h>
 
 #include <dev/fdt/fdtvar.h>
@@ -885,6 +886,184 @@ sun60i_a733_ccu_gpu_ready(struct clk *gpu, u_int *core_rate, u_int *bus_rate)
 	return 0;
 }
 
+/*
+ * One boot-owned experiment. The guard counts dispatched writers even before
+ * reservation, so a lease cannot overlap a writer that passed its entry check.
+ * Recursive parent dispatch does not hold the mutex across the recursive call.
+ */
+static struct {
+	kmutex_t lock;
+	struct sunxi_ccu_softc *sc;
+	const void *owner;
+	u_int writers;
+	bool attempted;
+	struct sun60i_a733_gpu_state before;
+} sun60i_gpu_lease;
+
+static int
+sun60i_a733_gpu_guard_enter(struct sunxi_ccu_softc *sc, struct clk *clk,
+    struct sunxi_ccu_reset *reset, enum sunxi_ccu_mutation op, bool *handled)
+{
+	bool shared = false, local = false;
+	int error = 0;
+
+	mutex_enter(&sun60i_gpu_lease.lock);
+	if (sun60i_gpu_lease.owner != NULL) {
+		if (reset != NULL)
+			local = reset->reg == GPU0_BGR_REG;
+		for (u_int id = 0; clk != NULL && id < sc->sc_nclks; id++) {
+			if (clk != &sc->sc_clks[id].base)
+				continue;
+			shared = id == A733_CLK_PLL_REF || id == A733_CLK_SYS_24M ||
+			    (id >= A733_CLK_PLL_PERIPH0_4X &&
+			    id <= A733_CLK_PLL_PERIPH0_150M) || id == A733_CLK_AHB;
+			local = id == A733_CLK_GPU0 || id == A733_CLK_BUS_GPU0 ||
+			    id == A733_CLK_AHB_GPU0;
+			break;
+		}
+	}
+	if (shared || local) {
+		*handled = true;
+		/* Running ancestors are borrowed, never recursively re-enabled. */
+		if (!shared || op != SUNXI_CCU_ENABLE)
+			error = EBUSY;
+	} else {
+		sun60i_gpu_lease.writers++;
+	}
+	mutex_exit(&sun60i_gpu_lease.lock);
+	return error;
+}
+
+static void
+sun60i_a733_gpu_guard_exit(struct sunxi_ccu_softc *sc)
+{
+	mutex_enter(&sun60i_gpu_lease.lock);
+	KASSERT(sun60i_gpu_lease.writers != 0);
+	sun60i_gpu_lease.writers--;
+	mutex_exit(&sun60i_gpu_lease.lock);
+}
+
+/* Only compare actual observations; the trial decode below is not readiness. */
+static bool
+sun60i_a733_gpu_same(const struct sun60i_a733_gpu_state *a,
+    const struct sun60i_a733_gpu_state *b)
+{
+	return b->changed == 0 &&
+	    memcmp(a->sample, b->sample, sizeof(a->sample)) == 0 &&
+	    memcmp(a->dcxo_sample, b->dcxo_sample, sizeof(a->dcxo_sample)) == 0 &&
+	    memcmp(a->dcxo_hz, b->dcxo_hz, sizeof(a->dcxo_hz)) == 0 &&
+	    memcmp(a->hosc_hz, b->hosc_hz, sizeof(a->hosc_hz)) == 0;
+}
+
+int
+sun60i_a733_ccu_gpu_reserve(struct clk *gpu, const void *owner)
+{
+	struct sun60i_a733_gpu_state state, trial;
+	int error;
+
+	if (owner == NULL)
+		return EINVAL;
+	/* Validate the actual provider handle before touching its lease mutex. */
+	error = sun60i_a733_ccu_gpu_inspect(gpu, &state);
+	if (error != 0)
+		return error;
+	if (gpu->domain->priv != sun60i_gpu_lease.sc)
+		return ENXIO;
+	mutex_enter(&sun60i_gpu_lease.lock);
+	if (sun60i_gpu_lease.owner != NULL || sun60i_gpu_lease.writers != 0) {
+		error = EBUSY;
+		goto out;
+	}
+	/* Fresh acquisition under arbitration excludes all native CCU writers. */
+	error = sun60i_a733_ccu_gpu_inspect(gpu, &state);
+	if (error != 0)
+		goto out;
+	if (state.sample[0][A733_GPU_MODULE] != 0 ||
+	    (state.sample[0][A733_GPU_BUS] & (__BIT(16) | __BIT(0))) != 0) {
+		error = EBUSY;
+		goto out;
+	}
+	trial = state;
+	trial.sample[0][A733_GPU_MODULE] = ACCEL_CLK_ENABLE |
+	    __SHIFTIN(3, ACCEL_CLK_SEL);
+	trial.sample[0][A733_GPU_BUS] |= __BIT(16) | __BIT(0);
+	error = sun60i_a733_gpu_evaluate(&trial);
+	if (error != 0)
+		goto out;
+	if (trial.core_hz != 400000000 || trial.bus_hz != 200000000) {
+		error = EOPNOTSUPP;
+		goto out;
+	}
+	sun60i_gpu_lease.before = state;
+	sun60i_gpu_lease.owner = owner;
+	sun60i_gpu_lease.attempted = false;
+out:
+	mutex_exit(&sun60i_gpu_lease.lock);
+	return error;
+}
+
+int
+sun60i_a733_ccu_gpu_release(struct clk *gpu, const void *owner)
+{
+	int error = 0;
+
+	if (gpu != &sun60i_a733_ccu_clks[A733_CLK_GPU0].base || owner == NULL ||
+	    sun60i_gpu_lease.sc == NULL)
+		return EINVAL;
+	mutex_enter(&sun60i_gpu_lease.lock);
+	if (sun60i_gpu_lease.owner != owner)
+		error = EINVAL;
+	else if (sun60i_gpu_lease.attempted)
+		error = EBUSY;
+	else
+		sun60i_gpu_lease.owner = NULL;
+	mutex_exit(&sun60i_gpu_lease.lock);
+	return error;
+}
+
+int
+sun60i_a733_ccu_gpu_prepare(struct clk *gpu, const void *owner, bool *retained)
+{
+	struct sun60i_a733_gpu_state state;
+	struct sunxi_ccu_softc *sc = sun60i_gpu_lease.sc;
+	int error;
+
+	if (gpu != &sun60i_a733_ccu_clks[A733_CLK_GPU0].base || owner == NULL ||
+	    retained == NULL || sc == NULL)
+		return EINVAL;
+	mutex_enter(&sun60i_gpu_lease.lock);
+	if (sun60i_gpu_lease.owner != owner || sun60i_gpu_lease.attempted) {
+		error = EBUSY;
+		goto out;
+	}
+	error = sun60i_a733_ccu_gpu_inspect(gpu, &state);
+	if (error != 0)
+		goto out;
+	if (!sun60i_a733_gpu_same(&sun60i_gpu_lease.before, &state)) {
+		error = EBUSY;
+		goto out;
+	}
+	/* Even an unconfirmed configuration write forbids release/retry. */
+	sun60i_gpu_lease.attempted = true;
+	*retained = true;
+	error = sun60i_a733_accel_write(sc, GPU0_CLK_REG,
+	    ACCEL_CLK_SEL | __BITS(3,0), __SHIFTIN(3, ACCEL_CLK_SEL));
+	if (error != 0)
+		goto out;
+	/* BSP local order: release bus reset, bus gate, then module gate. */
+	error = sun60i_a733_accel_write(sc, GPU0_BGR_REG, __BIT(16), __BIT(16));
+	if (error != 0)
+		goto out;
+	error = sun60i_a733_accel_write(sc, GPU0_BGR_REG, __BIT(0), __BIT(0));
+	if (error != 0)
+		goto out;
+	error = sun60i_a733_accel_write(sc, GPU0_CLK_REG,
+	    ACCEL_CLK_ENABLE, ACCEL_CLK_ENABLE);
+out:
+	mutex_exit(&sun60i_gpu_lease.lock);
+	return error;
+}
+
 static int
 sun60i_a733_ccu_match(device_t parent, cfdata_t cf, void *aux)
 {
@@ -911,6 +1090,11 @@ sun60i_a733_ccu_attach(device_t parent, device_t self, void *aux)
 
 	if (sunxi_ccu_attach(sc) != 0)
 		return;
+
+	sun60i_gpu_lease.sc = sc;
+	mutex_init(&sun60i_gpu_lease.lock, MUTEX_DEFAULT, IPL_NONE);
+	sc->sc_guard_enter = sun60i_a733_gpu_guard_enter;
+	sc->sc_guard_exit = sun60i_a733_gpu_guard_exit;
 
 	aprint_naive("\n");
 	aprint_normal(": A733 CCU\n");

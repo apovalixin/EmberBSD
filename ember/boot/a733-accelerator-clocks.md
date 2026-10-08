@@ -38,9 +38,14 @@ Gate, mux and divider writes preserve unrelated bits. GPU writes include
 the update bit. A barrier and field readback detect rejected writes as
 `EIO`; no polling or speculative recovery sequence is used. Reset lines
 use the existing NetBSD CCU reset operations. That framework does not
-serialize register updates or reference-count shared parents. A future
-consumer must serialize the complete clock/reset sequence; concurrent
-GPU/NPU power management needs shared CCU arbitration first.
+reference-count shared parents. Optional provider guards now arbitrate
+mutations. The experimental GPU reservation counts in-flight writers before
+acquisition,
+then blocks GPU-local/reset mutations and shared source changes. Its dedicated
+prepare writes only the local mux/gates/reset. Shared ancestor enable is a
+write-free success while borrowed; recursive writes never run on that path.
+Without a lease, existing clock and reset operations retain their behavior.
+This is not general GPU/NPU power management.
 The separate SRAM reset is exposed but has no automatic sequence.
 
 MBUS gates report no rate because the MBUS clock tree is not implemented
@@ -77,13 +82,11 @@ runtime power. These paths are not one interchangeable cold-start recipe.
 This is source evidence, not a validated native sequence; the BSP does not
 sequence the new SRAM reset.
 
-The next hardware milestone is a narrowly scoped identification consumer:
-resolve the board supplies and power sequence, select a supported parent
-while gated, enable only the required resources, then read documented
-GPU/NPU identification registers. It must preserve firmware-owned PLLs,
-check every operation and unwind resources it acquired. Identification
-must precede IRQ, MMU/DMA and workload work. This change adds no consumer
-node and has not performed that hardware milestone.
+The [experimental identification consumer](a733-gpu-identification.md#experimental-clock-preparation)
+attempts a bounded clock-only preparation. Its hardware acceptance is pending.
+Broader power management still needs ownership of supplies and shared clocks,
+plus a protocol-safe release sequence. Identification precedes IRQ, MMU/DMA
+and workload work. Clock provider registration alone does not establish it.
 
 ## Sources and validation
 
