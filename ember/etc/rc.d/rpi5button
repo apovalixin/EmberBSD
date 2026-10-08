@@ -9,6 +9,7 @@ $_rc_subr_loaded . /etc/rc.subr
 
 name="rpi5button"
 rcvar=$name
+extra_commands="status"
 start_cmd="rpi5button_start"
 stop_cmd="rpi5button_stop"
 status_cmd="rpi5button_status"
