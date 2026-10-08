@@ -32,12 +32,13 @@ end
 
 result = {writes_performed: 0, installation_ready: false}
 begin
-  options = {adb: 'adb', timeout: 8}
+  options = {adb: 'adb', timeout: 8, su: false}
   OptionParser.new do |parser|
-    parser.banner = 'usage: a133-install-preflight.rb [--adb PATH] [--serial ID] [--timeout SECONDS]'
+    parser.banner = 'usage: a133-install-preflight.rb [--adb PATH] [--serial ID] [--timeout SECONDS] [--su]'
     parser.on('--adb PATH') { |value| options[:adb] = value }
     parser.on('--serial ID') { |value| options[:serial] = value }
     parser.on('--timeout SECONDS', Integer) { |value| options[:timeout] = value }
+    parser.on('--su') { options[:su] = true }
   end.parse!
   raise PreflightError, 'invalid_arguments' unless ARGV.empty? && (1..30).cover?(options[:timeout])
   inventory = read_adb(options[:adb], options[:timeout], 'devices', '-l')
@@ -53,7 +54,9 @@ begin
   result[:usb] = device[:usb]
   result[:adb_state] = device[:state]
   raise PreflightError, 'usb_device_not_ready' unless device[:usb] && %w[device recovery].include?(device[:state])
-  query = ->(*args) { read_adb(options[:adb], options[:timeout], '-s', device[:serial], 'shell', *args).strip }
+  prefix = options[:su] ? ['/system/xbin/su', '0'] : []
+  query = ->(*args) { read_adb(options[:adb], options[:timeout], '-s', device[:serial], 'shell', *prefix, *args).strip }
+  result[:root_method] = options[:su] ? 'vendor_su' : 'adbd'
   result[:root] = query.call('id', '-u') == '0'
   raise PreflightError, 'root_read_access_required' unless result[:root]
   result[:model] = query.call('getprop', 'ro.product.model')

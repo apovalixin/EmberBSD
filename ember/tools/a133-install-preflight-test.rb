@@ -24,8 +24,11 @@ Dir.mktmpdir('a133-preflight-') do |dir|
       exit
     end
     abort 'unexpected target' unless ARGV.shift(3) == ['-s', 'TEST', 'shell']
+    using_su = ARGV.first(2) == ['/system/xbin/su', '0']
+    ARGV.shift(2) if using_su
+    abort 'vendor su unavailable' if mode == 'su_denied' && using_su
     case ARGV
-    when ['id', '-u'] then puts(mode == 'noroot' ? '2000' : '0')
+    when ['id', '-u'] then puts(mode == 'noroot' || (mode == 'su' && !using_su) ? '2000' : '0')
     when ['getprop', 'ro.product.model'] then puts 'YS-M33 fixture'
     when ['getprop', 'ro.build.version.release'] then puts '10'
     when ['getprop', 'ro.boot.flash.locked'] then puts '1'
@@ -45,11 +48,12 @@ Dir.mktmpdir('a133-preflight-') do |dir|
     end
   FAKE
   File.chmod(0700, adb)
-  %w[good none multiple noroot foreign small target unready network timeout failure].each do |mode|
+  %w[good su su_denied none multiple noroot foreign small target unready network timeout failure].each do |mode|
+    extra = mode.start_with?('su') ? ['--su'] : []
     out, err, status = Open3.capture3({'PREFLIGHT_CARD' => mode},
-      RbConfig.ruby, tool, '--adb', adb, '--timeout', '1')
+      RbConfig.ruby, tool, '--adb', adb, '--timeout', '1', *extra)
     data = JSON.parse(out)
-    if mode == 'good'
+    if %w[good su].include?(mode)
       abort "good card rejected: #{err}" unless status.success? &&
         data['a133_candidate'] && data['root'] && data['boot']['size_sectors'] == 65536 &&
         data['flash_locked'] == '1' && data['writes_performed'] == 0 &&

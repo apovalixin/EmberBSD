@@ -14,6 +14,8 @@ USB device role. FEL detection alone does not establish ADB or fastboot access.
 ruby ember/tools/a133-install-preflight.rb --adb /absolute/path/to/adb
 # With multiple Android devices, explicitly select the intended USB device:
 ruby ember/tools/a133-install-preflight.rb --adb /absolute/path/to/adb --serial DEVICE
+# For a factory image with the inspected vendor su implementation:
+ruby ember/tools/a133-install-preflight.rb --adb /absolute/path/to/adb --su
 ruby ember/tools/a133-install-preflight-test.rb
 ```
 
@@ -30,6 +32,16 @@ tool against an ADB boundary rejecting all other commands.
 inventory, per-device backups, unlock/recovery and image validation precede
 an installer's first write. Non-root factory adbd may require `adb root` or
 vendor `su`; neither capability is inferred from an eng build label.
+The explicit `--su` mode prefixes the same read commands with
+`/system/xbin/su 0` and still verifies UID 0. It does not restart adbd.
+
+On 2026-10-08, a second unopened factory sample passed this inspection with
+`--su`: Android 10 build `a133-10.0-20231211.133302`, locked flash and green
+verified-boot state. Its full 17-partition layout matches the reference
+sample. Applying the production FDT adapter to a private copy of its exported
+factory tree passed the audio, touch, eMMC, USB-A and opt-in SDIO guards and
+created the framebuffer node. These are read-only identification and copied
+FDT checks, not an EmberBSD boot or a completed cable installer.
 
 ## Candidate bootstrap through Android
 
@@ -62,6 +74,13 @@ a new private output without overwriting any existing path. It never writes
 a device. Against the actual original factory `env-orig.bin`, changing
 `bootcmd` and restoring its old value reproduced every original byte.
 This proves offline encoding, not the proposed unlock/recovery bootstrap.
+The second sample instead has `bootdelay=0`,
+`bootcmd=run setargs_mmc boot_normal` and
+`boot_normal=run ${hook};run boot_android`. Do not substitute the first sample's
+environment or erase its hook. Recovery access should be established while
+still locked before attempting an unlock. A temporary recovery command needs
+a demonstrated return to the original Android boot when USB recovery fails;
+a persistent recovery loop is not a fleet recovery mechanism.
 
 ## Android backup and QEMU
 
