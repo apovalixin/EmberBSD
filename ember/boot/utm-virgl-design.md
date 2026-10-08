@@ -1,6 +1,6 @@
 # VirtIO-GPU acceleration for EmberBSD in UTM
 
-Status: native 2D and four offscreen guest GLES lifecycles verified; the separate [classic VirGL opt-in](utm-virgl-optin.md) still needs accelerated Wayland and recovery acceptance.
+Status: native 2D, four offscreen guest GLES lifecycles and four accelerated DRM frames verified; the separate [classic VirGL opt-in](utm-virgl-optin.md) still needs application surfaces, complete Wayland-session and recovery acceptance.
 Reviewed on 2026-10-06 against EmberBSD `b1d21397dca` and UTM 4.7.5.
 Target: the current NetBSD 11/aarch64-based EmberBSD installation.
 

@@ -318,6 +318,9 @@ on every board in the hardware catalog.
   session and enumerates two wscons devices. All 131 selected dependency
   invocations pass. Input events, VT switching, application surfaces and a
   complete accelerated Wayland session remain unverified.
+  Ports also [cross-builds current text/image dependencies](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/labwc-dependencies.md),
+  including GLib 2.90.1, HarfBuzz 14.6.0 and Cairo 1.18.6, with normal package
+  checks. Target text rendering, Pango/labwc and full SVG remain unaccepted.
   A Ports
   [host-side VirGL 1.3.0 adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/utm-virgl-host)
   preserves the upstream IOV-size correction and prevents resource publication
@@ -359,9 +362,13 @@ on every board in the hardware catalog.
   with Mesa26, unchanged libepoxy and the common LLVM23 runtime. Shader
   rejection, triangle pixels and cleanup pass on the paired ANGLE Metal
   Apple M3 host. Ordinary EMBERGPU still requests no VirGL feature.
-  This accepts offscreen GPU rendering; a visible accelerated Wayland session,
-  in-flight guest reset, reliable console recovery and Vulkan Compute remain
-  unverified.
+  The same stack now passes four [accelerated wlroots DRM presentations](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/wlroots-virgl.md)
+  at 1280x800, with pixel checks, live-provider verification and clean shutdown.
+  This required a Ports Cocoa context repair and safe native PCI queue disable
+  after child teardown. The latter also avoids the observed panic when the old
+  host fails its scanout fence. Application surfaces, a complete accelerated
+  Wayland session, in-flight guest reset, reliable console recovery and Vulkan
+  Compute remain unverified.
 - **Physical GPU and NPU porting targets:** CIX P1 is the first selected
   direction: Mali-G720 through Panthor/[Mesa PanVK](https://docs.mesa3d.org/drivers/panfrost.html),
   and Zhouyi v3/X2 through the [Compass driver/runtime sources](https://github.com/Arm-China/Compass_NPU_Driver).
