@@ -7,11 +7,12 @@ static inline bool
 aicwf_sae_request_valid(const uint8_t *p, size_t len, uint8_t vif,
     const uint8_t *peer, const uint8_t *ssid, size_t ssid_len)
 {
-	/* vif, mac_ssid, mac_addr, little-endian SAE AKM selector. */
+	/* vif, mac_ssid, mac_addr, SAE selector (legacy firmware swaps it). */
 	return len >= 44 && ssid_len <= 32 && p[0] == vif &&
 	    p[1] == ssid_len && memcmp(p + 2, ssid, ssid_len) == 0 &&
 	    memcmp(p + 34, peer, 6) == 0 &&
-	    memcmp(p + 40, "\x08\xac\x0f\x00", 4) == 0;
+	    (memcmp(p + 40, "\x08\xac\x0f\x00", 4) == 0 ||
+	    memcmp(p + 40, "\x00\x0f\xac\x08", 4) == 0);
 }
 
 static inline bool

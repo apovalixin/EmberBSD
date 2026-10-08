@@ -1327,6 +1327,10 @@ aicwf_sae_event(struct aicwf_softc *sc, bool start, const uint8_t *data,
 	    !IEEE80211_ADDR_EQ(ic->ic_bss->ni_bssid, sc->sc_sae_bssid))
 		return;
 	if (start) {
+		if (len >= 44)
+			IEEE80211_DPRINTF(ic, IEEE80211_MSG_STATE,
+			    "external SAE request: len %zu vif %u AKM %02x%02x%02x%02x\n",
+			    len, data[0], data[40], data[41], data[42], data[43]);
 		if (!aicwf_sae_request_valid(data, len, sc->sc_vif,
 		    sc->sc_sae_bssid, ic->ic_bss->ni_essid,
 		    ic->ic_bss->ni_esslen))
@@ -1574,6 +1578,9 @@ aicwf_connect_ind(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 	int s;
 
 	if (!sc->sc_if_attached || len < 13 || !sc->sc_connecting)
+		return;
+	if (sc->sc_sae_enabled && (ind[9] != sc->sc_vif ||
+	    !IEEE80211_ADDR_EQ(ind + 2, sc->sc_sae_bssid)))
 		return;
 	sc->sc_connecting = false;
 

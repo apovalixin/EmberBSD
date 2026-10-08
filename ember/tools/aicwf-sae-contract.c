@@ -34,6 +34,9 @@ main(void)
 	memcpy(ind + 40, "\x08\xac\x0f\x00", 4);
 #define REQUEST() aicwf_sae_request_valid(ind, sizeof(ind), 1, peer, ssid, sizeof(ssid) - 1)
 	check(REQUEST(), "external auth request");
+	memcpy(ind + 40, "\x00\x0f\xac\x08", 4);
+	check(REQUEST(), "legacy firmware selector byte order");
+	memcpy(ind + 40, "\x08\xac\x0f\x00", 4);
 	for (n = 0; n < sizeof(ind); n++)
 		check(!aicwf_sae_request_valid(ind, n, 1, peer, ssid,
 		    sizeof(ssid) - 1), "truncated external auth request");
