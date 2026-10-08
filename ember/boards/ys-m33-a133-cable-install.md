@@ -1,8 +1,10 @@
 # YS-M33 cable installation and boot-loader boundaries
 
 Installation must use a cable, a closed enclosure and no UART. The installed
-tablet then boots autonomously from eMMC. This fleet procedure is not yet
-validated on a factory tablet; the current sample was unlocked with UART.
+tablet then boots autonomously from eMMC. One unopened factory tablet completed
+USB-only backup, unlock, installation and a normal eMMC restart on 2026-10-08.
+See the [physical receipt](validation/2026-10-08-a133-cable-install.md).
+Cold power cycles, full Android restoration and fleet acceptance remain untested.
 
 ## Read-only first connection
 
@@ -40,10 +42,11 @@ On 2026-10-08, a second unopened factory sample passed this inspection with
 verified-boot state. Its full 17-partition layout matches the reference
 sample. Applying the production FDT adapter to a private copy of its exported
 factory tree passed the audio, touch, eMMC, USB-A and opt-in SDIO guards and
-created the framebuffer node. These are read-only identification and copied
-FDT checks, not an EmberBSD boot or a completed cable installer.
+created the framebuffer node. Subsequent physical installation booted EmberBSD,
+Ethernet SSH and awesomeWM on that tablet. Copied FDT guards alone would not
+establish those hardware results.
 
-## Candidate bootstrap through Android
+## Bootstrap through Android
 
 A read-only snapshot on 2026-10-08 verified the inspected sample's first
 128 KiB of `env`: CRC32, `bootcmd=run boot_normal`, `bootdelay=3` and stored
@@ -55,9 +58,10 @@ installer would restore the intended normal environment before completion.
 
 These primitives were observed separately: vendor U-Boot's
 `pst write fastboot_status_flag unlocked`, volatile `usb_port_type <0>`,
-recovery ADB root and verified partition writes. They have not been tested
-as an autonomous bootstrap on an unopened factory tablet. Prior unlock
-does not prove another factory image's root ADB, environment format or
+recovery ADB root and verified partition writes. The second unopened sample
+completed the bootstrap, with a locked recovery/Android round trip before
+unlock and a recovery return after an unconfirmed EmberBSD boot. This single
+factory-image result does not prove another image's root ADB, environment format or
 secure-storage behavior. Userspace fastbootd enumerated in earlier tests
 but did not implement the attempted OEM/flashing unlock operations.
 
@@ -96,6 +100,12 @@ sample's recovery boot. The reference environment and installed boot hash
 were unchanged after returning to EmberBSD.
 
 ## Android backup and QEMU
+
+The second tablet has a verified full 31,037,849,600-byte live Android snapshot
+and separate unmounted recovery snapshots of all UDISK and metadata bytes.
+The latter preserve filesystem consistency for the overwritten data partition;
+the initial live snapshot alone does not prove it. These private backups have
+not yet undergone a physical full Android restore.
 
 The private sample backup covers original boot/recovery, boot hardware areas,
 environment, all eMMC bytes before UDISK, the overwritten first 4 GiB of UDISK
@@ -139,7 +149,8 @@ a separately demonstrated authenticated loading/recovery path.
 
 ## Fleet acceptance
 
-Test the complete procedure on the next unopened factory tablet with no UART:
+The first closed-enclosure installation is an experimental hardware result,
+not a released fleet installer. Repeat the complete procedure without UART:
 USB identification, per-device backup, unlock, recovery, boot/root writes
 with full readback hashes, autonomous cold boot and cable-only recovery.
 Include recovery from a failed installation. Device keys, tokens, identities
