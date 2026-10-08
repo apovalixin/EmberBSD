@@ -84,3 +84,21 @@ Independent read-only review; fix important issues with regressions and repeat a
 - [x] Write only the new container prefix, read back the complete wedge and verify both the new prefix and unchanged suffix.
 - [x] Boot the reviewed kernel from eMMC; verify audio enumeration, disabled routes, zero stream/sample counters and retained GUI/network/watchdog services.
 - [ ] Perform daytime physical audio(4) playback, speech recording, duplex and latency/XRUN acceptance. No acoustic test or microphone recording is permitted during this night session.
+
+## Daytime continuation (2026-10-08)
+
+The operator returned to the office and resumed physical sound testing.
+The preceding night restriction no longer applies to these daytime tests.
+The installed kernel and driver sources were retained.
+
+- [x] Two synthetic audio(4) speaker tests completed and were heard by the operator.
+- [x] A bounded 4.096-second MIC1 audio(4) capture completed; low signal and clipped startup samples recorded as limitations.
+- [x] A second bounded capture ran concurrently with playback and tracked the 1 kHz test tone; both streams completed with zero registered XRUN/FIFO faults.
+- [x] Restore disabled routes and inactive streams; confirm retained GUI/Ethernet/MCU and unchanged full eMMC boot-wedge hash.
+- [x] Capture an 8.192-second spoken phrase; operator confirms intelligible playback after startup trimming, DC removal and application gain compensation; local recognition accepts the processed phrase.
+- [x] Operator confirms a separately installed voice application's greeting and response to a spoken question.
+- [ ] Establish clean startup, general speech quality, latency/CPU use and sustained duplex/XRUN acceptance.
+
+The [physical stream receipt](../../../ember/boards/validation/2026-10-08-a133-audio-streams.md)
+records the tested boundary. Control-descriptor sample counts are not transfer
+evidence; native driver events and captured frames are used instead.
