@@ -1676,6 +1676,7 @@ static int wpa_driver_bsd_capa(struct bsd_driver_data *drv)
 			drv->capa.key_mgmt |= WPA_DRIVER_CAPA_KEY_MGMT_SAE;
 			drv->capa.enc |= WPA_DRIVER_CAPA_ENC_BIP;
 			drv->capa.flags |= WPA_DRIVER_FLAGS_SAE;
+			drv->capa.flags2 |= WPA_DRIVER_FLAGS2_SAE_NO_PMKSA;
 		}
 	}
 #endif

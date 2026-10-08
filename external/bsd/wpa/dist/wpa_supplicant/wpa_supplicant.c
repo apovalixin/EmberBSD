@@ -3479,7 +3479,14 @@ static u8 * wpas_populate_assoc_ies(
 		if (wpa_key_mgmt_fils(ssid->key_mgmt))
 			cache_id = wpa_bss_get_fils_cache_id(bss);
 #endif /* CONFIG_FILS */
-		if (pmksa_cache_set_current(wpa_s->wpa, NULL, addr,
+		/* Select a cached PMKSA only when the driver can reuse it. */
+		if ((wpa_s->drv_flags2 & WPA_DRIVER_FLAGS2_SAE_NO_PMKSA) &&
+		    wpa_key_mgmt_sae(ssid->key_mgmt)) {
+			/* The external-auth ABI always negotiates a new SAE PMK.
+			 * Do not put an old PMKID into the association RSNE.
+			 * Mixed profiles allowing SAE follow the same policy. */
+			pmksa_cache_clear_current(wpa_s->wpa);
+		} else if (pmksa_cache_set_current(wpa_s->wpa, NULL, addr,
 					    ssid, try_opportunistic,
 					    cache_id, 0, false) == 0) {
 			eapol_sm_notify_pmkid_attempt(wpa_s->eapol);
