@@ -41,11 +41,11 @@ begin
   end.parse!
   raise PreflightError, 'invalid_arguments' unless ARGV.empty? && (1..30).cover?(options[:timeout])
   inventory = read_adb(options[:adb], options[:timeout], 'devices', '-l')
-  devices = inventory.lines.filter_map do |line|
+  devices = inventory.lines.map do |line|
     fields = line.split
     next if fields.empty? || fields.first == 'List' || fields.first.start_with?('*')
     {serial: fields[0], state: fields[1], usb: fields.any? { |field| field.start_with?('usb:') }}
-  end
+  end.compact
   candidates = options[:serial] ? devices.select { |device| device[:serial] == options[:serial] } : devices
   result[:device_count] = candidates.size
   raise PreflightError, 'expected_one_device' unless candidates.size == 1

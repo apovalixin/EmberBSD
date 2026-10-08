@@ -49,6 +49,39 @@ does not prove another factory image's root ADB, environment format or
 secure-storage behavior. Userspace fastbootd enumerated in earlier tests
 but did not implement the attempted OEM/flashing unlock operations.
 
+The offline environment editor operates on a copied 128 KiB file only:
+
+```sh
+ruby ember/tools/a133-env-edit.rb env-copy.bin NEW-env.bin 'bootcmd=run boot_recovery'
+ruby ember/tools/a133-env-edit-test.rb
+```
+
+It validates CRC32, termination, variable names, uniqueness and capacity;
+preserves opaque values and the vendor's leading empty entry; and creates
+a new private output without overwriting any existing path. It never writes
+a device. Against the actual original factory `env-orig.bin`, changing
+`bootcmd` and restoring its old value reproduced every original byte.
+This proves offline encoding, not the proposed unlock/recovery bootstrap.
+
+## Android backup and QEMU
+
+The private sample backup covers original boot/recovery, boot hardware areas,
+environment, all eMMC bytes before UDISK, the overwritten first 4 GiB of UDISK
+and the disk tail. It is not a complete standalone 31,037,849,600-byte eMMC
+dump. Untouched UDISK data remains on the physical device. On 2026-10-08,
+the boot/recovery partition copies matched their ranges in the original
+3,361,734,656-byte head backup. Original snapshots are never VM write targets.
+
+QEMU 11.1.1 lists no A133 board model. A bounded TCG `virt` trial with
+factory ARM64 kernel/ramdisk and a read-only head snapshot exited without
+Android console output or evidence of Android startup. Factory config
+selects `ARCH_SUNXI`; this trial does not emulate the vendor boot chain,
+secure storage, USB role hardware, radio or MCU. QEMU's
+[Arm board requirements](https://www.qemu.org/docs/master/system/target-arm.html)
+explain why a matching CPU cannot substitute for the board model.
+Use copied-file and controlled ADB tests for installer behavior; full
+hardware boot, unlock and recovery acceptance remains on the real tablet.
+
 ## Own boot loader
 
 The sample's 2026-10-08 log reports `secure enable bit: 1` and loading
