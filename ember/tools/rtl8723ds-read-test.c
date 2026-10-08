@@ -129,9 +129,66 @@ match_contract(void)
 	puts("RTL8723DS match: actual host, board/card identity and dual opt-in guards passed");
 }
 
+#include "rtl8723ds-match-fixture.h"
+
+static void
+native_match_contract(void)
+{
+	unsigned char fdt[16384];
+	struct match_device host = { .name = "sunximmc" };
+	struct match_device bus = { .name = "sdmmc", .parent = &host };
+	struct sdmmc_softc sc = { .sc_dev = &bus, .sc_flags = SMF_IO_MODE };
+	struct sdmmc_function fn0 = { .sc = &sc, .number = 0,
+	    .cis = { 0x024c, 0xd723 } };
+	struct sdmmc_function fn1 = { .sc = &sc, .number = 1,
+	    .cis = { 0xffff, 0xffff } };
+	struct sdmmc_attach_args args = { 0xffff, 0xffff, 7, &fn1 };
+
+	sdio_fixture(fdt, "allwinner,a133");
+	assert(sun50i_a133_fdt_fixup(fdt) == 0);
+	assert(fdt_setprop(fdt, 0, "ember,ys-m33-rtl8723ds-read-probe", NULL, 0) == 0);
+	match_fdt = fdt;
+	host.handle.type = DEVHANDLE_TYPE_OF;
+	host.handle.integer = fdt_path_offset(fdt, HOST) + 1;
+	sc.sc_fn0 = &fn0;
+	/* NetBSD passes per-function IDs; sdmmc_print uses common FN0 CIS. */
+	assert(rtl8723ds_probe_match(&bus, NULL, &args) == 1);
+	args.manufacturer = 0x024c; args.product = 0xd723;
+	fn0.cis.product = 0xd724;
+	assert(rtl8723ds_probe_match(&bus, NULL, &args) == 0);
+	fn0.cis.product = 0xd723;
+	sc.sc_fn0 = NULL;
+	assert(rtl8723ds_probe_match(&bus, NULL, &args) == 0);
+	sc.sc_fn0 = &fn0;
+	fn0.number = 1;
+	assert(rtl8723ds_probe_match(&bus, NULL, &args) == 0);
+	fn0.number = 0;
+	fn0.sc = NULL;
+	assert(rtl8723ds_probe_match(&bus, NULL, &args) == 0);
+	fn0.sc = &sc;
+	fn0.flags = SFF_ERROR;
+	assert(rtl8723ds_probe_match(&bus, NULL, &args) == 0);
+	fn0.flags = 0;
+	host.handle.type = 0;
+	assert(rtl8723ds_probe_match(&bus, NULL, &args) == 0);
+	host.handle.type = DEVHANDLE_TYPE_OF;
+	host.handle.integer = fdt_path_offset(fdt, "/soc@03000000/sdmmc@04022000") + 1;
+	assert(rtl8723ds_probe_match(&bus, NULL, &args) == 0);
+	host.handle.integer = fdt_path_offset(fdt, HOST) + 1;
+	sc.sc_flags |= SMF_MEM_MODE;
+	assert(rtl8723ds_probe_match(&bus, NULL, &args) == 0);
+	sc.sc_flags = SMF_IO_MODE;
+	fn1.flags = SFF_ERROR;
+	assert(rtl8723ds_probe_match(&bus, NULL, &args) == 0);
+	fn1.flags = 0;
+	assert(rtl8723ds_probe_match(&bus, NULL, NULL) == 0);
+	puts("RTL8723DS native match: common CIS, per-function IDs and parent guards passed");
+}
+
 int
 main(void)
 {
+	native_match_contract();
 	read_contract();
 	match_contract();
 	return 0;

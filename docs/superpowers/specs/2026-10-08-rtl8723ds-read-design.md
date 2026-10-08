@@ -32,7 +32,9 @@ address `0x10000 | offset`. Reject a word crossing either domain boundary.
 
 The driver only matches function 1 with manufacturer `0x024c`, product
 `0xd723`, interface `0x07`, a pure I/O card, and the actual FDT MMC1 parent.
-Require the existing zero-length `ember,ys-m33-sdio-probe`, its translated
+Card identity comes from the common function-0 CIS, as in NetBSD
+`sdmmc_print`/bwfm/bwi; per-function MANFID may be absent. Reject an invalid
+or mismatched common-CIS owner. Require the existing zero-length `ember,ys-m33-sdio-probe`, its translated
 host ownership marker, and a separate zero-length root
 `ember,ys-m33-rtl8723ds-read-probe`. Default configuration and absent opt-in
 must perform no new I/O. A dedicated `EMBER64_A133_SDIO` configuration

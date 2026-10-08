@@ -54,11 +54,15 @@ rtl8723ds_probe_match(device_t parent, cfdata_t cf, void *aux)
 {
 	const struct sdmmc_attach_args *saa = aux;
 	struct sdmmc_function *sf;
+	const struct sdmmc_cis *cis;
 	device_t host;
 	devhandle_t handle;
 
 	if (saa == NULL || (sf = saa->sf) == NULL || sf->sc == NULL ||
 	    sf->sc->sc_dev != parent || (sf->flags & SFF_ERROR) != 0 ||
+	    sf->sc->sc_fn0 == NULL || sf->sc->sc_fn0->sc != sf->sc ||
+	    sf->sc->sc_fn0->number != 0 ||
+	    (sf->sc->sc_fn0->flags & SFF_ERROR) != 0 ||
 	    (sf->sc->sc_flags & SMF_IO_MODE) == 0 ||
 	    (sf->sc->sc_flags & SMF_MEM_MODE) != 0)
 		return 0;
@@ -68,9 +72,10 @@ rtl8723ds_probe_match(device_t parent, cfdata_t cf, void *aux)
 	handle = device_handle(host);
 	if (devhandle_type(handle) != DEVHANDLE_TYPE_OF)
 		return 0;
+	cis = &sf->sc->sc_fn0->cis;
 	return rtl8723ds_read_match(fdtbus_get_data(),
-	    fdtbus_phandle2offset(devhandle_to_of(handle)), saa->manufacturer,
-	    saa->product, sf->number, saa->interface) ? 1 : 0;
+	    fdtbus_phandle2offset(devhandle_to_of(handle)), cis->manufacturer,
+	    cis->product, sf->number, saa->interface) ? 1 : 0;
 }
 
 static int
@@ -108,6 +113,9 @@ rtl8723ds_probe_attach(device_t parent, device_t self, void *aux)
 
 	aprint_naive("\n");
 	aprint_normal(": RTL8723DS read-only diagnostic (no network interface)\n");
+	aprint_normal_dev(self, "CIS card=%04x:%04x function=%04x:%04x\n",
+	    sf->sc->sc_fn0->cis.manufacturer, sf->sc->sc_fn0->cis.product,
+	    saa->manufacturer, saa->product);
 	error = sdmmc_select_card(sf->sc, sf);
 	if (error != 0)
 		goto fail;
