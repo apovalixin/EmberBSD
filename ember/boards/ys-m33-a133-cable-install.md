@@ -145,14 +145,60 @@ ARM64 entry was required because the vendor loader placed the Image at
 EmberBSD boot; boot and environment readbacks remained unchanged. See the
 [physical RAM-probe receipt](validation/2026-10-08-a133-uboot-ram.md).
 
-The probe has no storage, USB recovery, display or MCU support and did not
-boot NetBSD. It is not permanently installed. First validate kernel handoff,
-explicit reserved memory, framebuffer, MCU7502 and return to signed recovery
-in RAM. Then evaluate persistent second-stage installation. Full boot0/TOC1
+A later RAM trial handed the installed kernel through to its FFS root and
+started rc services. A prearmed 16-second watchdog restored ordinary boot.
+The probe has no storage, USB recovery, display or MCU support of its own.
+It is not permanently installed. Validate complete reserved memory,
+framebuffer ownership, sustained MCU7502 service and direct return to signed
+recovery in RAM. Then evaluate persistent second-stage installation. Full boot0/TOC1
 replacement requires a separately demonstrated authenticated loading/recovery
 path. A copied signature does not authenticate changed image contents.
 
 ## Fleet acceptance
+
+### Offline artifact manifest
+
+[a133-install-bundle.rb](../tools/a133-install-bundle.rb) reads a manifest and
+checks complete SHA256 hashes of the three host files before device work:
+
+```sh
+ruby ember/tools/a133-install-bundle.rb /private/bundle/manifest.json
+ruby ember/tools/a133-install-bundle-test.rb
+```
+
+The manifest has exactly `schema` (integer 1), `board` (`ys-m33-a133`),
+`source_commit` (40 lowercase hexadecimal characters), and `artifacts`.
+The array contains exactly these unique roles:
+
+| Role | Reference start sector | File length |
+| --- | --- | --- |
+| boot | 172032 | 33554432 bytes |
+| resources | 73728 | 33554432 bytes |
+| root | 6565888 | Positive multiple of 512 bytes, at most 27676098048 |
+
+Each entry has exactly `role`, `file`, `bytes` (integer), and `sha256`
+(64 lowercase hexadecimal characters). `file` is a unique ASCII basename
+beside the manifest, at most 128 characters, starting with an alphanumeric
+character; the remaining characters may also be dot, underscore or hyphen.
+The manifest is at most 65536 bytes. Symlinks, non-regular files, duplicate
+JSON keys, unknown fields, incorrect lengths and digests are rejected.
+Payloads are hashed in bounded chunks through non-following open descriptors.
+
+Exit zero reports `artifact_manifest_verified`, `writes_performed: 0`, and
+`installation_ready: false`. This is an **unsigned integrity receipt**:
+it does not authenticate a publisher, inspect credentials/entropy inside FFS,
+validate image filesystems, match a connected tablet, or authorize writes.
+The role mapping is a reference, not discovery of a device's GPT.
+A future writer must revalidate the bytes it actually writes and perform
+independent device, backup, recovery and acceptance checks. A matching
+personalized image must not become a fleet release because of this receipt.
+
+The real-file contract passed on Ruby 4.0.5 and macOS system Ruby 2.6.10.
+It checks complete-image corruption, bounds, schema/type errors, duplicate
+keys, path escape, symlinks, FIFO refusal and unchanged bundle files.
+This does not test physical cable writes or power-loss recovery.
+
+### Physical release acceptance
 
 The first closed-enclosure installation is an experimental hardware result,
 not a released fleet installer. Repeat the complete procedure without UART:
