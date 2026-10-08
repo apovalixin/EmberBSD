@@ -47,7 +47,7 @@ legacy Python source contracts have not yet been replaced.
 The fork's in-tree bootstrap compiler is currently GCC 12.5. Building it as
 a host tool does not install it on the target or prove the GCC 16.2 transition.
 The current native development package is GCC 16.2.0nb1 from
-[EmberBSD-Ports](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/development-toolchain).
+[EmberBSD-Ports](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain).
 
 To use a separately prepared GNU cross toolchain, provide its absolute
 prefix. It must supply `bin/aarch64--netbsd-gcc`, `cpp`, `c++` and the matching
@@ -72,7 +72,7 @@ EMBER_BUILD_MODE=cross EMBER_EXTERNAL_TOOLCHAIN=/absolute/cross-prefix \
 ```
 
 This parameter selects tools; it does not fetch or build a GCC16 cross
-compiler. The [Ports cross recipe](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/development-toolchain/cross)
+compiler. The [Ports cross recipe](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain/cross)
 provides the host compiler and preserves its current source adaptations.
 
 ## Acceptance is separate from host selection

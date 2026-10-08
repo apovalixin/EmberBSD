@@ -13,9 +13,9 @@ builds and contract tests also pass; visible VT handoff and exit/crash recovery
 still need runtime acceptance. These results do not establish GPU rendering.
 Rapid UI injection is not a reliable physical-input acceptance test. Reproducible
 third-party recipes and patches live in
-[EmberBSD Ports](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/wayland-utm),
+[EmberBSD Ports](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/wayland-utm),
 and runtime probes live in
-[EmberBSD Examples](https://github.com/neonix20b/EmberBSD-Examples/tree/main/desktop/wayland-utm).
+[EmberBSD Examples](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/desktop/wayland-utm).
 
 ## Outcome and scope
 

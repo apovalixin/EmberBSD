@@ -34,11 +34,11 @@ VirtGPU attached as `virtiodrm0` at PCI `0000:00:02.0`, vendor/device
 `1af4:1050`, with one scanout, no VirGL, no EDID and no capsets. The root
 mounted, all probes ran, filesystems unmounted and QEMU exited with status 0.
 
-The complete [Ports libdrm 2.4.134nb1 cross payload](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/common-graphics/cross)
+The complete [Ports libdrm 2.4.134nb1 cross payload](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-graphics/cross)
 passed upstream hash, skip-list and device enumeration. Enumeration returned
 the same native PCI metadata through both primary and render nodes; this was
 an actual device check, not a missing-device skip. The
-[Examples memory probe](https://github.com/neonix20b/EmberBSD-Examples/blob/ea73dffa697535db86b0a60b4ad9afeeb02b293c/desktop/wayland-utm/drm-memory.c),
+[Examples memory probe](https://github.com/oxtech-ember/EmberBSD-Examples/blob/ea73dffa697535db86b0a60b4ad9afeeb02b293c/desktop/wayland-utm/drm-memory.c),
 cross-built with GCC16, passed malformed requests and all 32 cross-process
 GEM/PRIME mapping-lifetime cycles against that libdrm.
 

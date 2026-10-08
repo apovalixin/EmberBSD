@@ -53,7 +53,7 @@ partial command decoder is not part of this change.
 
 The Ports classic profile now propagates reported CREATE/transfer/EXEC results
 through its source-tested lifecycle barrier. The full
-[host renderer recipe](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/utm-virgl-host/host)
+[host renderer recipe](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/utm-virgl-host/host)
 also rejects the overlong-packet break-then-success path with EINVAL; native
 Metal decoder checks pass. Its classic profile also propagates reported surface/GL
 errors and rejects poisoned current contexts; full native checks pass with and

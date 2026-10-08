@@ -2,7 +2,7 @@
 
 EmberBSD fixes two inherited local-socket behaviors required by the current
 Wayland libraries. The kernel changes belong to this OS repository; the
-[Wayland 1.26 port and installed-package tests](https://github.com/neonix20b/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/wayland.md)
+[Wayland 1.26 port and installed-package tests](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/wayland.md)
 belong to Ports. These are IPC fixes, not GPU acceleration.
 
 ## Per-call nonblocking send

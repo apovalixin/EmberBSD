@@ -21,20 +21,20 @@ are maintained in the related repositories below.
 - For a board or OS build, start with
   [hardware support and build instructions](README.ember.md).
 - For an application, start with
-  [EmberBSD-Examples](https://github.com/neonix20b/EmberBSD-Examples) and its
-  documented dependencies in [EmberBSD-Ports](https://github.com/neonix20b/EmberBSD-Ports).
+  [EmberBSD-Examples](https://github.com/oxtech-ember/EmberBSD-Examples) and its
+  documented dependencies in [EmberBSD-Ports](https://github.com/oxtech-ember/EmberBSD-Ports).
 - For an AI coding assistant, connect the developer skills described below.
 
 ## EmberBSD ecosystem
 
 | Repository | Purpose | Current scope |
 | --- | --- | --- |
-| [EmberBSD](https://github.com/apovalixin/EmberBSD) | Central OS project: kernel, drivers, boards, boot, firmware and system validation | Source tree and board-specific evidence; see the support tables |
-| [EmberBSD-Ports](https://github.com/neonix20b/EmberBSD-Ports) | Third-party build recipes, portability patches and native package profiles | pkgsrc recipes and experimental probes, each with its own validation limits |
-| [EmberBSD-Examples](https://github.com/neonix20b/EmberBSD-Examples) | Standalone applications and reproducible demonstrations | Local AI, robotics and desktop scenarios with requirements and checks |
-| [EmberBSD-Runtime](https://github.com/neonix20b/EmberBSD-Runtime) | Application execution, lifecycle, permissions and shared device operations | Design stage; no released runtime implementation |
-| [EmberBSD-SDK](https://github.com/neonix20b/EmberBSD-SDK) | Application interfaces, package contracts, developer tools and compatibility checks | Design stage; no stable application API or released SDK tools |
-| [Ember-Agent-Skills](https://github.com/neonix20b/Ember-Agent-Skills) | Instructions for EmberBSD users and AI coding assistants | Installable Codex skills for applications, ports and tested contributions |
+| [EmberBSD](https://github.com/oxtech-ember/EmberBSD) | Central OS project: kernel, drivers, boards, boot, firmware and system validation | Source tree and board-specific evidence; see the support tables |
+| [EmberBSD-Ports](https://github.com/oxtech-ember/EmberBSD-Ports) | Third-party build recipes, portability patches and native package profiles | pkgsrc recipes and experimental probes, each with its own validation limits |
+| [EmberBSD-Examples](https://github.com/oxtech-ember/EmberBSD-Examples) | Standalone applications and reproducible demonstrations | Local AI, robotics and desktop scenarios with requirements and checks |
+| [EmberBSD-Runtime](https://github.com/oxtech-ember/EmberBSD-Runtime) | Application execution, lifecycle, permissions and shared device operations | Design stage; no released runtime implementation |
+| [EmberBSD-SDK](https://github.com/oxtech-ember/EmberBSD-SDK) | Application interfaces, package contracts, developer tools and compatibility checks | Design stage; no stable application API or released SDK tools |
+| [Ember-Agent-Skills](https://github.com/oxtech-ember/Ember-Agent-Skills) | Instructions for EmberBSD users and AI coding assistants | Portable Agent Skills for applications, ports and tested contributions |
 
 Runtime will execute applications on the device; SDK will define their
 interfaces and development tools. Examples demonstrate usable scenarios;
@@ -44,10 +44,14 @@ not a claim that all of its planned features are implemented.
 
 ## Connect developer skills
 
+[Ember-Agent-Skills](https://github.com/oxtech-ember/Ember-Agent-Skills#use-in-your-development-environment)
+provides portable Agent Skills packaged with Agent Plugins. Use the installation
+method supported by your development environment. Codex is one verified host.
+
 With a Codex CLI that supports plugins (commands checked with 0.160.1):
 
 ```sh
-codex plugin marketplace add neonix20b/Ember-Agent-Skills --ref main
+codex plugin marketplace add oxtech-ember/Ember-Agent-Skills --ref main
 codex plugin list --marketplace ember-agent-skills --available --json
 codex plugin add emberbsd-development@ember-agent-skills
 ```
@@ -57,7 +61,7 @@ Start a new conversation in your project and ask:
 > Use $emberbsd-repository-guide to find the EmberBSD interfaces and examples
 > for my application, test the result, and document its requirements.
 
-See the [skills installation and update guide](https://github.com/neonix20b/Ember-Agent-Skills#install-in-codex)
+See the [skills installation and update guide](https://github.com/oxtech-ember/Ember-Agent-Skills#use-in-your-development-environment)
 for expected results, updates and other assistant environments. The plugin
 provides developer instructions; it does not install software on a board.
 Reusable fixes and ports are contributed through focused PRs after relevant
@@ -83,109 +87,109 @@ on every board in the hardware catalog.
   cover package installation, text generation, a loopback HTTP completion
   service and WAV transcription on CPU. This is a usable starting point for
   local assistants; microphone capture, image understanding and GPU/NPU
-  inference still need validation. See the [AI packages](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/ai-cpu)
-  and [model execution example](https://github.com/neonix20b/EmberBSD-Examples/tree/main/ai/local-inference).
+  inference still need validation. See the [AI packages](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/ai-cpu)
+  and [model execution example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/ai/local-inference).
 - **Answers from local documents:** a C example uses SQLite 3.53.4 FTS5 to
   retrieve evidence and the existing llama.cpp CPU server to select a quotation.
   It checks the source and quoted text before displaying them, and handles
   missing evidence and server failures. Native AArch64 tests include actual
   model execution, SQLite transactions, concurrent readers and process-crash
   recovery. This is extractive retrieval, not arbitrary answer-quality or
-  physical power-loss validation. See the [document example](https://github.com/neonix20b/EmberBSD-Examples/tree/main/ai/local-knowledge)
-  and [SQLite checks](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/sqlite).
+  physical power-loss validation. See the [document example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/ai/local-knowledge)
+  and [SQLite checks](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/sqlite).
 - **Robot telemetry and commands:** Zenoh-Pico 1.10.1 packages and a C device
   controller exchange typed data and commands with ROS 2 Jazzy through a
   C++ bridge. The two-VM test covers acknowledgements, stale-command rejection
   and reconnection. This connects EmberBSD devices to ROS systems; it is
   bridge interoperability, not a native ROS 2 distribution. See the
-  [Zenoh/ROS 2 example](https://github.com/neonix20b/EmberBSD-Examples/tree/main/robotics/zenoh-ros2).
+  [Zenoh/ROS 2 example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/robotics/zenoh-ros2).
 - **Model APIs and speech processing:** ONNX Runtime 1.30.0 and ncnn 20260526
   provide installed C/C++ CPU inference libraries. RNNoise 0.2 processes audio,
   and Silero VAD 6.2.3 detects speech through the same ONNX Runtime library.
   Seven AArch64 VM checks cover numerical results, recurrent stream state,
   speech/silence boundaries and invalid inputs; ORT worker affinity is checked
   separately. Ports preserves the NetBSD adaptations and
-  [build and test instructions](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/ai-engines).
+  [build and test instructions](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/ai-engines).
   These source probes support application development; microphone capture,
   real-world audio quality and GPU/NPU execution remain unverified.
 - **Google AI Edge model execution:** LiteRT 2.2.0 provides a shared C/C++
   CPU runtime for `.tflite` applications; LiteRT-LM 0.18.0 adds SentencePiece
-  language-model execution. Ports owns the [cross-build profile, adaptations and instructions](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/litert).
+  language-model execution. Ports owns the [cross-build profile, adaptations and instructions](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/litert).
   Installed C/C++ consumers, numerical/error contracts and real TinyLlama-1.1B
   text generation pass on a physical A733 board with NetBSD 11. Explicit
   metadata preparation preserves the model's weights and tokenizer; a
   disk-backed cache keeps the tested workflow within the board's 4 GiB RAM.
-  These are source builds, with [recorded model and validation limits](https://github.com/neonix20b/EmberBSD-Ports/blob/main/probes/litert/VALIDATION.md);
+  These are source builds, with [recorded model and validation limits](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/litert/VALIDATION.md);
   packaged delivery, GPU/NPU and multimodal workflows remain unverified.
 - **Vision, geometry and positioning:** OpenCV 5.0.0, Eigen 5.0.1 and gpsd
   3.27.5 build and pass installed-consumer tests on AArch64. Checks include
   image processing, features and camera-pose recovery, numerical solvers,
   transforms, and a real gpsd process receiving synthetic GNSS data.
-  These are [experimental source builds](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/robotics-foundations);
+  These are [experimental source builds](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/robotics-foundations);
   physical cameras/GNSS receivers and accelerated vision remain unverified.
 - **Video processing for applications:** FFmpeg 9.0.2, GStreamer 1.28.7 and
   OpenCV 5.0.0 videoio share one tested media installation. AArch64 VM checks
   cover exact decoded frames and timestamps, application-buffer pipelines,
   file capture through both OpenCV backends, seeking, image processing and
   lossless output. NetBSD filesystem support and FFmpeg compatibility fixes
-  are preserved in the [media port](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/media).
+  are preserved in the [media port](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/media).
   This is a CPU file-processing profile; camera capture, network streaming
   and hardware codecs remain outside its verified scope.
 - **Recording experiments and finding visual markers:** MCAP C++ 2.1.3 records
   timestamped messages with indexed replay and LZ4/Zstd compression. AprilTag
   3.4.5 detects markers and estimates their pose. Installed AArch64 VM checks
   verify message content, selection and damaged structures, plus known marker
-  geometry after image transformations. Ports owns the [source profiles and checks](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/robotics-tools);
+  geometry after image transformations. Ports owns the [source profiles and checks](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/robotics-tools);
   camera hardware and real-world pose accuracy are unverified.
 - **Signals and inertial measurements:** liquid-dsp 1.8.3, FFTW 3.3.11,
   VOLK 3.3.0 and Fusion 1.3.3 supply filtering, resampling, spectra, vector
   kernels and orientation estimation. Nineteen installed AArch64 VM cases
   verify synthetic signal/IMU results and execute generic/NEON VOLK kernels.
-  Ports owns the [source profiles and instructions](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/dsp),
+  Ports owns the [source profiles and instructions](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/dsp),
   the FFTW integration fix and preserved pkgsrc adaptations. Physical SDR/IMU,
   measured SIMD speedups and real-time device operation remain unverified.
 - **Software radio applications:** GNU Radio 3.10.12.0 supplies native C++
-  flowgraphs using the same FFTW and VOLK. Ports owns the [headless recipe and three installed VM contracts](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/gnuradio).
-  Examples owns a [noisy BPSK channel demonstration](https://github.com/neonix20b/EmberBSD-Examples/tree/main/robotics/gnuradio-channel)
+  flowgraphs using the same FFTW and VOLK. Ports owns the [headless recipe and three installed VM contracts](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/gnuradio).
+  Examples owns a [noisy BPSK channel demonstration](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/robotics/gnuradio-channel)
   that recovers 2,048 bits without error, restarts reproducibly and measures
   BER 0.516113 when carrier correction is removed. This verifies bounded
   software processing with known carrier and timing parameters; physical SDR,
   real-time deadlines, GUI and Python bindings remain unverified.
 - **Offline visual SLAM:** ORB-SLAM3 runs with the common Eigen 5.0.1 and
-  OpenCV 5.0.0 through a [headless Ports adaptation](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/orb-slam3).
+  OpenCV 5.0.0 through a [headless Ports adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/orb-slam3).
   Ports adapts current dependencies and repairs worker shutdown, cancellation
-  and missing-pose export. The [standalone RGB-D example](https://github.com/neonix20b/EmberBSD-Examples/tree/main/robotics/orb-slam3-rgbd)
+  and missing-pose export. The [standalone RGB-D example](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/robotics/orb-slam3-rgbd)
   tracks all 573 TUM fr1/desk image pairs in an AArch64 VM, with 1.71–1.76 cm
   translation ATE RMSE across two controlled runs and fixed-scale alignment. This enables
   recorded-data navigation experiments; live cameras, IMU fusion, boards,
   GUI, sustained operation and real-time performance remain unverified.
 - **Further navigation and motion sources:** Ports prepares
-  [GTSAM](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/gtsam),
-  [PCL](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/pcl),
-  [OpenVINS](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/openvins)
-  and [RTAB-Map](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/rtabmap)
-  with common current dependencies. [Ruckig](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/ruckig)
-  and [OSQP](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/osqp)
-  pass host numerical contracts; [OMPL](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/ompl)
+  [GTSAM](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/gtsam),
+  [PCL](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/pcl),
+  [OpenVINS](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/openvins)
+  and [RTAB-Map](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/rtabmap)
+  with common current dependencies. [Ruckig](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/ruckig)
+  and [OSQP](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/osqp)
+  pass host numerical contracts; [OMPL](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/ompl)
   has a prepared planning profile. Native acceptance of these additions remains pending.
-- **Ethernet SDR development:** the [Ports SDR profile](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/sdr)
+- **Ethernet SDR development:** the [Ports SDR profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/sdr)
   combines SoapySDR, libiio 1.0.0 with its official compatibility layer,
   AD9361/Pluto support and current libxml2. Synthetic IQ and loopback RX
-  contracts pass on macOS. The [PlutoSky handoff](https://github.com/neonix20b/EmberBSD-Ports/blob/main/probes/sdr/HARDWARE.md)
+  contracts pass on macOS. The [PlutoSky handoff](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/sdr/HARDWARE.md)
   defines the next native and hardware checks; EmberBSD RX, physical RF
   performance and per-call stream deadlines remain unverified.
 - **Numerical estimation and behavior logic:** Ceres 2.2.0 uses the common
   Eigen 5.0.1 for nonlinear fitting; BehaviorTree.CPP 4.9.0 coordinates
   asynchronous actions. Nine installed AArch64 VM cases verify numerical
   results, invalid inputs, cancellation, timeouts, restart and binary transition
-  logging. Ports owns these [source profiles](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/robotics-tools).
+  logging. Ports owns these [source profiles](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/robotics-tools).
   Physical calibration, complete robot integration and hard-real-time behavior
   are unverified; optional Groot/ZeroMQ and SQLite logging are excluded.
 - **Vehicle and industrial protocol development:** dbcppp 3.2.6 decodes DBC
   signals, iso14229 0.11.0 exchanges UDS messages through user-space ISO-TP,
   and libmodbus 3.2.0 provides TCP and RTU. Installed AArch64 VM consumers
   check exact data, fragmentation, error responses, timeouts and reconnection.
-  Ports provides [build instructions and bounded software tests](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/robotics-tools)
+  Ports provides [build instructions and bounded software tests](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/robotics-tools)
   using in-memory CAN frames, loopback TCP and pseudo-terminals. The DBC
   profile excludes KCD/XML; physical CAN/RS-485, ECUs and PLCs are unverified.
 - **CAN FD without a controller:** this OS tree extends raw CAN sockets and
@@ -196,7 +200,7 @@ on every board in the hardware catalog.
   [CAN FD guide and reproducible checks](ember/can/README.md).
   This is software-stack validation; physical drivers, data-phase timing,
   ISO-TP over FD and a booted kernel with this extension remain unverified.
-- **MQTT for connected devices:** Ports provides a [Mosquitto 2.1.2 source probe](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/mosquitto)
+- **MQTT for connected devices:** Ports provides a [Mosquitto 2.1.2 source probe](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/mosquitto)
   built with common GCC 16.2, cJSON 1.7.19 and SQLite 3.53.4. Twelve installed
   AArch64 VM cases verify MQTT 3.1.1/5 QoS 0/1/2, authentication, ACL, TLS and
   retained-state recovery. Package and boot-service integration remain pending;
@@ -204,21 +208,21 @@ on every board in the hardware catalog.
 
 ### Graphical interfaces
 
-- **Desktop and touch-oriented applications:** [GNOME/X11](https://github.com/neonix20b/EmberBSD-Examples/tree/main/desktop/gnome-utm)
-  provides a tested desktop scenario. [Phosh 0.58.0](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/phosh)
+- **Desktop and touch-oriented applications:** [GNOME/X11](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/desktop/gnome-utm)
+  provides a tested desktop scenario. [Phosh 0.58.0](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/phosh)
   runs inside it with software-rendered Wayland, application switching,
   GTK applications and the Stevia English/Russian screen keyboard.
   These VM checks provide interface prototypes, not validated phone images.
-- **Additional X11 desktops:** [Openbox 3.6.1](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/openbox)
-  and [Enlightenment 0.27.1/EFL 1.28.1](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/enlightenment)
+- **Additional X11 desktops:** [Openbox 3.6.1](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/openbox)
+  and [Enlightenment 0.27.1/EFL 1.28.1](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/enlightenment)
   pass software X11 window management, two application windows, keyboard
   input through XTEST, text editing/saving and clean session exit.
-  The [common launcher and checks](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/x11-desktops)
+  The [common launcher and checks](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/x11-desktops)
   isolate session configuration while preserving the user's HOME.
-  [awesomeWM 4.3](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/awesome)
+  [awesomeWM 4.3](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/awesome)
   also builds and passes the same workflow with system Lua and patched LGI.
-  [Xfce 4.20](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/xfce)
-  also passes a [NetBSD 11/AArch64 UTM workflow](https://github.com/neonix20b/EmberBSD-Ports/blob/main/probes/xfce/VALIDATION.md),
+  [Xfce 4.20](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/xfce)
+  also passes a [NetBSD 11/AArch64 UTM workflow](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/xfce/VALIDATION.md),
   including Thunar navigation, Mousepad save/reopen/edit, application launch
   through its panel menu and clean exit. Ports owns the source recipes and
   isolated Xvfb session checks. Physical input, touch and GPU acceleration
@@ -226,13 +230,13 @@ on every board in the hardware catalog.
 - **Current KDE/Qt integration:** KWin 6.7.5 runs a nested Qt Wayland window
   with software rendering and tested keyboard input. Plasma Mobile 6.7.5
   builds and installs with checked library loading and QML components.
-  Common [Qt 6.12 / Frameworks 6.30 source recipes](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit)
-  and [shared FFmpeg9 recipes](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/common-media)
+  Common [Qt 6.12 / Frameworks 6.30 source recipes](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile/toolkit)
+  and [shared FFmpeg9 recipes](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-media)
   have checked source/dependency selection. The FFmpeg audio API and device
   registration pass in the AArch64 VM with GCC16; real metadata extraction
   passes on the host. Complete native packages and Qt playback remain pending.
   A complete mobile shell workflow, native display and power management
-  still need validation. See the [Plasma Mobile port](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/plasma-mobile).
+  still need validation. See the [Plasma Mobile port](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/plasma-mobile).
 
 ### GPU foundations and NPU direction
 
@@ -278,41 +282,41 @@ on every board in the hardware catalog.
   remain pending.
   See the [VirtGPU implementation](sys/external/bsd/drm2/virtio/README.md),
   [DRM identity checks](ember/boot/drm-native-identity.md) and
-  [graphics probes](https://github.com/neonix20b/EmberBSD-Examples/tree/main/desktop/wayland-utm).
+  [graphics probes](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/desktop/wayland-utm).
   [Local socket fixes](ember/boot/local-socket-compatibility.md) restore
   per-call nonblocking sends and socketpair peer identity. All 37 regression
   cases pass on Zero 3W, followed by all 26 enabled upstream tests of the
   installed Ports Wayland 1.26.0nb1 package. This validates the IPC/library
   layer; a compositor and accelerated session need separate acceptance.
-  Ports owns the [current Mesa 26.2.4 source adaptation](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/wayland-utm),
+  Ports owns the [current Mesa 26.2.4 source adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/wayland-utm),
   with native DSO-lifetime/numeric regressions under GCC 16.2 and
-  common-toolchain staging rules. A [common graphics source profile](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/common-graphics)
+  common-toolchain staging rules. A [common graphics source profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-graphics)
   supplies canonical MesaLib 26.2.4nb1/libdrm 2.4.134nb1 recipes with checked
   pkgsrc/Qt dependency selection. Its complete core-only libdrm payload
   cross-builds with GCC16 on macOS, matches the 26-entry PLIST and passes
   upstream hash, skip-list and symbol checks in AArch64 UTM. A
-  [temporary Mesa26 cross diagnostic](https://github.com/neonix20b/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/README.md#temporary-headless-mesa-diagnostic)
+  [temporary Mesa26 cross diagnostic](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/README.md#temporary-headless-mesa-diagnostic)
   also passes software GLES shader/pixel checks and 30 upstream target test runs
   on Orange Pi Zero 3W (A733). It excludes LLVM, X11/Wayland and installed
   packages. The full Mesa/LLVM profile, package registration, consumer
   migration and guest accelerated rendering remain pending.
   A Ports
-  [host-side VirGL 1.3.0 adaptation](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/utm-virgl-host)
+  [host-side VirGL 1.3.0 adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/utm-virgl-host)
   preserves the upstream IOV-size correction and prevents resource publication
   after reported CREATE failures, with cleanup of owned partial allocations.
-  Its [classic backing ledger](https://github.com/neonix20b/EmberBSD-Ports/blob/main/probes/utm-virgl-host/BACKING.md)
+  Its [classic backing ledger](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/utm-virgl-host/BACKING.md)
   retains guest mappings through renderer detach and all cleanup paths,
   including deferred UNREF, with causal ownership and sanitizer checks.
-  An opt-in [classic lifecycle barrier](https://github.com/neonix20b/EmberBSD-Ports/blob/main/probes/utm-virgl-host/LIFECYCLE.md)
+  An opt-in [classic lifecycle barrier](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/utm-virgl-host/LIFECYCLE.md)
   orders CPU producer shutdown and all-resource detach before mapping release;
   source tests cover fault/reset, blocked display and command handoff.
-  [Reported command and fence errors](https://github.com/neonix20b/EmberBSD-Ports/blob/main/probes/utm-virgl-host/COMPLETION.md)
+  [Reported command and fence errors](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/utm-virgl-host/COMPLETION.md)
   now enter that barrier before guest completion, with 683 source assertions
   passing in plain, sanitizer and NDEBUG runs.
-  The paired [GL/EGL wait adaptation](https://github.com/neonix20b/EmberBSD-Ports/blob/main/probes/utm-virgl-host/wait-errors.md)
+  The paired [GL/EGL wait adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/utm-virgl-host/wait-errors.md)
   also prevents failed waits from becoming successful fence callbacks;
   causal renderer-to-QEMU source checks pass in all three modes.
-  A [full private renderer build](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/utm-virgl-host/host)
+  A [full private renderer build](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/utm-virgl-host/host)
   with current libepoxy 1.5.10 passes texture readback, decoded framebuffer clears,
   shader triangle pixels, native fences
   and three cleanup/reinit cycles on Apple M3/ANGLE Metal. It also fixes a
@@ -320,13 +324,13 @@ on every board in the hardware catalog.
   with EINVAL; full native decoder checks preserve valid-command behavior.
   Reported surface/GL errors now reject classic submissions and poisoned contexts,
   tested on Metal with upstream GL checking both enabled and disabled.
-  [Query-result checks](https://github.com/neonix20b/EmberBSD-Ports/blob/main/probes/utm-virgl-host/host/query-results.md)
+  [Query-result checks](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/utm-virgl-host/host/query-results.md)
   reject incomplete output backing and preserve delayed errors and fence ownership.
   Native Metal checks and 226 causal software assertions pass; concurrent access
   and guest execution remain outside that validation.
-  The [full paired QEMU recipe](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/utm-virgl-host/qemu)
+  The [full paired QEMU recipe](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/utm-virgl-host/qemu)
   builds and passes an isolated 2D guest boot on ANGLE Metal, including libdrm
-  and 32 GEM/PRIME lifetimes. A separate [live 2D backing check](https://github.com/neonix20b/EmberBSD-Ports/blob/main/probes/utm-virgl-host/qemu/reset.md)
+  and 32 GEM/PRIME lifetimes. A separate [live 2D backing check](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/utm-virgl-host/qemu/reset.md)
   passes three QMP resets and four Metal renderer initializations.
   In-flight 3D reset/display qualification and guest Mesa
   remain pending. Guest VirGL stays disabled; an accelerated EmberBSD session,
@@ -334,13 +338,13 @@ on every board in the hardware catalog.
 - **Physical GPU and NPU porting targets:** CIX P1 is the first selected
   direction: Mali-G720 through Panthor/[Mesa PanVK](https://docs.mesa3d.org/drivers/panfrost.html),
   and Zhouyi v3/X2 through the [Compass driver/runtime sources](https://github.com/Arm-China/Compass_NPU_Driver).
-  The [Compass Ports probe](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/compass-umd)
+  The [Compass Ports probe](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/compass-umd)
   fixes descriptor ownership during initialization and cleanup, and rejects
   out-of-range partition/cluster queries while preserving legacy NPU counts.
   On NetBSD/AArch64 with GCC 16.2, 13 descriptor cases and 58 core-count
   cases pass against isolated production methods; a full runtime build and
   NPU execution remain unverified.
-  The [A733 Ports audit](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/a733-accelerators)
+  The [A733 Ports audit](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/a733-accelerators)
   identifies its Vivante NPU's missing Mesa TP path and pins the exact PowerVR
   firmware. The OS now supplies an [A733 PCK600 power-domain provider](ember/boot/a733-power-domains.md)
   with bounded transitions, error propagation and retained legacy FDT callbacks.
@@ -409,16 +413,16 @@ on every board in the hardware catalog.
   there, so trap cases skip. The kernel's FP signal classification is unchanged.
 - **Reproducible builds and development:** pinned kernel/UEFI inputs and
   checked firmware assets, pkgsrc overlays, versioned source probes and
-  standalone examples. The [Ports development toolchain](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/development-toolchain)
+  standalone examples. The [Ports development toolchain](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain)
   provides GCC 16.2 built in the AArch64 VM and running there and on physical
-  Orange Pi Zero 3W. New [development sessions](https://github.com/neonix20b/EmberBSD-Ports/blob/main/profiles/common-build-tools/development-defaults.md)
+  Orange Pi Zero 3W. New [development sessions](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/development-defaults.md)
   and ordinary pkgsrc builds on Zero 3W select the repaired GCC16 nb1 package;
   the base compiler remains explicit bootstrap/recovery support.
   The [cross-build wrapper](ember/boot/cross-build.md) builds an AArch64 kernel,
   matched board modules and DTBs on Apple Silicon macOS with GCC16.2.
   The resulting kernel cold-boots in AArch64 UTM and passes FP process,
   signal and thread checks. The
-  [Ports cross GCC16 recipe](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/development-toolchain/cross)
+  [Ports cross GCC16 recipe](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain/cross)
   also runs GCC16 on that host; cross-built C11 (plain/LTO) and C++20 DSO
   checks pass on Zero 3W with its installed GCC16 runtime. The
   [CTF converter](ember/boot/cross-build.md#dwarf5-and-ctf) now preserves
@@ -428,7 +432,7 @@ on every board in the hardware catalog.
   now pass in the AArch64 VM: typed FBT/syscall tracing, standalone DWO
   and standard supplementary type conversion, including malformed-input
   rejection. These checks do not cover DWP packages or every DWARF consumer.
-  [Ports GDB 18.1](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/development-toolchain/gdb)
+  [Ports GDB 18.1](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain/gdb)
   is installed in that VM and passes external-DWARF, live FP-register and
   signal-unwinding checks. Its integration into release images remains pending.
   Full OS builds
@@ -436,18 +440,18 @@ on every board in the hardware catalog.
   C11/C++20 threads, TLS and shared-library
   checks pass. On Zero 3W, current MPFR/MPC/libxml2 and actual pkgsrc wrapper
   compilation, package installation and loaded-runtime checks also pass;
-  see the [native validation](https://github.com/neonix20b/EmberBSD-Ports/blob/main/profiles/development-toolchain/native-validation.md).
+  see the [native validation](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/development-toolchain/native-validation.md).
   The original atomic/binary128 LTO tests pass with its installed corrected libc.
-  A [Ports allocation repair](https://github.com/neonix20b/EmberBSD-Ports/blob/main/profiles/development-toolchain/modules-portability.md)
+  A [Ports allocation repair](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/development-toolchain/modules-portability.md)
   handles NetBSD's distinct EOPNOTSUPP value; the installed GCC16 nb1 package
   passes the original crashing C++ module test and a module import/run check
   on Zero 3W. The full upstream suite has exposed platform compatibility
   failures. An upstream
-  [TSVC allocator backport](https://github.com/neonix20b/EmberBSD-Ports/blob/main/profiles/development-toolchain/testsuite-portability.md)
+  [TSVC allocator backport](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/development-toolchain/testsuite-portability.md)
   passes focused native plain/LTO checks; the full suite remains unaccepted.
   Remaining repairs and a coherent Qt/LLVM runtime rebuild are required before
-  adopting it as the default compiler in new images. The [common build-tools profile](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/common-build-tools)
-  supplies [Python 3.14.8](https://github.com/neonix20b/EmberBSD-Ports/blob/main/profiles/common-build-tools/python.md)
+  adopting it as the default compiler in new images. The [common build-tools profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-build-tools)
+  supplies [Python 3.14.8](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/python.md)
   with Mac cross packaging and installed AArch64 VM acceptance: C/C++ embedding,
   extension loading and 21 selected upstream suites, including TLS and SQLite.
   Meson 1.12.1 and Ninja 1.13.2 cross packages also pass installed C/C++
@@ -455,12 +459,14 @@ on every board in the hardware catalog.
   in that VM with explicit current GNU as/ld. The profile prepares matching
   LLVM/Clang/LLD 23.1.2 with upstream lit. Portability patches, generated-header declarations and
   explicit interpreter/LLVM selection have source checks. Focused native
-  macro/selection and GCC16 metadata checks pass; they do not establish an
-  installed LLVM23 compiler. The remaining packages, ELF/JIT behavior and the
-  Mesa26/TinyGo consumers remain pending. See the [LLVM family contract](https://github.com/neonix20b/EmberBSD-Ports/blob/main/profiles/common-build-tools/llvm-family.md).
-  Ports also owns the [Mac cross-package workflow](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/common-build-tools/cross):
+  macro/selection and GCC16 metadata checks pass. The complete LLVM23 core
+  package passes normal package checks and installed C API/bitcode plus four
+  default ORC JITLink lifecycles on Zero 3W. Upstream lit passes installed
+  launcher and PASS/XFAIL/FAIL checks in AArch64 UTM. Clang/LLD packages and
+  Mesa26/TinyGo consumers remain pending. See the [LLVM family contract](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/llvm-family.md).
+  Ports also owns the [Mac cross-package workflow](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-build-tools/cross):
   pkgconf 3.0.7, GNU M4 1.4.21, Libtool 2.6.2 and
-  [Binutils 2.47nb1](https://github.com/neonix20b/EmberBSD-Ports/blob/main/profiles/common-build-tools/binutils.md) pass normal package checks
+  [Binutils 2.47nb1](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/binutils.md) pass normal package checks
   and installed AArch64 VM consumers with GCC16. Regression checks cover
   target ELF metadata, package replacement and extraction rollback on the host.
   The Binutils port also fixes mixed DWARF32/64 source lookup and passes
@@ -494,7 +500,7 @@ listed revision; it does not imply full peripheral or long-run support.
 The [board catalog](ember/boards/README.md) defines validation terms and links
 to VM and research targets. To contribute another board, follow
 [adding a board](ember/boards/adding-a-board.md) and the
-[developer skill](https://github.com/neonix20b/Ember-Agent-Skills#add-your-board).
+[developer skill](https://github.com/oxtech-ember/Ember-Agent-Skills#add-your-board).
 Add a catalog row and a board page; keep detailed feature matrices on those pages.
 
 ## Wi-Fi work in progress

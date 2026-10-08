@@ -41,7 +41,7 @@ indexed `.dwp` packages, signature-referenced type units and general DWARF
 location/expression evaluation are outside this CTF acceptance.
 CTF is a type consumer; it does not establish every debugger's DWARF support.
 
-Separately, [Ports GDB 18.1](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/development-toolchain/gdb)
+Separately, [Ports GDB 18.1](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain/gdb)
 passes all eight external-object cases and live DWARF32/64 debugging in
 the same VM. Its native backend repairs FP register ordering and signal
 unwinding; Unicode conversion and malformed supplementary metadata are
@@ -75,7 +75,7 @@ cases cover missing files, wrong identities, truncated headers/references,
 cross-object offset collisions and invalid CU-relative inherited references.
 Failed conversion must leave the input ELF byte-for-byte unchanged.
 
-The [Ports cross compiler](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/development-toolchain/cross)
+The [Ports cross compiler](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain/cross)
 installs binutils in GCC's target-tool search directory. Its split-DWARF
 contract runs with a clean PATH and no `-B` workaround for `objcopy` lookup.
 

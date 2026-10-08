@@ -10,7 +10,7 @@ GEM/PRIME mapping lifetimes (one page and 8 MiB), malformed size/handle
 rejection and visible 800x600 KMS color bars passed. labwc/Pixman displayed
 a native Kate window without Xorg. The subsequent Ports input adaptation
 passed physical pointer, keyboard and file-save checks documented in the
-[runtime probes](https://github.com/neonix20b/EmberBSD-Examples/tree/main/desktop/wayland-utm).
+[runtime probes](https://github.com/oxtech-ember/EmberBSD-Examples/tree/main/desktop/wayland-utm).
 This does not establish VirGL, reset stress or physical-board support.
 Retest against each exact kernel and
 virtual hardware configuration.

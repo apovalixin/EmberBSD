@@ -14,7 +14,7 @@ Preserve upstream identifiers, licenses, revision and authorship when adapting c
 
 Read [the build guide](../../README.ember.md) and the checkout's `AGENTS.md`.
 Use a contributor branch or fork and the target's current submission rules.
-The [developer skill](https://github.com/neonix20b/Ember-Agent-Skills#add-your-board)
+The [developer skill](https://github.com/oxtech-ember/Ember-Agent-Skills#add-your-board)
 can guide an assistant through the same public workflow.
 
 ## Integrate with the actual source tree
@@ -28,8 +28,8 @@ can guide an assistant through the same public workflow.
 | Raspberry Pi UEFI adaptation | Pinned firmware inputs and ordered patches in `ember/firmware/`; this is not a generic firmware builder for all boards |
 | Build and regression checks | Applicable build entry point and `ember/tools/` |
 | Board instructions and evidence | A page in `ember/boards/`, linked from the catalog and root README |
-| Third-party application dependencies | [EmberBSD-Ports](https://github.com/neonix20b/EmberBSD-Ports) |
-| Standalone device demonstration | [EmberBSD-Examples](https://github.com/neonix20b/EmberBSD-Examples) |
+| Third-party application dependencies | [EmberBSD-Ports](https://github.com/oxtech-ember/EmberBSD-Ports) |
+| Standalone device demonstration | [EmberBSD-Examples](https://github.com/oxtech-ember/EmberBSD-Examples) |
 
 Adaptations already present in this fork are applied to the sources. Do not
 reapply `ember/patches`. Firmware's ordered series is a separate input to its
