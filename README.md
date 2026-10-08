@@ -318,6 +318,9 @@ on every board in the hardware catalog.
   session and enumerates two wscons devices. All 131 selected dependency
   invocations pass. Input events, VT switching, application surfaces and a
   complete accelerated Wayland session remain unverified.
+  Ports also [cross-builds current text/image dependencies](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/labwc-dependencies.md),
+  including GLib 2.90.1, HarfBuzz 14.6.0 and Cairo 1.18.6, with normal package
+  checks. Target text rendering, Pango/labwc and full SVG remain unaccepted.
   A Ports
   [host-side VirGL 1.3.0 adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/utm-virgl-host)
   preserves the upstream IOV-size correction and prevents resource publication
