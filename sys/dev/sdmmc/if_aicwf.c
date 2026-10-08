@@ -1388,6 +1388,19 @@ aicwf_newstate_cb(struct aicwf_softc *sc, enum ieee80211_state nstate,
 		break;
 
 	case IEEE80211_S_SCAN:
+		/*
+		 * A user scan forces ic_state to INIT in setupscan(),
+		 * bypassing RUN's normal station departure.  The radio
+		 * still has that association: notify the supplicant and
+		 * clear the old keys before disconnecting it.  Without
+		 * this event the client can remain COMPLETED after the
+		 * scan, with no firmware connection to carry traffic.
+		 */
+		if (ostate == IEEE80211_S_INIT && sc->sc_connected) {
+			s = splnet();
+			ieee80211_sta_leave(ic, ic->ic_bss);
+			splx(s);
+		}
 		aicwf_disconnect(sc);
 		if (ostate != IEEE80211_S_SCAN) {
 			if (!sc->sc_scanning)
