@@ -36,14 +36,26 @@ Fixed role bounds come from the inspected tablet; success never authorizes flash
 **Interfaces:** consume schema 1 JSON and three host files; produce one JSON
 receipt with status, role hashes/bounds, writes_performed=0, installation_ready=false.
 
-- [ ] Write real-file tests for success and each review input class, including
+- [x] Write real-file tests for success and each review input class, including
   size/type/schema/hash errors, FIFO and symlink refusal and unchanged files.
-- [ ] Run `ruby ember/tools/a133-install-bundle-test.rb`; expect a failure
+- [x] Run `ruby ember/tools/a133-install-bundle-test.rb`; expect a failure
   stating that the checker is missing before implementation.
-- [ ] Implement CLI validation and streaming SHA256 with NOFOLLOW and open-file
+- [x] Implement CLI validation and streaming SHA256 with NOFOLLOW and open-file
   metadata checks, retaining the spec's fixed limits and bounded error output.
-- [ ] Run the new contract and existing `a133-install-preflight-test.rb`,
+- [x] Run the new contract and existing `a133-install-preflight-test.rb`,
   `a133-env-edit-test.rb` and `a133-firstboot-guard-test.sh`; expect exit zero.
-- [ ] Document the exact command and manifest format, and distinguish integrity
+- [x] Document the exact command and manifest format, and distinguish integrity
   from authenticity, credential scrubbing, device matching and physical acceptance.
-- [ ] Review the diff, verify links/whitespace, commit and push the working branch.
+- [x] Review the diff, verify links/whitespace, commit and push the working branch.
+
+## Completion evidence
+
+Task completed by Codex (GPT-6). The real-file contract passed 35 cases on
+Ruby 4.0.5 and system Ruby 2.6.10. Existing ADB preflight, environment and
+first-boot guard contracts passed. One simultaneous inspector run exceeded
+its one-second fixture limit; isolated reruns passed without changing it.
+Independent Codex GPT-6 Astra review found the empty-file failure; its
+regression failed before the correction and passed afterwards. No other
+Critical, Important or Minor findings remained. No physical writes or audio
+acceptance were part of this stage. Code is published on the working branch,
+not integrated into main; the complete tablet change remains a draft.
