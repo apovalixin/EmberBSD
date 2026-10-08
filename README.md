@@ -291,15 +291,18 @@ on every board in the hardware catalog.
   Ports owns the [current Mesa 26.2.4 source adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/wayland-utm),
   with native DSO-lifetime/numeric regressions under GCC 16.2 and
   common-toolchain staging rules. A [common graphics source profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-graphics)
-  supplies canonical MesaLib 26.2.4nb1/libdrm 2.4.134nb1 recipes with checked
-  pkgsrc/Qt dependency selection. Its complete core-only libdrm payload
-  cross-builds with GCC16 on macOS, matches the 26-entry PLIST and passes
-  upstream hash, skip-list and symbol checks in AArch64 UTM. A
-  [temporary Mesa26 cross diagnostic](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/README.md#temporary-headless-mesa-diagnostic)
-  also passes software GLES shader/pixel checks and 30 upstream target test runs
-  on Orange Pi Zero 3W (A733). It excludes LLVM, X11/Wayland and installed
-  packages. The full Mesa/LLVM profile, package registration, consumer
-  migration and guest accelerated rendering remain pending.
+  supplies canonical MesaLib 26.2.4nb1/libdrm 2.4.134nb1 packages with one
+  shared LLVM 23.1.2 provider. The complete selected Mesa package cross-builds
+  with GCC16 on macOS and is installed normally on Orange Pi Zero 3W (A733).
+  [Installed-package acceptance](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/mesa-package.md)
+  verifies the package files, links and library closure, then passes four
+  surfaceless EGL/llvmpipe shader/pixel lifecycles and all 37 upstream test
+  invocations, including seven LLVM ORC tests. One internal upstream case
+  skips and nine NIR cases remain disabled. The installed core-only libdrm
+  passes hash, skip-list and exported-symbol checks; hardware enumeration
+  skips because this board kernel has no DRM accelerator device.
+  The package includes X11/Wayland, EGL/GLES/GL and GBM, but consumer migration,
+  a visible session and guest accelerated rendering remain pending.
   A Ports
   [host-side VirGL 1.3.0 adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/utm-virgl-host)
   preserves the upstream IOV-size correction and prevents resource publication
