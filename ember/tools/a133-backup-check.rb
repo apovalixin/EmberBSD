@@ -167,6 +167,40 @@ module A133Backup
     [output, output_write, errors, errors_write].compact.each { |io| io.close unless io.closed? }
     drain.join if drain
   end
+
+  def verify_file(path, sha256:, format: 'zstd', zstd: 'zstd', timeout: 3600)
+    raise Invalid, 'invalid_arguments' unless path.is_a?(String) &&
+      %w[zstd raw].include?(format) && timeout.is_a?(Integer) && (1..7200).cover?(timeout) &&
+      sha256.is_a?(String) && sha256.match?(/\A[0-9a-f]{64}\z/) &&
+      zstd.is_a?(String) && !zstd.empty?
+    path, sha256 = path.dup.freeze, sha256.dup.freeze
+    raise Invalid, 'backup_file_not_regular' unless File.lstat(path).file?
+    verified = File.open(path, File::RDONLY | File::NOFOLLOW | File::NONBLOCK) do |file|
+      before = file.stat
+      raise Invalid, 'backup_file_not_regular' unless before.file?
+      receipt = Timeout.timeout(timeout) do
+        if format == 'raw'
+          raise Invalid, 'disk_size_mismatch' unless before.size == BYTES
+          verify_stream(file, BYTES, sha256, INVENTORY)
+        else
+          decode(file, zstd) { |stream| verify_stream(stream, BYTES, sha256, INVENTORY) }
+        end
+      end
+      after = file.stat
+      raise Invalid, 'backup_source_changed' unless [:dev, :ino, :size, :mtime, :ctime].all? do |field|
+        before.public_send(field) == after.public_send(field)
+      end
+      receipt
+    end
+    verified.merge(status: 'backup_integrity_verified', writes_performed: 0,
+      installation_ready: false, filesystem_consistency: 'not_established_by_integrity_check')
+  rescue Timeout::Error
+    raise Invalid, 'backup_read_timeout'
+  rescue SystemCallError, IOError
+    raise Invalid, 'backup_read_failed'
+  rescue ArgumentError
+    raise Invalid, 'invalid_arguments'
+  end
 end
 
 if $PROGRAM_NAME == __FILE__
@@ -179,31 +213,9 @@ if $PROGRAM_NAME == __FILE__
       parser.on('--zstd PATH') { |value| options[:zstd] = value }
       parser.on('--timeout SECONDS', Integer) { |value| options[:timeout] = value }
     end.parse!
-    raise A133Backup::Invalid, 'invalid_arguments' unless ARGV.size == 1 &&
-      %w[zstd raw].include?(options[:format]) && (1..7200).cover?(options[:timeout]) &&
-      options[:sha].is_a?(String) && options[:sha].match?(/\A[0-9a-f]{64}\z/)
-    raise A133Backup::Invalid, 'backup_file_not_regular' unless File.lstat(ARGV.first).file?
-    File.open(ARGV.first, File::RDONLY | File::NOFOLLOW | File::NONBLOCK) do |file|
-      before = file.stat
-      raise A133Backup::Invalid, 'backup_file_not_regular' unless before.file?
-      verified = Timeout.timeout(options[:timeout]) do
-        if options[:format] == 'raw'
-          raise A133Backup::Invalid, 'disk_size_mismatch' unless before.size == A133Backup::BYTES
-          A133Backup.verify_stream(file, A133Backup::BYTES, options[:sha], A133Backup::INVENTORY)
-        else
-          A133Backup.decode(file, options[:zstd]) do |stream|
-            A133Backup.verify_stream(stream, A133Backup::BYTES, options[:sha], A133Backup::INVENTORY)
-          end
-        end
-      end
-      after = file.stat
-      raise A133Backup::Invalid, 'backup_source_changed' unless [:dev, :ino, :size, :mtime, :ctime].all? do |field|
-        before.public_send(field) == after.public_send(field)
-      end
-      result.merge!(verified)
-    end
-    result[:status] = 'backup_integrity_verified'
-    result[:filesystem_consistency] = 'not_established_by_integrity_check'
+    raise A133Backup::Invalid, 'invalid_arguments' unless ARGV.size == 1
+    result.merge!(A133Backup.verify_file(ARGV.first, sha256: options[:sha],
+      format: options[:format], zstd: options[:zstd], timeout: options[:timeout]))
     puts JSON.pretty_generate(result)
   rescue A133Backup::Invalid, Timeout::Error, OptionParser::ParseError, SystemCallError, IOError => error
     result[:status] = 'inspection_stopped'
