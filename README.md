@@ -329,6 +329,9 @@ on every board in the hardware catalog.
   [Rust 1.99 cross-std adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/rust-cross-std)
   also passes target threads, TLS destructors, unwinding and C `dlopen`
   consumers in AArch64 VM, preparing the current SVG path.
+  The matching [Rust build-host package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/rust.md)
+  and cargo-c pass normal macOS installation and a native Rust/C ABI consumer
+  after a Ports correction to Mach-O dependency metadata.
   labwc client surfaces and full SVG
   remain unaccepted.
   A Ports
