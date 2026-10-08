@@ -422,6 +422,11 @@ on every board in the hardware catalog.
   [hardware receipt](ember/boards/compute-module-5.md#hardware-check-2026-10-08).
   Other boards, access-point combinations and long-run operation need
   separate acceptance; this is not an 802.11r/802.11v roaming claim.
+- **Consistent Wi-Fi discovery and CM5 cooling:** `bwfm` retains firmware
+  scan channels and signal ranking across both bands; the CM5 ACPI fan can
+  [remain at maximum cooling](ember/boot/thermal-fan.md) across reboot.
+  The [physical check](ember/boards/compute-module-5.md#home-mesh-and-cooling-check-2026-10-08)
+  covers 5 GHz SAE/PMF traffic and operator-confirmed continuous rotation.
 - **Raspberry Pi Zero 2 W**: Wi-Fi on its BCM43436 chip.
 - **Headless base on Raspberry Pi 5:** the fork's kernel, matching board
   modules and reduced base userland are built and installed through the
@@ -551,7 +556,7 @@ listed revision; it does not imply full peripheral or long-run support.
 | Board | Architecture / SoC | Confirmed scope and main limits |
 | --- | --- | --- |
 | [Raspberry Pi 5 (C1)](ember/boards/raspberry-pi-5.md) | AArch64 / BCM2712 | microSD/UEFI boot, Ethernet, Wi-Fi, classic Bluetooth, cooling and WM8960 audio; USB and graphics not validated here |
-| [Compute Module 5 (D0)](ember/boards/compute-module-5.md) | AArch64 / BCM2712 | eMMC/UEFI boot, four cores, gigabit Ethernet, WPA2/WPA3-Personal and temperature sensing; fan limitations, other peripherals unvalidated |
+| [Compute Module 5 (D0)](ember/boards/compute-module-5.md) | AArch64 / BCM2712 | eMMC/UEFI boot, four cores, gigabit Ethernet, WPA2/WPA3-Personal and temperature sensing; persistent maximum cooling; other peripherals unvalidated |
 | [Raspberry Pi Zero 2 W](ember/boards/raspberry-pi-zero-2-w.md) | AArch64 / BCM2710A1 | microSD boot, all cores, serial and 2.4 GHz Wi-Fi; large Wi-Fi transfers stall |
 | [Orange Pi Zero 4](ember/boards/orange-pi-zero-4.md) | AArch64 / Allwinner A733 | Eight cores, SDR104, Ethernet, Wi-Fi, classic Bluetooth, thermal/frequency control and USB 2.0 data; SuperSpeed unconfirmed |
 | [Orange Pi Zero 3W](ember/boards/orange-pi-zero-3w.md) | AArch64 / Allwinner A733 | Eight cores, SDR104, Wi-Fi, Bluetooth inquiry and thermal/frequency control; USB devices and Bluetooth pairing not tested |
@@ -578,6 +583,10 @@ passed without command timeouts. No WPA3 throughput improvement is claimed.
   The published driver disables autonomous firmware WNM transitions.
   A seamless handover is not claimed.
 - **802.11r fast transition** is not implemented by the external-SAE work.
+- **Zero 3W connected scans** can lose network access with AIC8800D80;
+  [the board page](ember/boards/orange-pi-zero-3w.md#wi-fi-limits-and-connected-scan-regression)
+  records two occurrences and recovery limits. Its current Wi-Fi support is
+  WPA2, without the bwfm SAE or roaming extensions.
 - **Short firmware replies** still need a command-transport fix and regression.
 
 Changes to association and command handling should preserve the SAE and

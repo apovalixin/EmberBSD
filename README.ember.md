@@ -40,6 +40,9 @@ request in a mixed WPA2/WPA3 network while the host still holds WPA2 keys.
 This WNM mitigation remains in place. The separate
 [external-SAE implementation](ember/boot/bwfm-sae.md) adds WPA3-Personal
 with required PMF; it does not implement 802.11v roaming or 802.11r.
+The [scan metadata correction](ember/boot/bwfm-scan.md) preserves firmware
+primary channels and unsigned signal-quality ranking. CM5 also provides an
+explicit [persistent maximum-cooling setting](ember/boot/thermal-fan.md).
 An access point may disconnect a station, after which NetBSD scans and
 joins again. The on-demand `hw.bwfm0.report` diagnostic includes radio
 authentication, PMF and station counters to distinguish this failure

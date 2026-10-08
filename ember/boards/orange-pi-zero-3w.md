@@ -16,7 +16,7 @@ Board revision: not recorded in the original support table.
 | Serial console | Tested |
 | All CPU cores | Tested (8 cores, a minute of full load at 62 degC with the kit's cooler) |
 | Ethernet | No port |
-| Wi-Fi | Tested: WPA2 on 2.4 and 5 GHz with 802.11n, 32 MiB transfers each way with matching checksums; needs the vendor firmware file |
+| Wi-Fi | Tested: WPA2 on 2.4 and 5 GHz with 802.11n, 32 MiB transfers each way with matching checksums; needs the vendor firmware file; see connected-scan regression below |
 | Bluetooth | Classic: inquiry Tested, pairing not tried; BLE: No; needs the vendor patch files |
 | Temperature sensor | Tested (five sensors) |
 | Fan control | No |
@@ -55,6 +55,25 @@ Tested on physical hardware: boot from microSD in SDR104, eight cores, five
 temperature sensors, watchdog reset, frequency switching on both clusters, Wi-Fi on
 2.4 and 5 GHz, Bluetooth inquiry, the real-time clock across a reboot. Not tried: USB
 devices, Bluetooth pairing, a long run
+
+## Wi-Fi limits and connected-scan regression
+
+On 2026-10-08, a 4 GiB Zero 3W running `EMBER64 #8` (built 12:48 UTC)
+connected to a 5 GHz channel-60 mesh AP using WPA2-PSK/CCMP. The installed
+ELF kernel SHA256 was
+`39db19d163b493dff8ac5044e46ed3a7f566cf0c9ab010f017e79855edb09ed3`. The radio was
+AIC8800D80 SDIO, firmware 0x06090101 (`g586bc1e8`, built 2025-12-05).
+This installation and driver do not advertise SAE; external SAE/PMF,
+802.11r FT and 802.11v BSS transitions are not implemented in the AIC path.
+CM5 bwfm results do not validate this radio.
+
+Requesting a scan while connected lost network access twice: once through
+`wpa_cli scan` and once through `ifconfig aicwf0 list scan`. The latter also
+starts an active scan; it is not a read-only cache query. Both cases required
+an operator power cycle to restore access. No serial trace or crash dump
+established the cause, so neither a kernel panic nor a firmware deadlock is
+claimed. Use cached `wpa_cli scan_results` for inspection, and arrange
+serial access or an independent recovery path before reproducing the failure.
 
 ## Evidence
 

@@ -84,6 +84,33 @@ driver sets and verifies PMF last, then preserves it while installing keys.
 Firmware commands are serialized through their response, and BCDC identifiers
 wrap to their 16-bit wire width. Disconnect also aborts the firmware join.
 
+## Reconnecting with external SAE
+
+The BSD external-SAE path starts a new SAE exchange on each join. Reusing a
+cached PMKID in the association RSNE can therefore refer to the previous PMK
+while firmware requests fresh authentication. On a CM5 mesh test this left
+a repeated connection to the same BSSID waiting for association; clearing
+the client's PMKSA cache restored it.
+
+The client now skips cached-PMKSA selection for SAE-enabled profiles when
+the driver advertises the external-SAE/PMF interface. It still installs the
+PMK obtained by the new SAE exchange. Pure WPA2 profiles and other driver
+backends retain their existing cache behavior. A mixed WPA2/SAE profile on
+this driver also skips reuse; use a separate WPA2-only profile if that cache
+behavior is required. This is full reauthentication, not fast roaming.
+
+The cache-selection regression exercises the actual client block:
+
+```sh
+sh ember/tests/bwfm-sae-pmksa.sh
+```
+
+It failed before the fix and passed on macOS and an EmberBSD AArch64 VM.
+On the CM5, three reconnects to one 5 GHz BSSID without flushing PMKSA
+completed in 15, 14 and 14 seconds with SAE/H2E and required PMF. The fixed
+client also connected using a separate WPA2 profile and returned to SAE.
+See the [current board receipt](../boards/compute-module-5.md#home-mesh-and-cooling-check-2026-10-08).
+
 ## Build and checks
 
 Build a matched kernel/modules bundle and base wpa_supplicant from the same

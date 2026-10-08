@@ -19,9 +19,9 @@ The carrier PCB revision and exact four-wire fan model were not established.
 | Wi-Fi | WPA2-PSK and WPA3-Personal SAE group 19/H2E with required PMF tested |
 | Bluetooth | Not validated |
 | Temperature sensor | ACPI and VideoCore readings checked; no undervoltage/throttle flags during the short check |
-| Fan control | Partial: full power spins; low PWM cycles/stalls on this fan; no permanent correction accepted |
+| Fan control | Persistent maximum cooling and reboot tested; low/intermediate PWM cycles on this fan ([control](../boot/thermal-fan.md)) |
 | Watchdog | Not validated |
-| Power button | Not validated |
+| Power button | BCM2712 GPIO20 fallback loads; physical PSW shutdown/power-on pending ([setup](../../sys/modules/rpi5button/README.md)) |
 | I2C | Not validated |
 | Audio | Not validated |
 | Pin multiplexing and GPIO | Not validated |
@@ -91,21 +91,65 @@ During an earlier test that administratively lowered cemac0, the board restarted
 unexpectedly. No crash dump established the cause. Normal gigabit traffic is
 verified; repeated Ethernet down/up and its interaction with Wi-Fi are not.
 
-## Cooling limits
+## Cooling
 
 The carrier's [official schematic](https://files.waveshare.com/wiki/CM5-NANO-B/CM5-NANO-B-Sch.pdf)
-shows a switched 5 V supply, PWM and tachometer on its four-pin fan connector.
-The installed fan's model and electrical specification still need identification.
-Low duty caused visible stop/start cycles; the operator confirmed continuous
-rotation at full power. A temporary kernel probe using device-memory mappings
-observed 24–25 kHz PWM. A 90-second 175/255 trial produced tachometer edges in
-every roughly 30 ms sample taken five seconds apart, then restored the original
-duty. Continuous physical rotation at that intermediate setting is unconfirmed.
-Earlier `/dev/mem` mmap probes used cached mappings and are not valid PWM tests.
+shows switched 5 V power, PWM and tachometer on its four-pin fan connector.
+The installed fan's exact model is unknown. The operator observed repeated
+stops at low and 175/255 PWM, and continuous rotation at maximum 250/255.
+Tachometer edges in an earlier short probe did not establish steady rotation.
 
-The diagnostic module was unloaded. No fan workaround was installed. The
-retained UEFI predates the tree's `fan-state-fix.diff`; neither a corrected
-firmware deployment nor sustained-load cooling was accepted on this board.
+The [maximum-cooling policy](../boot/thermal-fan.md) uses the existing ACPI
+`_AL0` devices and survives a reboot when saved in sysctl.conf. It preserves
+temperature monitoring. It is an explicit operating policy for this fan;
+it does not establish working automatic speed control. No UEFI update or
+raw MMIO utility is required. The existing UEFI remains installed.
+
+## Home mesh and cooling check, 2026-10-08
+
+The physical board booted GCC 16.2.0 `EMBER64 #3`, built on macOS from
+`b78f10c721f7c397ef7b67e3aa6ec8fe65210d7e`. `kern.buildinfo` reports that revision.
+The kernel, four matching modules and fixed wpa_supplicant came from that
+source. The client and hostapd cross-builds passed using the updated headers.
+The optional button rc service is from `ad44f1803`.
+
+| Updated artifact | SHA256 |
+| --- | --- |
+| `/netbsd` and `/boot/netbsd` | `7b4603f6fdcae29ba6d7819bbd84bdd5bb774107801a6b56bc48e0fbc83864e5` |
+| `/boot/netbsd.img` | `1dde929bd282404a828c018409827b8a0a23f1e5b29cff5ccfd0ad5af7bcd2c6` |
+| wpa_supplicant 2.11 | `fe1e7dd5dfde52dce4f587e2448ef1d70e627867fd13bc030b992105da83c0dd` |
+| rpi5button.kmod | `2960fbc1b1a4d7c9330096ff4aa0b0ef4f5679fdc7cd973a4f0b44f1c3698f3f` |
+
+The other three module hashes match the earlier receipt. Installed files
+were verified after reboot; previous kernel/module sets remain available
+for rollback. The existing UEFI was retained.
+
+The CYW43455 firmware remains 7.45.265. A KeeneticOS 5.1.6 mesh advertising
+WPA2/WPA3 allowed WPA2 and SAE group 19/H2E with required PMF on 5 GHz
+channel 60 (80 MHz firmware chanspec `0xe23a`). Firmware reported
+`wsec=0x604`, `wpa_auth=0x40000`, `mfp=2`, `roam_off=1` and `wnm=0`.
+An 8 MiB upload/download passed byte comparison and SHA256 with the peer
+route explicitly using bwfm0. This is a functional check, not a benchmark.
+The fixed [external-SAE client](../boot/bwfm-sae.md#reconnecting-with-external-sae)
+completed three reconnects to the same 5 GHz BSSID without clearing PMKSA
+in 15, 14 and 14 seconds. A separate WPA2 profile connected in about
+13 seconds; restoring SAE took about 13 seconds. An unpinned connection
+also selected a stronger 2.4 GHz AP, so 5 GHz is available but not guaranteed
+by a dual-band SSID. Autonomous firmware WNM/roaming remains disabled.
+
+[Scan metadata](../boot/bwfm-scan.md) now preserves firmware primary channels
+and exports signed RSSI as unsigned quality without wraparound. Its 166
+checks and the thermal-notification contract passed on macOS and natively
+in an EmberBSD AArch64 VM; six existing native kernel contracts also passed.
+The board already connected on 5 GHz before the metadata fix, so this check
+does not assign all previous band-selection failures to that defect.
+
+The maximum-cooling setting loaded automatically after reboot and the
+operator confirmed continuous fan rotation. On the preceding `72c00a3bbc19`
+build, 19 samples over 18 minutes retained D0 with temperatures 37.5–41.3 °C.
+Invalid values -1 and 2 were rejected; changing the policy to 0 and back to 1 produced D3 and D0.
+Suspend/resume, sustained load and automatic intermediate speeds remain
+unvalidated. 802.11r/802.11v are not added by this update.
 
 ## Earlier evidence
 
