@@ -150,8 +150,11 @@ Select current supported common dependencies and carry compatibility fixes
 in Ports. Its Mesa 26.2.4 source recipe selects classic VirGL, softpipe and
 llvmpipe with common LLVM 23.1.2/GCC 16.2, EGL/GBM, GLES, X11 and Wayland.
 ORC JIT is our selected current LLVM path, not an AArch64 upstream requirement.
-The complete new build and software/JIT runtime remain pending. Existing
-Mesa 21 software results apply only to the temporary recovery/comparison stack.
+The complete package, software/JIT runtime and installed libepoxy consumer
+pass on AArch64. The [GBM DMA-BUF consumer](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/gbm.md)
+also passes with native VirtGPU 2D and llvmpipe. Current wlroots/labwc and
+the accelerated session still need acceptance. Existing Mesa 21 software
+results apply only to the temporary recovery/comparison stack.
 Remove that prefix after current Mesa and rebuilt wlroots/labwc pass the same
 lifecycle and native-input/session checks. Do not keep older per-application
 LLVM or disable llvmpipe to bypass compatibility failures.
