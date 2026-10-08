@@ -99,6 +99,7 @@
 #include "memory.h"
 #include "list.h"
 #include "traverse.h"
+#include "dwarf_external.h"
 
 /*
  * We need to define a couple of our own intrinsics, to smooth out some of the
@@ -126,6 +127,9 @@
 #define	TDESC_HASH_BUCKETS	511
 
 typedef struct dwarf {
+	Dwarf_Debug dw_sup;		/* supplementary object, if present */
+	Dwarf_Off dw_base, dw_supbase;	/* disjoint type-ID namespaces */
+	Dwarf_Unsigned dw_primary_size, dw_sup_size;
 	Dwarf_Debug dw_dw;		/* for libdwarf */
 	Dwarf_Error dw_err;		/* for libdwarf */
 	Dwarf_Off dw_maxoff;		/* highest legal offset in this cu */
@@ -277,7 +281,7 @@ die_off(dwarf_t *dw, Dwarf_Die die)
 	Dwarf_Off off;
 
 	if (dwarf_dieoffset(die, &off, &dw->dw_err) == DW_DLV_OK)
-		return (off);
+		return (dw->dw_base + off);
 
 	terminate("failed to get offset for die: %s\n",
 	    dwarf_errmsg(dw->dw_err));
@@ -434,14 +438,73 @@ die_string(dwarf_t *dw, Dwarf_Die die, Dwarf_Half name, char **strp, int req)
 static Dwarf_Off
 die_attr_ref(dwarf_t *dw, Dwarf_Die die, Dwarf_Half name)
 {
-	Dwarf_Off off;
+	Dwarf_Debug context = dw->dw_dw, next_context;
+	Dwarf_Off base = dw->dw_base, next_base, off, original = die_off(dw, die);
+	Dwarf_Off cuoff, culen;
+	Dwarf_Unsigned limit;
+	Dwarf_Attribute attr;
+	Dwarf_Half form;
+	Dwarf_Die next, owned = NULL;
+	unsigned int depth;
+	int found, rc;
 
-	if (dwarf_attrval_unsigned(die, name, &off, &dw->dw_err) != DW_DLV_OK) {
-		terminate("die %ju: failed to get ref: %s\n",
-		    (uintmax_t)die_off(dw, die), dwarf_errmsg(dw->dw_err));
+	/* Resolve inherited types without losing the CU or object namespace. */
+	for (depth = 0; depth < 128; depth++) {
+		rc = dwarf_attr(die, name, &attr, &dw->dw_err);
+		found = rc == DW_DLV_OK;
+		if (!found) {
+			if (rc != DW_DLV_NO_ENTRY || name != DW_AT_type)
+				goto invalid;
+			rc = dwarf_attr(die, DW_AT_abstract_origin, &attr, &dw->dw_err);
+			if (rc == DW_DLV_NO_ENTRY)
+				rc = dwarf_attr(die, DW_AT_specification, &attr, &dw->dw_err);
+			if (rc != DW_DLV_OK)
+				goto invalid;
+		}
+		if (dwarf_whatform(attr, &form, &dw->dw_err) != DW_DLV_OK ||
+		    dwarf_global_formref(attr, &off, &dw->dw_err) != DW_DLV_OK)
+			goto invalid;
+		next_context = context;
+		next_base = base;
+		if (form == DW_FORM_ref_sup4 || form == DW_FORM_ref_sup8) {
+			if (dw->dw_sup == NULL || context == dw->dw_sup)
+				terminate("invalid supplementary DWARF reference\n");
+			next_context = dw->dw_sup;
+			next_base = dw->dw_supbase;
+		}
+		if (next_context == context) {
+			limit = context == dw->dw_sup ? dw->dw_sup_size : dw->dw_primary_size;
+			if (off >= limit)
+				terminate("invalid DWARF type reference\n");
+			if (form != DW_FORM_ref_addr &&
+			    (dwarf_die_CU_offset_range(die, &cuoff, &culen, &dw->dw_err) != DW_DLV_OK ||
+			    off < cuoff || off - cuoff >= culen))
+				terminate("invalid CU-relative DWARF reference\n");
+		}
+		if (found && next_context == context) {
+			/* Local targets are resolved by the existing type hash pass. */
+			if (owned != NULL)
+				dwarf_dealloc(context, owned, DW_DLA_DIE);
+			return next_base + off;
+		}
+		if (dwarf_offdie(next_context, off, &next, &dw->dw_err) != DW_DLV_OK)
+			terminate("invalid%s DWARF reference\n",
+			    next_context == dw->dw_sup ? " supplementary" : "");
+		if (owned != NULL)
+			dwarf_dealloc(context, owned, DW_DLA_DIE);
+		if (found) {
+			dwarf_dealloc(next_context, next, DW_DLA_DIE);
+			return next_base + off;
+		}
+		die = owned = next;
+		context = next_context;
+		base = next_base;
 	}
-
-	return (off);
+	terminate("cyclic or excessive DWARF type inheritance\n");
+invalid:
+	terminate("die %ju: failed to get ref: %s\n",
+	    (uintmax_t)original, dwarf_errmsg(dw->dw_err));
+	return 0;
 }
 
 static char *
@@ -1879,6 +1942,10 @@ die_create_one(dwarf_t *dw, Dwarf_Die die)
 	}
 
 	tag = die_tag(dw, die);
+	if (tag == DW_TAG_imported_unit) {
+		(void)die_attr_ref(dw, die, DW_AT_import);
+		return;
+	}
 
 	if ((dc = die_tag2ctor(tag)) == NULL) {
 		debug(2, "die %ju: ignoring tag type %x\n", (uintmax_t)off,
@@ -2031,11 +2098,17 @@ should_have_dwarf(Elf *elf)
 
 /*ARGSUSED*/
 int
-dw_read(tdata_t *td, Elf *elf, char *filename __unused)
+dw_read(tdata_t *td, Elf *elf, char *filename)
 {
 	Dwarf_Unsigned hdrlen, lang, nxthdr;
 	Dwarf_Off abboff;
-	Dwarf_Half vers, addrsz, offsz;
+	Dwarf_Half vers, addrsz, offsz, unit;
+	Dwarf_Sig8 signature, split_signature;
+	Dwarf_Debug main_dw, primary_dw;
+	struct dw_external split = {0}, sup = {0};
+	struct dw_sup sup_info, sup_target;
+	char *dwo_name = NULL, *compdir = NULL;
+	Elf_Data *sup_data;
 	Dwarf_Die cu = 0;
 	Dwarf_Die child = 0;
 	dwarf_t dw;
@@ -2081,8 +2154,8 @@ dw_read(tdata_t *td, Elf *elf, char *filename __unused)
 		    dwarf_errmsg(dw.dw_err));
 	}
 
-	if ((rc = dwarf_next_cu_header_b(dw.dw_dw, &hdrlen, &vers, &abboff,
-	    &addrsz, &offsz, NULL, &nxthdr, &dw.dw_err)) != DW_DLV_OK) {
+	if ((rc = dwarf_next_cu_header_d(dw.dw_dw, 1, &hdrlen, &vers, &abboff,
+	    &addrsz, &offsz, NULL, &signature, NULL, &nxthdr, &unit, &dw.dw_err)) != DW_DLV_OK) {
 		if (dwarf_errno(dw.dw_err) == DW_DLE_NO_ENTRY) {
 			/*
 			 * There's no DWARF section...
@@ -2094,6 +2167,43 @@ dw_read(tdata_t *td, Elf *elf, char *filename __unused)
 
 	if ((cu = die_sibling(&dw, NULL)) == NULL)
 		goto out;
+
+	main_dw = dw.dw_dw;
+	if (unit == DW_UT_skeleton) {
+		die_string(&dw, cu, DW_AT_dwo_name, &dwo_name, DW_ATTR_REQ);
+		die_string(&dw, cu, DW_AT_comp_dir, &compdir, 0);
+		/* Replacing the context must not hide additional skeleton CUs. */
+		if (dwarf_next_cu_header_b(main_dw, NULL, NULL, NULL, NULL,
+		    NULL, NULL, NULL, &dw.dw_err) != DW_DLV_NO_ENTRY)
+			terminate("multiple or invalid skeleton compilation units\n");
+		dw_external_open(&split, elf, filename, dwo_name, compdir);
+		free(dwo_name);
+		free(compdir);
+		dw.dw_dw = split.dbg;
+		if (dwarf_next_cu_header_d(dw.dw_dw, 1, &hdrlen, &vers, &abboff,
+		    &addrsz, &offsz, NULL, &split_signature, NULL, &nxthdr,
+		    &unit, &dw.dw_err) != DW_DLV_OK)
+			terminate("invalid split DWARF header: %s\n", dwarf_errmsg(dw.dw_err));
+		if (unit != DW_UT_split_compile || vers != 5 ||
+		    memcmp(&signature, &split_signature, sizeof(signature)) != 0)
+			terminate("split DWARF dwo_id mismatch\n");
+		if ((cu = die_sibling(&dw, NULL)) == NULL)
+			goto out;
+	}
+	primary_dw = dw.dw_dw;
+	if (dw_sup_read(elf, &sup_info)) {
+		if (sup_info.role != 0 || split.dbg != NULL)
+			terminate("unsupported supplementary DWARF object relationship\n");
+		dw_external_open(&sup, elf, filename, sup_info.name, NULL);
+		if (!dw_sup_read(sup.elf, &sup_target) || sup_target.role != 1 ||
+		    sup_info.length != sup_target.length ||
+		    memcmp(sup_info.checksum, sup_target.checksum, sup_info.length) != 0)
+			terminate("supplementary DWARF checksum mismatch\n");
+		if (dwarf_set_tied_dbg(dw.dw_dw, sup.dbg, &dw.dw_err) != DW_DLV_OK)
+			terminate("cannot attach supplementary DWARF\n");
+		dw.dw_sup = sup.dbg;
+		dw.dw_supbase = nxthdr;
+	}
 
 	if ((child = die_child(&dw, cu)) == NULL) {
 		Dwarf_Unsigned llang;
@@ -2116,6 +2226,15 @@ dw_read(tdata_t *td, Elf *elf, char *filename __unused)
 		return (0);
 
 	dw.dw_maxoff = nxthdr - 1;
+	dw.dw_primary_size = nxthdr;
+	if (sup.dbg != NULL) {
+		sup_data = dw_section(sup.elf, ".debug_info");
+		if (sup_data == NULL || nxthdr > TID_FILEMAX ||
+		    sup_data->d_size > TID_FILEMAX - nxthdr)
+			terminate("supplementary DWARF type section is too large\n");
+		dw.dw_maxoff += sup_data->d_size;
+		dw.dw_sup_size = sup_data->d_size;
+	}
 
 	if (dw.dw_maxoff > TID_FILEMAX)
 		terminate("file contains too many types\n");
@@ -2166,7 +2285,26 @@ dw_read(tdata_t *td, Elf *elf, char *filename __unused)
 	    &addrsz, &offsz, NULL, &nxthdr, &dw.dw_err)) != DW_DLV_NO_ENTRY)
 		terminate("multiple compilation units not supported\n");
 
-	(void) dwarf_finish(dw.dw_dw, &dw.dw_err);
+	if (sup.dbg != NULL) {
+		dw.dw_dw = sup.dbg;
+		dw.dw_base = dw.dw_supbase;
+		while ((rc = dwarf_next_cu_header_d(dw.dw_dw, 1, &hdrlen, &vers,
+		    &abboff, &addrsz, &offsz, NULL, NULL, NULL, &nxthdr, &unit,
+		    &dw.dw_err)) == DW_DLV_OK) {
+			if (unit != DW_UT_partial && unit != DW_UT_compile)
+				terminate("unsupported supplementary DWARF unit\n");
+			cu = die_sibling(&dw, NULL);
+			if (cu != NULL && (child = die_child(&dw, cu)) != NULL)
+				die_create(&dw, child);
+		}
+		if (rc != DW_DLV_NO_ENTRY)
+			terminate("invalid supplementary DWARF unit header\n");
+		(void)dwarf_set_tied_dbg(primary_dw, NULL, &dw.dw_err);
+	}
+	(void)dwarf_finish(main_dw, &dw.dw_err);
+	dw_external_close(&split);
+	dw_external_close(&sup);
+
 
 	die_resolve(&dw);
 

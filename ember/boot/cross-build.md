@@ -134,9 +134,10 @@ sh ember/tests/wsdisplay-font.sh /absolute/source /absolute/new-test-output
 ```
 
 This accepts the GCC16 kernel build and VM boot, not a complete GCC16-built
-userland, a new physical-board deployment, board-module attachment or live
-DTrace. The four native Bluetooth/audio source contracts require the selected
-Python package in the new minimal guest and remain pending there.
+userland, a new physical-board deployment or board-module attachment.
+All six native source contracts subsequently passed with the installed
+Python 3.14 package. [Live DTrace](dtrace-dwarf.md) also passes in this VM
+with matching modules and typed FBT arguments from the GCC16 kernel's CTF.
 
 ## DWARF5 and CTF
 
@@ -158,6 +159,7 @@ sh ember/tests/ctf-dwarf.sh /absolute/cross/bin/aarch64--netbsd-gcc \
 It compares actual GCC/Clang CTF types for DWARF4/5 and DWARF32/64, including
 arrays, enums, bitfields and function pointers. It also checks more than
 256 string indices, exact-end relocation, malformed tables and ctfmerge.
-This is host-tool and target-object evidence, not a live DTrace check.
-Split/supplementary DWARF objects and general DWARF5 location-list evaluation
-are not established by these type-conversion checks.
+The separate [external DWARF and DTrace acceptance](dtrace-dwarf.md) covers
+standalone split objects, standard supplementary data, native CTF execution
+and live tracing. It also states the remaining CTF-reader limits; general
+DWARF5 location-list evaluation is not established by type conversion.

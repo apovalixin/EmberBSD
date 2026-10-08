@@ -32,6 +32,20 @@
 __RCSID("$NetBSD: dwarf_init.c,v 1.5 2024/03/03 17:37:31 christos Exp $");
 ELFTC_VCSID("Id: dwarf_init.c 2073 2011-10-27 03:30:47Z jkoshy");
 
+/* Origin: EmberBSD (AI-assisted), explicit caller-owned supplementary data. */
+int
+dwarf_set_tied_dbg(Dwarf_Debug dbg, Dwarf_Debug tied, Dwarf_Error *error)
+{
+	if (dbg == NULL || dbg == tied || (tied != NULL &&
+	    (tied->dbg_tied != NULL || dbg->dbg_machine != tied->dbg_machine ||
+	    dbg->dbg_pointer_size != tied->dbg_pointer_size))) {
+		DWARF_SET_ERROR(dbg, error, DW_DLE_ARGUMENT);
+		return (DW_DLV_ERROR);
+	}
+	dbg->dbg_tied = tied;
+	return (DW_DLV_OK);
+}
+
 int
 dwarf_elf_init(Elf *elf, int mode, Dwarf_Handler errhand, Dwarf_Ptr errarg,
     Dwarf_Debug *ret_dbg, Dwarf_Error *error)

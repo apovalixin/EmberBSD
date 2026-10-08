@@ -404,6 +404,8 @@ typedef struct {
 } Dwarf_Elf_Object;
 
 struct _Dwarf_Debug {
+	/* Origin: EmberBSD (AI-assisted); borrowed, caller-owned supplement. */
+	Dwarf_Debug	dbg_tied;
 	Dwarf_Obj_Access_Interface *dbg_iface;
 	Dwarf_Section	*dbg_section;	/* Dwarf section list. */
 	Dwarf_Section	*dbg_info_sec;	/* Pointer to info section. */

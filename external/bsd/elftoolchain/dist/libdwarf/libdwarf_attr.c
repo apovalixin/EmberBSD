@@ -104,8 +104,51 @@ _dwarf_attr_init(Dwarf_Debug dbg, Dwarf_Section *ds, uint64_t *offsetp,
 {
 	struct _Dwarf_Attribute atref;
 	Dwarf_Section *strings;
+	uint64_t needed = 0;
 	int ret;
 
+	/* Origin: EmberBSD (AI-assisted), fixed forms cannot cross a CU boundary. */
+	switch (form) {
+	case DW_FORM_addr:
+		needed = cu->cu_pointer_size;
+		break;
+	case DW_FORM_data1: case DW_FORM_flag: case DW_FORM_ref1:
+	case DW_FORM_strx1: case DW_FORM_addrx1: case DW_FORM_block1:
+		needed = 1;
+		break;
+	case DW_FORM_data2: case DW_FORM_ref2:
+	case DW_FORM_strx2: case DW_FORM_addrx2: case DW_FORM_block2:
+		needed = 2;
+		break;
+	case DW_FORM_strx3: case DW_FORM_addrx3:
+		needed = 3;
+		break;
+	case DW_FORM_data4: case DW_FORM_ref4: case DW_FORM_ref_sup4:
+	case DW_FORM_strx4: case DW_FORM_addrx4: case DW_FORM_block4:
+		needed = 4;
+		break;
+	case DW_FORM_data8: case DW_FORM_ref8: case DW_FORM_ref_sup8:
+	case DW_FORM_ref_sig8:
+		needed = 8;
+		break;
+	case DW_FORM_data16:
+		needed = 16;
+		break;
+	case DW_FORM_ref_addr:
+		needed = cu->cu_version == 2 ? cu->cu_pointer_size : dwarf_size;
+		break;
+	case DW_FORM_strp: case DW_FORM_strp_sup: case DW_FORM_line_strp:
+	case DW_FORM_sec_offset:
+		needed = dwarf_size;
+		break;
+	default:
+		break;
+	}
+	if (cu->cu_next_offset > ds->ds_size || *offsetp > cu->cu_next_offset ||
+	    needed > cu->cu_next_offset - *offsetp) {
+		DWARF_SET_ERROR(dbg, error, DW_DLE_ATTR_FORM_BAD);
+		return (DW_DLE_ATTR_FORM_BAD);
+	}
 	ret = DW_DLE_NONE;
 	memset(&atref, 0, sizeof(atref));
 	atref.at_die = die;
@@ -224,8 +267,13 @@ _dwarf_attr_init(Dwarf_Debug dbg, Dwarf_Section *ds, uint64_t *offsetp,
 		/* TODO: .debug_addr */
 		break;
 	case DW_FORM_strp_sup:
+		if (*offsetp > cu->cu_next_offset ||
+		    (uint64_t)dwarf_size > cu->cu_next_offset - *offsetp) {
+			DWARF_SET_ERROR(dbg, error, DW_DLE_ATTR_FORM_BAD);
+			return (DW_DLE_ATTR_FORM_BAD);
+		}
 		atref.u[0].u64 = dbg->read(ds->ds_data, offsetp, dwarf_size);
-		/* TODO: supplementary object file. */
+		/* Resolved after dwarf_set_tied_dbg() by dwarf_formstring(). */
 		break;
 	case DW_FORM_data16:
 		atref.u[0].u64 = 16;

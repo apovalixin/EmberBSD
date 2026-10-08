@@ -418,7 +418,11 @@ on every board in the hardware catalog.
   [CTF converter](ember/boot/cross-build.md#dwarf5-and-ctf) now preserves
   GCC/Clang DWARF5 type information in checked AArch64 objects, without
   forcing DWARF4. Host regressions cover type layouts, string-table bounds
-  and CTF merging; live DTrace is not yet checked. Full OS builds
+  and CTF merging. [Live DTrace and external DWARF](ember/boot/dtrace-dwarf.md)
+  now pass in the AArch64 VM: typed FBT/syscall tracing, standalone DWO
+  and standard supplementary type conversion, including malformed-input
+  rejection. These checks do not cover DWP packages or every DWARF consumer.
+  Full OS builds
   with GCC16 and general pkgsrc cross-package builds remain unvalidated.
   C11/C++20 threads, TLS and shared-library
   checks pass. On Zero 3W, current MPFR/MPC/libxml2 and actual pkgsrc wrapper

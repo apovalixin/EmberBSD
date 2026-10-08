@@ -326,6 +326,7 @@ dwarf_set_frame_rule_table_size
 dwarf_set_frame_same_value
 dwarf_set_frame_undefined_value
 dwarf_set_reloc_application
+dwarf_set_tied_dbg
 dwarf_seterrarg
 dwarf_seterrhand
 dwarf_siblingof

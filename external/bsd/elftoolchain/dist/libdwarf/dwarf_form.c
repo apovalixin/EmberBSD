@@ -151,6 +151,8 @@ dwarf_global_formref(Dwarf_Attribute at, Dwarf_Off *return_offset,
 
 	switch (at->at_form) {
 	case DW_FORM_ref_addr:
+	case DW_FORM_ref_sup4:
+	case DW_FORM_ref_sup8:
 	case DW_FORM_sec_offset:
 		*return_offset = (Dwarf_Off) at->u[0].u64;
 		ret = DW_DLV_OK;
@@ -391,11 +393,15 @@ _dwarf_form_indexed_string(Dwarf_Attribute at, char **strp, Dwarf_Error *error)
 	if (ret != DW_DLV_OK)
 		return (ret);
 	baseattr = _dwarf_attr_find(root, DW_AT_str_offsets_base);
-	if (baseattr == NULL || baseattr->at_form != DW_FORM_sec_offset) {
+	if (baseattr == NULL && (cu->cu_unit_type == DW_UT_split_compile ||
+	    cu->cu_unit_type == DW_UT_split_type)) {
+		/* DWARF5 7.26: a standalone .dwo has an implicit first base. */
+		base = width == 4 ? 8 : 16;
+	} else if (baseattr == NULL || baseattr->at_form != DW_FORM_sec_offset) {
 		dwarf_dealloc(dbg, root, DW_DLA_DIE);
 		goto invalid;
-	}
-	base = baseattr->u[0].u64;
+	} else
+		base = baseattr->u[0].u64;
 	dwarf_dealloc(dbg, root, DW_DLA_DIE);
 	offsets = _dwarf_find_section(dbg, ".debug_str_offsets");
 	strings = _dwarf_find_section(dbg, ".debug_str");
@@ -440,6 +446,7 @@ dwarf_formstring(Dwarf_Attribute at, char **return_string,
 {
 	int ret;
 	Dwarf_Debug dbg;
+	Dwarf_Section *strings;
 
 	dbg = at != NULL ? at->at_die->die_dbg : NULL;
 
@@ -449,6 +456,18 @@ dwarf_formstring(Dwarf_Attribute at, char **return_string,
 	}
 
 	switch (at->at_form) {
+	case DW_FORM_strp_sup:
+		/* Resolve lazily, after the consumer has attached its supplement. */
+		strings = dbg->dbg_tied == NULL ? NULL :
+		    _dwarf_find_section(dbg->dbg_tied, ".debug_str");
+		if (strings == NULL || at->u[0].u64 >= strings->ds_size ||
+		    memchr(strings->ds_data + at->u[0].u64, 0,
+		    strings->ds_size - at->u[0].u64) == NULL) {
+			DWARF_SET_ERROR(dbg, error, DW_DLE_ATTR_FORM_BAD);
+			return (DW_DLV_ERROR);
+		}
+		*return_string = (char *)strings->ds_data + at->u[0].u64;
+		return (DW_DLV_OK);
 	case DW_FORM_string:
 		*return_string = (char *) at->u[0].s;
 		ret = DW_DLV_OK;

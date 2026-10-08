@@ -45,6 +45,13 @@ static const char *debug_name[] = {
 	/* Origin: EmberBSD (AI-assisted), load and relocate DWARF5 strings. */
 	".debug_str_offsets",
 	".debug_line_str",
+	/* Origin: EmberBSD (AI-assisted), standalone DWARF5 split objects. */
+	".debug_info.dwo",
+	".debug_abbrev.dwo",
+	".debug_str.dwo",
+	".debug_str_offsets.dwo",
+	".debug_line.dwo",
+	".debug_types.dwo",
 	".debug_loc",
 	".debug_pubtypes",
 	".debug_ranges",
