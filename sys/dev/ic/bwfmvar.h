@@ -25,6 +25,7 @@
 #include <sys/cdefs.h>
 #include <sys/device_if.h>
 #include <sys/queue.h>
+#include <sys/mutex.h>
 #include <sys/workqueue.h>
 
 #include <net/if_ether.h>
@@ -243,7 +244,8 @@ struct bwfm_softc {
 	int			(*sc_newstate)(struct ieee80211com *,
 				    enum ieee80211_state, int);
 
-	int			 sc_bcdc_reqid;
+	kmutex_t		 sc_control_lock;
+	uint16_t		 sc_bcdc_reqid;
 
 	union {
 		struct bwfm_bss_info bss_info;

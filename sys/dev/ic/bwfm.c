@@ -350,6 +350,7 @@ bwfm_attach(struct bwfm_softc *sc)
 		printf("%s: could not create workqueue\n", DEVNAME(sc));
 		return;
 	}
+	mutex_init(&sc->sc_control_lock, MUTEX_DEFAULT, IPL_NONE);
 	sc->sc_freetask = pool_cache_init(sizeof(struct bwfm_task), 0, 0, 0,
 	    "bwfmtask", NULL, IPL_NET /* XXX IPL_SOFTNET? */,
 	    NULL, NULL, NULL);
@@ -515,8 +516,10 @@ bwfm_detach(struct bwfm_softc *sc, int flags)
 		if_detach(ifp);
 	}
 
-	if (sc->sc_taskq)
+	if (sc->sc_taskq) {
 		workqueue_destroy(sc->sc_taskq);
+		mutex_destroy(&sc->sc_control_lock);
+	}
 	if (sc->sc_freetask)
 		pool_cache_destroy(sc->sc_freetask);
 
@@ -2028,13 +2031,23 @@ bwfm_process_blob(struct bwfm_softc *sc, const char *var, uint8_t **blob,
 int
 bwfm_fwvar_cmd_get_data(struct bwfm_softc *sc, int cmd, void *data, size_t len)
 {
-	return sc->sc_proto_ops->proto_query_dcmd(sc, 0, cmd, data, &len);
+	int error;
+
+	mutex_enter(&sc->sc_control_lock);
+	error = sc->sc_proto_ops->proto_query_dcmd(sc, 0, cmd, data, &len);
+	mutex_exit(&sc->sc_control_lock);
+	return error;
 }
 
 int
 bwfm_fwvar_cmd_set_data(struct bwfm_softc *sc, int cmd, void *data, size_t len)
 {
-	return sc->sc_proto_ops->proto_set_dcmd(sc, 0, cmd, data, len);
+	int error;
+
+	mutex_enter(&sc->sc_control_lock);
+	error = sc->sc_proto_ops->proto_set_dcmd(sc, 0, cmd, data, len);
+	mutex_exit(&sc->sc_control_lock);
+	return error;
 }
 
 int
