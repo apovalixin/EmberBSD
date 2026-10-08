@@ -1124,7 +1124,7 @@ static void
 bwfm_report_cb(struct bwfm_softc *sc)
 {
 	static const char * const vars[] = {
-		"chanspec", "mpc", "roam_off", "wnm", "wsec", "wpa_auth",
+		"chanspec", "mpc", "roam_off", "wnm", "wsec", "wpa_auth", "auth", "mfp",
 		"ampdu", "ampdu_hostreorder"
 	};
 	struct ieee80211com *ic = &sc->sc_ic;
@@ -2339,18 +2339,41 @@ out:
 static int
 bwfm_sae_connect(struct bwfm_softc *sc)
 {
+	static const struct {
+		const char *name;
+		uint32_t value;
+	} settings[] = {
+		{ "sup_wpa", 0 },
+		{ "auth", BWFM_AUTH_SAE },
+		{ "wsec", BWFM_WSEC_AES },
+		{ "mfp", BWFM_MFP_REQUIRED },
+		{ "wpa_auth", BWFM_WPA_AUTH_SAE }
+	};
 	struct ieee80211com *ic = &sc->sc_ic;
+	size_t i;
+	int error;
 
 	if (!bwfm_sae_rsn_valid(ic->ic_opt_ie, ic->ic_opt_ie_len) ||
-	    !IEEE80211_ADDR_EQ(sc->sc_sae_bssid, ic->ic_bss->ni_bssid))
+	    !IEEE80211_ADDR_EQ(sc->sc_sae_bssid, ic->ic_bss->ni_bssid)) {
+		printf("%s: SAE requires CCMP, required PMF and the selected peer\n",
+		    DEVNAME(sc));
 		return EINVAL;
-	if (bwfm_fwvar_var_set_data(sc, "wpaie", ic->ic_opt_ie, ic->ic_opt_ie_len) ||
-	    bwfm_fwvar_var_set_int(sc, "sup_wpa", 0) ||
-	    bwfm_fwvar_var_set_int(sc, "auth", BWFM_AUTH_SAE) ||
-	    bwfm_fwvar_var_set_int(sc, "wsec", BWFM_WSEC_AES) ||
-	    bwfm_fwvar_var_set_int(sc, "mfp", BWFM_MFP_REQUIRED) ||
-	    bwfm_fwvar_var_set_int(sc, "wpa_auth", BWFM_WPA_AUTH_SAE))
+	}
+	error = bwfm_fwvar_var_set_data(sc, "wpaie", ic->ic_opt_ie, ic->ic_opt_ie_len);
+	if (error) {
+		printf("%s: SAE wpaie failed: %d\n", DEVNAME(sc), error);
 		return EIO;
+	}
+	for (i = 0; i < __arraycount(settings); i++) {
+		error = bwfm_fwvar_var_set_int(sc, settings[i].name, settings[i].value);
+		/* Firmware without a supplicant cannot offload the host handshake. */
+		if (i == 0 && error == -23) /* BCME_UNSUPPORTED */
+			continue;
+		if (error) {
+			printf("%s: SAE %s failed: %d\n", DEVNAME(sc), settings[i].name, error);
+			return EIO;
+		}
+	}
 	return 0;
 }
 
