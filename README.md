@@ -305,7 +305,10 @@ on every board in the hardware catalog.
   libraries. Its first migrated consumer, [libepoxy 1.5.10nb2](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/epoxy.md),
   passes four real dispatch/pixel lifecycles and four pure upstream tests
   against the installed providers. The package includes X11/Wayland,
-  EGL/GLES/GL and GBM; remaining consumer migration, a visible session and
+  EGL/GLES/GL and GBM. The same providers pass four guarded
+  [GBM/PRIME/EGLImage pixel lifecycles](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/gbm.md)
+  through native VirtGPU buffers in an isolated AArch64 VM, using llvmpipe.
+  This verifies the device-buffer path for Wayland; remaining consumer migration, a visible session and
   guest accelerated rendering still require acceptance.
   A Ports
   [host-side VirGL 1.3.0 adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/utm-virgl-host)
