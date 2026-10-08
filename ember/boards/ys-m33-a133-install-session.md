@@ -90,3 +90,9 @@ fsync faults are injected at that boundary while writes remain real.
 These checks do not establish physical host power-loss durability, USB cable
 acceptance or boot acceptance on a tablet. No physical device is rewritten by
 these test commands.
+
+The implementation passed library4, bundle35, transfer43 and session25 on
+Ruby4.0.5 and system Ruby2.6.10. Independent Codex GPT-6 Astra review of
+`9e75d7a..d5b8b96` found no open findings for this API. It reran all four Ruby4
+sets and eight exploratory filesystem edge cases; Ruby2.6 was checked by the
+implementer. Hardware acceptance and the caller obligations above remain open.

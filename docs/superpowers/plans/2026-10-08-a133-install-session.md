@@ -34,9 +34,9 @@ fixture helpers into `a133-usb-test-support.rb` for reuse.
 `Client.verify_installed(role:,bytes:,sha256:,backup:,protected_env:)` =>
 range_readback_verified/writes_performed0 or Invalid/write_attempted=false.
 
-- [ ] Write import/real-file and no-write readback tests; run RED against current tools.
-- [ ] Export verifier with identical CLI receipt/guards; implement fully guarded readback.
-- [ ] Run library, bundle35 and transfer extended contracts on both Ruby versions; commit.
+- [x] Write import/real-file and no-write readback tests; run RED against current tools.
+- [x] Export verifier with identical CLI receipt/guards; implement fully guarded readback.
+- [x] Run library, bundle35 and transfer extended contracts on both Ruby versions; commit.
 
 ### Task 2: private atomic session state and coordinator
 
@@ -47,8 +47,28 @@ range_readback_verified/writes_performed0 or Invalid/write_attempted=false.
 `store.record(role,state,reason=nil)`/`store.report`; and `A133Install.run` signature
 from spec, plus inspection-only CLI status for an existing session directory.
 
-- [ ] Write real filesystem/lock/crash and file-backed full-run/resume tests; run RED.
-- [ ] Implement exact private state schema, checksum, flock and atomic fsync publication.
-- [ ] Implement pinned context and sequential check/write/verified flow; normalize errors.
-- [ ] Run new and relevant existing host contracts; inspect final output and actual bytes.
-- [ ] Independent review, reproduced fixes, limits in PR/wiki, normal push; no main merge.
+- [x] Write real filesystem/lock/crash and file-backed full-run/resume tests; run RED.
+- [x] Implement exact private state schema, checksum, flock and atomic fsync publication.
+- [x] Implement pinned context and sequential check/write/verified flow; normalize errors.
+- [x] Run new and relevant existing host contracts; inspect final output and actual bytes.
+- [x] Independent review, reproduced fixes and limits in PR/wiki; no main merge.
+
+## Verification receipt
+
+Implementation commits: `f68545889ec7`, `d5b8b96e94b1`. Both Ruby 4.0.5 and
+system Ruby 2.6.10 passed library4, bundle35, transfer43 and session25.
+The binary channel13, backup29, recovery19, environment, ADB-preflight and
+first-boot contracts also passed. No physical storage, audio or camera was used.
+
+Independent Codex GPT-6 Astra review examined `9e75d7a..d5b8b96` and found no
+Critical, Important or Minor findings. It independently ran the four Ruby4
+sets and eight additional filesystem checks: lock modes/links, PID/thread
+ownership, rename failure/old snapshot preservation and oversized state.
+Those eight exploratory checks are not a new committed test suite.
+Ruby2.6 results were verified by the implementer, not that reviewer.
+
+Review scope remains the prepared write-stage API. Backup/release provenance,
+recovery/unlock, first-boot acceptance and a lease across different session
+directories remain caller obligations. Host process tests do not establish
+physical power-loss durability or remote cancellation after disconnection.
+The branch remains a draft for reconciliation with current main.
