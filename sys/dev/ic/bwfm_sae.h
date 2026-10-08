@@ -3,6 +3,21 @@
 #ifndef _DEV_IC_BWFM_SAE_H_
 #define _DEV_IC_BWFM_SAE_H_
 
+/* EXT_AUTH_REQ itself starts auth. CYW43455 request flags may be zero. */
+static inline bool
+bwfm_sae_request_valid(const uint8_t *p, size_t len, const uint8_t *peer,
+    const uint8_t *ssid, size_t ssid_len)
+{
+	size_t firmware_len;
+
+	if (len < 60 || ssid_len > 32)
+		return false;
+	firmware_len = p[8] | (size_t)p[9] << 8 |
+	    (size_t)p[10] << 16 | (size_t)p[11] << 24;
+	return firmware_len == ssid_len && memcmp(p + 2, peer, 6) == 0 &&
+	    memcmp(p + 12, ssid, ssid_len) == 0;
+}
+
 /* An SAE association uses one CCMP pairwise cipher and requires PMF. */
 static inline bool
 bwfm_sae_rsn_valid(const uint8_t *p, size_t len)

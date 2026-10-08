@@ -966,8 +966,10 @@ bwfm_key_set_cb(struct bwfm_softc *sc, struct bwfm_cmd_key *ck)
 	if (bwfm_fwvar_var_set_data(sc, "wsec_key", &wsec_key, sizeof(wsec_key)))
 		return;
 
-	bwfm_fwvar_var_set_int(sc, "wpa_auth", sc->sc_sae_enabled ?
-	    BWFM_WPA_AUTH_SAE : BWFM_WPA_AUTH_WPA2_PSK);
+	/* SAE already configured CCMP/PMF; rewriting wsec clears the MFP mode. */
+	if (sc->sc_sae_enabled)
+		return;
+	bwfm_fwvar_var_set_int(sc, "wpa_auth", BWFM_WPA_AUTH_WPA2_PSK);
 
 	bwfm_fwvar_var_get_int(sc, "wsec", &wsec);
 	wsec |= wsec_enable;
@@ -2392,10 +2394,6 @@ bwfm_sae_connect(struct bwfm_softc *sc)
 		    DEVNAME(sc));
 		return EINVAL;
 	}
-	if (bwfm_set_mfp(sc, BWFM_MFP_REQUIRED)) {
-		printf("%s: SAE required PMF setup failed\n", DEVNAME(sc));
-		return EIO;
-	}
 	error = bwfm_fwvar_var_set_data(sc, "wpaie", ic->ic_opt_ie, ic->ic_opt_ie_len);
 	if (error) {
 		printf("%s: SAE wpaie failed: %d\n", DEVNAME(sc), error);
@@ -2410,6 +2408,11 @@ bwfm_sae_connect(struct bwfm_softc *sc)
 			printf("%s: SAE %s failed: %d\n", DEVNAME(sc), settings[i].name, error);
 			return EIO;
 		}
+	}
+	/* Changing wsec clears MFP, so establish and verify PMF last. */
+	if (bwfm_set_mfp(sc, BWFM_MFP_REQUIRED)) {
+		printf("%s: SAE required PMF setup failed\n", DEVNAME(sc));
+		return EIO;
 	}
 	return 0;
 }
@@ -2439,11 +2442,8 @@ bwfm_sae_event(struct bwfm_softc *sc, const struct bwfm_event *event, size_t len
 	if (type == BWFM_E_EXT_AUTH_REQ) {
 		if (size >= 2)
 			sc->sc_sae_last_flags = le16dec(data);
-		/* The event type starts auth; CYW43455 leaves request flags zero. */
-		if (size < 60 || le32dec(data + 8) > 32 ||
-		    !IEEE80211_ADDR_EQ(data + 2, req->bssid) ||
-		    le32dec(data + 8) != ic->ic_bss->ni_esslen ||
-		    memcmp(data + 12, ic->ic_bss->ni_essid, ic->ic_bss->ni_esslen) != 0)
+		if (!bwfm_sae_request_valid(data, size, req->bssid,
+		    ic->ic_bss->ni_essid, ic->ic_bss->ni_esslen))
 			goto out;
 		req->op = IEEE80211_SAE_START;
 		req->len = le32dec(data + 8);
