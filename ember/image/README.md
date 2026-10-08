@@ -1,12 +1,13 @@
 # AArch64 development image
 
 This OS-owned builder combines verified NetBSD base sets, an accepted EmberBSD
-kernel, an accepted static `fsck_ffs`, and the offline GDB package closure from
+kernel, an accepted static `fsck_ffs`, matching CTF tools and libdwarf,
+and the offline GDB/LLVM package closure from
 [EmberBSD Ports](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain).
 It creates a new 12 GiB qcow2 image. First boot installs the packages through
 native `pkg_add`; boot and installed-debugger acceptance remain separate steps.
 
-## Accepted image
+## Previous image acceptance
 
 On 2026-10-08, a fresh image passed first boot and a normal reboot under
 Apple Silicon QEMU/HVF, AArch64 `virt`, four CPUs and 4 GiB RAM. All eleven
@@ -28,7 +29,7 @@ stored in Git. The builder's `inputs.txt` records input and script hashes.
 The base remains the verified NetBSD 11 sets. This is not a complete GCC16
 userland rebuild, physical-board image or proof of every DWARF form. The
 [Ports matrix](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/development-toolchain/gdb/dwarf-variants.md)
-records the debugger's accepted cases and remaining `DW_OP_entry_value` gaps.
+records the debugger's accepted cases; revision nb1 closes the earlier entry-value gaps.
 The console accepts the base set's root login without a password; SSH is
 disabled. Configure credentials and access for the deployment before use.
 
@@ -40,8 +41,13 @@ disabled. Configure credentials and access for the deployment before use.
 - The **static** `fsck_ffs` built from the corrected OS sources below, its full
   source commit ID, and passing native acceptance. The unmodified base-set
   checker is not an acceptable replacement.
-- GDB 18.1 and its complete binary package dependency closure in one directory,
-  plus the full Ports source commit ID.
+- An accepted CTF bundle and its full OS source commit ID. The directory
+  contains regular files `ctfconvert`, `libdwarf.so.2.2`, `libdwarf.a`,
+  `libdwarf_p.a`, `libdwarf_pic.a`, `libdwarf.h`, and `dwarf.h` from the same build.
+  Follow the [CTF build and target checks](../boot/dtrace-dwarf.md).
+- GDB 18.1, optional common LLVM 23.1.2 and their complete package dependency closure,
+  plus the full Ports source commit ID. Exactly one debugger archive is allowed,
+  including its pkgsrc `nb` revision; obsolete or parallel debugger versions fail.
 - NetBSD host tools `nbmakefs`, `nbgpt`, and host `qemu-img`, `tar`, `shasum`.
   The builder uses absolute paths without whitespace or shell metacharacters.
 
@@ -49,6 +55,7 @@ disabled. Configure credentials and access for the deployment before use.
 sh ember/image/development-image.sh \
     /absolute/sets /absolute/netbsd KERNEL_COMMIT \
     /absolute/static-fsck_ffs FSCK_COMMIT \
+    /absolute/ctf-tools CTF_COMMIT \
     /absolute/packages PORTS_COMMIT /absolute/tools /absolute/new-image
 ```
 
@@ -59,9 +66,12 @@ Base manuals are omitted because some names collide on case-insensitive build
 volumes. The old base GDB and `gdbtui` are removed; `/usr/bin/gdb` points to the
 packaged debugger. Static `fsck_ffs` replaces both `/sbin/fsck_ffs` and its
 `/rescue` entry, without modifying the other rescue crunch hardlinks.
+The accepted converter, shared/static libdwarf and both development headers replace
+the base-set copies together. Only libdwarf 2.2 remains in the runtime library
+directory; its two linker/loader symlinks point to that same file.
 
 The first-boot installer rejects missing, duplicate, unlisted and symlink
-archives before invoking `pkg_add`. It verifies package checksums, installed
+archives before invoking `pkg_add`. It rejects obsolete or parallel LLVM providers when LLVM is included, then installs\nall listed packages from the local bundle. It verifies package checksums, installed
 package integrity and debugger selection before recording completion. Its
 read-only preflight also runs on the build host:
 

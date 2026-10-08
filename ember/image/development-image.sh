@@ -2,24 +2,26 @@
 # Origin: EmberBSD (AI-assisted), assemble an offline AArch64 development image.
 set -eu
 export LC_ALL=C
-[ "$#" = 9 ] || {
-	echo "Usage: $0 SETS KERNEL KERNEL_REV FSCK FSCK_REV PACKAGES PORTS_REV TOOLDIR NEW_WORK" >&2
+[ "$#" = 11 ] || {
+	echo "Usage: $0 SETS KERNEL KERNEL_REV FSCK FSCK_REV CTF_TOOLS CTF_REV PACKAGES PORTS_REV TOOLDIR NEW_WORK" >&2
 	exit 2
 }
 sets=$1 kernel=$2 kernel_rev=$3 fsck=$4 fsck_rev=$5
-packages=$6 ports_rev=$7 tools=$8 work=$9
+ctf=$6 ctf_rev=$7 packages=$8 ports_rev=$9 tools=${10} work=${11}
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-for path in "$sets" "$kernel" "$fsck" "$packages" "$tools" "$work"; do
+for path in "$sets" "$kernel" "$fsck" "$ctf" "$packages" "$tools" "$work"; do
 	case "$path" in /*) ;; *) echo 'Absolute paths required.' >&2; exit 2 ;; esac
 	case "$path" in *[!A-Za-z0-9_./-]*) echo 'Unsafe path.' >&2; exit 2 ;; esac
 done
-for revision in "$kernel_rev" "$fsck_rev" "$ports_rev"; do
+for revision in "$kernel_rev" "$fsck_rev" "$ctf_rev" "$ports_rev"; do
 	[ "${#revision}" = 40 ] || exit 2
 	case "$revision" in *[!0-9a-f]*) exit 2 ;; esac
 done
 [ ! -e "$work" ] && [ ! -L "$work" ]
 for tool in nbmakefs nbgpt; do [ -x "$tools/bin/$tool" ]; done
-[ -f "$kernel" ] && [ -f "$fsck" ] && [ -f "$packages/gdb-18.1.tgz" ]
+[ -f "$kernel" ] && [ -f "$fsck" ] && [ -d "$packages" ]
+ctf_files='ctfconvert libdwarf.so.2.2 libdwarf.a libdwarf_p.a libdwarf_pic.a libdwarf.h dwarf.h'
+for file in $ctf_files; do [ -f "$ctf/$file" ] && [ ! -L "$ctf/$file" ]; done
 for set in base etc comp; do
 	expected=$(sed -n "s/^SHA512 ($set.tar.xz) = //p" "$sets/SHA512")
 	[ -n "$expected" ]
@@ -38,6 +40,24 @@ rm -f "$root/sbin/fsck_ffs" "$root/rescue/fsck_ffs"
 cp "$fsck" "$root/sbin/fsck_ffs"
 cp "$fsck" "$root/rescue/fsck_ffs"
 chmod 555 "$root/sbin/fsck_ffs" "$root/rescue/fsck_ffs"
+# Install the matching converter, development files and one current library.
+mkdir -p "$root/usr/lib" "$root/usr/include"
+rm -f "$root/usr/bin/ctfconvert" "$root/usr/include/libdwarf.h" "$root/usr/include/dwarf.h" \
+    "$root/usr/lib/libdwarf.so" "$root/usr/lib/libdwarf.so.2" \
+    "$root/usr/lib"/libdwarf.so.2.*
+cp "$ctf/ctfconvert" "$root/usr/bin/ctfconvert"
+chmod 555 "$root/usr/bin/ctfconvert"
+cp "$ctf/libdwarf.h" "$root/usr/include/libdwarf.h"
+chmod 444 "$root/usr/include/libdwarf.h"
+cp "$ctf/dwarf.h" "$root/usr/include/dwarf.h"
+chmod 444 "$root/usr/include/dwarf.h"
+for file in libdwarf.so.2.2 libdwarf.a libdwarf_p.a libdwarf_pic.a; do
+	rm -f "$root/usr/lib/$file"
+	cp "$ctf/$file" "$root/usr/lib/$file"
+	chmod 444 "$root/usr/lib/$file"
+done
+ln -s libdwarf.so.2.2 "$root/usr/lib/libdwarf.so.2"
+ln -s libdwarf.so.2.2 "$root/usr/lib/libdwarf.so"
 mkdir -p "$root/boot" "$root/proc" "$root/var/ember/packages" "$root/usr/libexec/ember"
 bundle=$root/var/ember/packages
 for archive in "$packages"/*.tgz; do
@@ -85,10 +105,13 @@ xdm=NO
 ember_development=YES
 EOF
 {
-	printf 'kernel-source=%s\nfsck-source=%s\nports-source=%s\n' \
-	    "$kernel_rev" "$fsck_rev" "$ports_rev"
+	printf 'kernel-source=%s\nfsck-source=%s\nctf-source=%s\nports-source=%s\n' \
+	    "$kernel_rev" "$fsck_rev" "$ctf_rev" "$ports_rev"
 	printf 'SHA256 (netbsd) = %s\n' "$(shasum -a 256 "$kernel" | awk '{print $1}')"
 	printf 'SHA256 (fsck_ffs) = %s\n' "$(shasum -a 256 "$fsck" | awk '{print $1}')"
+	for file in $ctf_files; do
+		printf 'SHA256 (%s) = %s\n' "$file" "$(shasum -a 256 "$ctf/$file" | awk '{print $1}')"
+	done
 	for set in base etc comp; do
 		printf 'SHA512 (%s.tar.xz) = %s\n' "$set" \
 		    "$(shasum -a 512 "$sets/$set.tar.xz" | awk '{print $1}')"
@@ -109,6 +132,9 @@ cp "$work/inputs.txt" "$root/var/ember/image-inputs.txt"
 # Omit base manuals, whose names collide on case-insensitive build volumes.
 awk '
 $1 ~ /^\.\/usr\/share\/man(\/|$)/ { next }
+$1 ~ /^\.\/usr\/lib\/libdwarf[._]/ { next }
+$1 == "./usr/bin/ctfconvert" || $1 == "./usr/include/libdwarf.h" ||
+    $1 == "./usr/include/dwarf.h" { next }
 $1 == "./usr/bin/gdb" || $1 == "./usr/bin/gdbtui" ||
     $1 == "./etc/fstab" || $1 == "./etc/rc.conf" ||
     $1 == "./sbin/fsck_ffs" || $1 == "./rescue/fsck_ffs" { next }
@@ -128,6 +154,15 @@ cat >> "$work/spec" <<'EOF'
 ./etc/rc.conf type=file uname=root gname=wheel mode=0644
 ./etc/rc.d/ember_development type=file uname=root gname=wheel mode=0555
 ./usr/bin/gdb type=link uname=root gname=wheel mode=0755 link=/usr/pkg/bin/gdb
+./usr/bin/ctfconvert type=file uname=root gname=wheel mode=0555
+./usr/include/libdwarf.h type=file uname=root gname=wheel mode=0444
+./usr/include/dwarf.h type=file uname=root gname=wheel mode=0444
+./usr/lib/libdwarf.so type=link uname=root gname=wheel mode=0755 link=libdwarf.so.2.2
+./usr/lib/libdwarf.so.2 type=link uname=root gname=wheel mode=0755 link=libdwarf.so.2.2
+./usr/lib/libdwarf.so.2.2 type=file uname=root gname=wheel mode=0444
+./usr/lib/libdwarf.a type=file uname=root gname=wheel mode=0444
+./usr/lib/libdwarf_p.a type=file uname=root gname=wheel mode=0444
+./usr/lib/libdwarf_pic.a type=file uname=root gname=wheel mode=0444
 ./usr/libexec/ember type=dir uname=root gname=wheel mode=0755
 ./usr/libexec/ember/install-development type=file uname=root gname=wheel mode=0555
 ./var/ember type=dir uname=root gname=wheel mode=0755

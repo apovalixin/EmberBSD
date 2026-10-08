@@ -432,21 +432,25 @@ on every board in the hardware catalog.
   [Ports cross GCC16 recipe](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain/cross)
   also runs GCC16 on that host; cross-built C11 (plain/LTO) and C++20 DSO
   checks pass on Zero 3W with its installed GCC16 runtime. The
-  [CTF converter](ember/boot/cross-build.md#dwarf5-and-ctf) now preserves
-  GCC/Clang DWARF5 type information in checked AArch64 objects, without
-  forcing DWARF4. Host regressions cover type layouts, string-table bounds
-  and CTF merging. [Live DTrace and external DWARF](ember/boot/dtrace-dwarf.md)
-  now pass in the AArch64 VM: typed FBT/syscall tracing, standalone DWO
-  and standard supplementary type conversion, including malformed-input
-  rejection. These checks do not cover DWP packages or every DWARF consumer.
-  [Ports GDB 18.1](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain/gdb)
-  is installed as a checked pkgsrc package and passes external-DWARF,
-  live FP-register and signal-unwinding checks. Its expanded matrix covers
-  DWARF2–5, DWARF32/64, DWP, type units and compressed sections; two valid
-  `DW_OP_entry_value` cases remain unsupported. The OS-owned
-  [development image](ember/image/README.md) installs the pinned package
-  closure offline and passes live split-DWARF debugging after a normal reboot
-  in an AArch64 VM. It includes the corrected FFS primary-superblock selector.
+  [CTF converter](ember/boot/ctf-external-types.md) preserves GCC/Clang types
+  in DWARF4/5 and both offset widths, including COMDAT type units, standalone
+  DWO, indexed DWP and combined split/supplementary input. Linked multi-CU
+  fixtures retain distinct types; ambiguous static-symbol ownership is rejected
+  before changing the ELF. [Live DTrace](ember/boot/dtrace-dwarf.md) passes
+  typed FBT/syscall tracing in the AArch64 VM. These are checked type-conversion
+  and tracing workflows; CTF does not represent general debugger location state.
+  [Ports GDB 18.1nb1](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain/gdb)
+  passes installed external-DWARF, live FP-register and signal-unwinding checks.
+  Its 32 format cases cover DWARF2–5, DWARF32/64, DWP, type units and compressed
+  sections. Another 24 expression, 14 agent-compiler and 72 entry-value checks
+  pass, including reconstructed float/SIMD registers and unavailable history.
+  The common [LLVM 23.1.2nb1 DWP tool](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/cross/llvm-dwp-tests.md)
+  passes 104 packaging/repacking cases with live GDB values, including mixed
+  widths, shared CU/TU tables and string-offset promotion. Its existing
+  C API/bitcode and ORC JIT consumers still pass.
+  The OS-owned [development image](ember/image/README.md) installs the pinned
+  package closure offline and includes the corrected FFS primary-superblock
+  selector. Image acceptance records the installed tool versions and reboot tests.
   Full OS builds
   with GCC16 and general pkgsrc cross-package builds remain unvalidated.
   C11/C++20 threads, TLS and shared-library

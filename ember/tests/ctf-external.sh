@@ -56,14 +56,18 @@ reject "$dir/original.o" 'invalid split DWARF header'
 "$objcopy" --update-section ".debug_str_offsets.dwo=$work/short" "$dir/saved.dwo" "$dir/input.dwo"
 reject "$dir/original.o" 'Invalid attribute form'
 mv "$dir/saved.dwo" "$dir/input.dwo"
-# A relocatable link retains two skeleton CUs; converting only the first loses types.
+# A relocatable link must retain both skeleton CUs and their type namespaces.
 for name in first second; do
     printf 'struct %s_record { long value; }; struct %s_record %s_data;\n' "$name" "$name" "$name" > "$work/$name.c"
-    "$gcc" -gdwarf-5 -gsplit-dwarf -c "$work/$name.c" -o "$work/$name.o"
+    (cd "$work"; "$gcc" -gdwarf-5 -gsplit-dwarf -c "$name.c" -o "$name.o")
 done
 "${gcc%gcc}ld" -r "$work/first.o" "$work/second.o" -o "$work/multiple.o"
-reject "$work/multiple.o" 'multiple or invalid skeleton compilation units'
-echo 'PASS: missing/mismatched/truncated DWO and multiple skeleton CUs fail without modifying the ELF'
+cp "$work/multiple.o" "$work/multiple-original.o"
+"$convert" -g -l EmberBSD "$work/multiple.o"
+"$dump" -t -d "$work/multiple.o" > "$work/multiple.txt"
+grep -q 'STRUCT first_record' "$work/multiple.txt"
+grep -q 'STRUCT second_record' "$work/multiple.txt"
+echo 'PASS: missing/mismatched/truncated DWO fail atomically; multiple skeleton CUs retain both types'
 
 
 for width in 32 64; do
@@ -100,7 +104,7 @@ reject "$dir/original.o" 'checksum mismatch'
 "$objcopy" --update-section ".debug_sup=$work/short" "$dir/saved.sup" "$dir/types.sup"
 reject "$dir/original.o" 'invalid .debug_sup header'
 "$objcopy" --update-section ".debug_info=$work/short" "$dir/saved.sup" "$dir/types.sup"
-reject "$dir/original.o" 'invalid supplementary DWARF reference'
+reject "$dir/original.o" 'invalid supplementary.*DWARF'
 mv "$dir/saved.sup" "$dir/types.sup"
 "$objcopy" --remove-section .debug_sup "$dir/original.o" "$dir/missing-header.o"
 reject "$dir/missing-header.o" 'failed to get string'

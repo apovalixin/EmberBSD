@@ -26,8 +26,16 @@ awk 'NR != 1 || length($0) != 40 || $0 !~ /^[0-9a-f]+$/ { bad=1 }
 manifest_count=$(awk '
 NF != 2 || length($1) != 64 || $1 !~ /^[0-9a-f]+$/ ||
     $2 !~ /^[A-Za-z0-9][A-Za-z0-9_.+-]*[.]tgz$/ || seen[$2]++ { bad=1 }
+$2 ~ /^gdb-[0-9]/ {
+    debuggers++
+    if ($2 !~ /^gdb-18[.]1(nb[0-9]+)?[.]tgz$/) bad=1
+}
+$2 ~ /^llvm-[0-9]/ {
+    providers++
+    if ($2 !~ /^llvm-23[.]1[.]2(nb[0-9]+)?[.]tgz$/) bad=1
+}
 END {
-    if (bad || NR == 0 || !seen["gdb-18.1.tgz"]) exit 1
+    if (bad || NR == 0 || debuggers != 1 || providers > 1) exit 1
     print NR
 }
 ' packages.sha256)
@@ -72,7 +80,11 @@ if [ "$verify_only" = yes ]; then
 fi
 # A local-only repository: missing dependencies fail instead of fetching.
 export PATH=/sbin:/usr/sbin:/bin:/usr/bin:/usr/pkg/sbin:/usr/pkg/bin
-PKG_PATH=$PWD /usr/sbin/pkg_add -U "$PWD/gdb-18.1.tgz"
+set --
+while read -r hash archive || [ -n "$hash$archive" ]; do
+	set -- "$@" "$PWD/$archive"
+done < packages.sha256
+PKG_PATH=$PWD /usr/sbin/pkg_add -U "$@"
 while read -r hash archive || [ -n "$hash$archive" ]; do
 	pkg=${archive%.tgz}
 	/usr/sbin/pkg_info -e "$pkg" >/dev/null
@@ -86,4 +98,4 @@ grep -q '^GNU gdb (GDB) 18\.1$' gdb-version.txt
 sha256 -q /usr/pkg/bin/gdb > gdb.sha256
 cp packages.sha256 installed-packages.sha256.new
 mv -f installed-packages.sha256.new installed-packages.sha256
-echo 'EmberBSD development packages installed: GDB 18.1'
+echo 'EmberBSD development package bundle installed and verified'

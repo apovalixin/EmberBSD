@@ -9,6 +9,8 @@
 #include <gelf.h>
 
 struct dw_external {
+	struct dw_external *next;
+	char *path;
 	int fd;
 	Elf *elf;
 	Dwarf_Debug dbg;
@@ -110,7 +112,7 @@ dw_join(const char *directory, const char *name)
 
 static void
 dw_external_open(struct dw_external *ext, Elf *mainelf, const char *filename,
-    const char *name, const char *compdir)
+    const char *name, const char *compdir, int package)
 {
 	GElf_Ehdr mainhdr, hdr;
 	Dwarf_Error error;
@@ -123,6 +125,12 @@ dw_external_open(struct dw_external *ext, Elf *mainelf, const char *filename,
 	if (ext->fd < 0 && errno == ENOENT && name[0] != '/' && compdir != NULL) {
 		free(path);
 		path = dw_join(compdir, name);
+		ext->fd = open(path, O_RDONLY);
+	}
+	if (ext->fd < 0 && errno == ENOENT && package) {
+		free(path);
+		path = xmalloc(strlen(filename) + 5);
+		(void)sprintf(path, "%s.dwp", filename);
 		ext->fd = open(path, O_RDONLY);
 	}
 	if (ext->fd < 0)
@@ -140,7 +148,7 @@ dw_external_open(struct dw_external *ext, Elf *mainelf, const char *filename,
 	    &error) != DW_DLV_OK)
 		terminate("cannot initialize external DWARF %s: %s\n", path,
 		    dwarf_errmsg(error));
-	free(path);
+	ext->path = path;
 }
 
 static void
@@ -153,5 +161,6 @@ dw_external_close(struct dw_external *ext)
 	(void)dwarf_finish(ext->dbg, &error);
 	(void)elf_end(ext->elf);
 	(void)close(ext->fd);
+	free(ext->path);
 }
 #endif

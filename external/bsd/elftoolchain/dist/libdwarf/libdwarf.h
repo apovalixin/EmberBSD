@@ -554,6 +554,8 @@ Dwarf_P_Die	dwarf_die_link(Dwarf_P_Die, Dwarf_P_Die, Dwarf_P_Die,
 		    Dwarf_P_Die, Dwarf_P_Die, Dwarf_Error *);
 int		dwarf_diename(Dwarf_Die, char **, Dwarf_Error *);
 int		dwarf_dieoffset(Dwarf_Die, Dwarf_Off *, Dwarf_Error *);
+int		dwarf_elf_init_section(Elf *, int, Dwarf_Unsigned,
+		    Dwarf_Handler, Dwarf_Ptr, Dwarf_Debug *, Dwarf_Error *);
 int		dwarf_elf_init(Elf *, int, Dwarf_Handler, Dwarf_Ptr,
 		    Dwarf_Debug *, Dwarf_Error *);
 int		dwarf_end_macro_file(Dwarf_P_Debug, Dwarf_Error *);

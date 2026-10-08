@@ -27,7 +27,11 @@
 	.uleb128 4
 	.byte 0x45,0x4d,0x42,0x52
 
+#if SPLIT
+	.section .debug_abbrev.dwo,"",%progbits
+#else
 	.section .debug_abbrev,"",%progbits
+#endif
 #if SUPPLEMENT
 	.uleb128 1; .uleb128 0x3c; .byte 1 /* partial_unit */
 	.byte 0,0
@@ -38,7 +42,11 @@
 	.uleb128 3; .uleb128 0x0d; .byte 0 /* member */
 	.uleb128 3; .uleb128 8
 	.uleb128 0x49; .uleb128 0x10 /* type/ref_addr: cross-CU */
+#if MEMEXPR
+	.uleb128 0x38; .uleb128 0x18 /* data_member_location/exprloc */
+#else
 	.uleb128 0x38; .uleb128 0x0b /* data_member_location/data1 */
+#endif
 	.byte 0,0
 	.uleb128 4; .uleb128 0x24; .byte 0 /* base_type */
 	.uleb128 3; .uleb128 8
@@ -86,26 +94,47 @@
 #endif
 	.byte 0
 
+#if SPLIT
+	.section .debug_info.dwo,"",%progbits
+#else
 	.section .debug_info,"",%progbits
+#endif
 .Linfo:
 	LENGTH(.Lend, .Lbody)
 .Lbody:
 	.short 5
 #if SUPPLEMENT
 	.byte 3 /* DW_UT_partial */
+#elif SPLIT
+	.byte 5 /* DW_UT_split_compile */
 #else
 	.byte 1 /* DW_UT_compile */
 #endif
 	.byte 8
 	OFFSET 0 /* abbrev offset */
+#if SPLIT
+	.quad 0x454d42455244574f
+#endif
 .Lroot:
 	.uleb128 1
 #if SUPPLEMENT
 	.uleb128 6; OFFSET .Ldecl2-.Linfo
 .Lrecord:
 	.uleb128 2; .asciz "ember_sup_record"; .byte 16
-	.uleb128 3; .asciz "id"; OFFSET .Llong-.Linfo; .byte 0
-	.uleb128 3; .asciz "flags"; OFFSET .Lalias-.Linfo; .byte 8
+	.uleb128 3; .asciz "id"; OFFSET .Llong-.Linfo
+#if MEMEXPR
+	.uleb128 2; .byte 0x23,0 /* plus_uconst 0 */
+#else
+	.byte 0
+#endif
+	.uleb128 3; .asciz "flags"; OFFSET .Lalias-.Linfo
+#if MEMEXPR == 2
+	.uleb128 4; .byte 0x23,8,0x23,1 /* Reject unsupported multi-op offsets. */
+#elif MEMEXPR
+	.uleb128 2; .byte 0x23,8 /* plus_uconst 8 */
+#else
+	.byte 8
+#endif
 	.byte 0
 	.byte 0
 .Lend:

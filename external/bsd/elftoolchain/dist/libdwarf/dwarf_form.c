@@ -387,6 +387,19 @@ _dwarf_form_indexed_string(Dwarf_Attribute at, char **strp, Dwarf_Error *error)
 	unsigned int width = cu->cu_dwarf_size;
 	int ret;
 
+	/* GNU DWARF4 uses a headerless, contribution-relative offset table. */
+	if (at->at_form == DW_FORM_GNU_str_index) {
+		offsets = _dwarf_find_section(dbg, ".debug_str_offsets");
+		strings = _dwarf_find_section(dbg, ".debug_str");
+		index = at->u[0].u64;
+		if (cu->cu_version != 4 || offsets == NULL || strings == NULL ||
+		    (width != 4 && width != 8) || offsets->ds_size % width != 0 ||
+		    index >= offsets->ds_size / width)
+			goto invalid;
+		offset = index * width;
+		goto read_string;
+	}
+
 	/* Resolve after the root's attributes have all been parsed. */
 	ret = dwarf_offdie_b(dbg, cu->cu_1st_offset, cu->cu_is_info,
 	    &root, error);
@@ -429,6 +442,7 @@ _dwarf_form_indexed_string(Dwarf_Attribute at, char **strp, Dwarf_Error *error)
 	    index >= (limit - base) / width)
 		goto invalid;
 	offset = base + index * width;
+read_string:
 	offset = dbg->read(offsets->ds_data, &offset, width);
 	if (offset >= strings->ds_size || memchr(strings->ds_data + offset,
 	    '\0', strings->ds_size - offset) == NULL)
@@ -477,6 +491,7 @@ dwarf_formstring(Dwarf_Attribute at, char **return_string,
 		*return_string = (char *) at->u[1].s;
 		ret = DW_DLV_OK;
 		break;
+	case DW_FORM_GNU_str_index:
 	case DW_FORM_strx:
 	case DW_FORM_strx1:
 	case DW_FORM_strx2:

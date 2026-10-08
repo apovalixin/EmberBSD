@@ -97,6 +97,27 @@ _dwarf_attr_find(Dwarf_Die die, Dwarf_Half attr)
 	return (at);
 }
 
+/* Read a 64-bit unsigned operand without crossing its CU or contribution. */
+static int
+_dwarf_attr_uleb(Dwarf_Section *ds, Dwarf_CU cu, uint64_t *offset,
+    uint64_t *value)
+{
+	unsigned int shift, byte;
+
+	*value = 0;
+	for (shift = 0; shift < 64; shift += 7) {
+		if (*offset >= cu->cu_next_offset)
+			return (0);
+		byte = ds->ds_data[(*offset)++];
+		if (shift == 63 && byte > 1)
+			return (0);
+		*value |= (uint64_t)(byte & 0x7f) << shift;
+		if ((byte & 0x80) == 0)
+			return (1);
+	}
+	return (0);
+}
+
 int
 _dwarf_attr_init(Dwarf_Debug dbg, Dwarf_Section *ds, uint64_t *offsetp,
     int dwarf_size, Dwarf_CU cu, Dwarf_Die die, Dwarf_AttrDef ad,
@@ -165,22 +186,31 @@ _dwarf_attr_init(Dwarf_Debug dbg, Dwarf_Section *ds, uint64_t *offsetp,
 		break;
 	case DW_FORM_block:
 	case DW_FORM_exprloc:
-		atref.u[0].u64 = _dwarf_read_uleb128(ds->ds_data, offsetp);
+		if (!_dwarf_attr_uleb(ds, cu, offsetp, &atref.u[0].u64))
+			goto invalid;
+		if (atref.u[0].u64 > cu->cu_next_offset - *offsetp)
+			goto invalid;
 		atref.u[1].u8p = _dwarf_read_block(ds->ds_data, offsetp,
 		    atref.u[0].u64);
 		break;
 	case DW_FORM_block1:
 		atref.u[0].u64 = dbg->read(ds->ds_data, offsetp, 1);
+		if (atref.u[0].u64 > cu->cu_next_offset - *offsetp)
+			goto invalid;
 		atref.u[1].u8p = _dwarf_read_block(ds->ds_data, offsetp,
 		    atref.u[0].u64);
 		break;
 	case DW_FORM_block2:
 		atref.u[0].u64 = dbg->read(ds->ds_data, offsetp, 2);
+		if (atref.u[0].u64 > cu->cu_next_offset - *offsetp)
+			goto invalid;
 		atref.u[1].u8p = _dwarf_read_block(ds->ds_data, offsetp,
 		    atref.u[0].u64);
 		break;
 	case DW_FORM_block4:
 		atref.u[0].u64 = dbg->read(ds->ds_data, offsetp, 4);
+		if (atref.u[0].u64 > cu->cu_next_offset - *offsetp)
+			goto invalid;
 		atref.u[1].u8p = _dwarf_read_block(ds->ds_data, offsetp,
 		    atref.u[0].u64);
 		break;
@@ -204,7 +234,8 @@ _dwarf_attr_init(Dwarf_Debug dbg, Dwarf_Section *ds, uint64_t *offsetp,
 		atref.u[0].u64 = dbg->read(ds->ds_data, offsetp, 8);
 		break;
 	case DW_FORM_indirect:
-		form = _dwarf_read_uleb128(ds->ds_data, offsetp);
+		if (!_dwarf_attr_uleb(ds, cu, offsetp, &form))
+			goto invalid;
 		return (_dwarf_attr_init(dbg, ds, offsetp, dwarf_size, cu, die,
 		    ad, form, 1, error));
 	case DW_FORM_ref_addr:
@@ -219,7 +250,8 @@ _dwarf_attr_init(Dwarf_Debug dbg, Dwarf_Section *ds, uint64_t *offsetp,
 	case DW_FORM_udata:
 	case DW_FORM_loclistx:
 	case DW_FORM_rnglistx:
-		atref.u[0].u64 = _dwarf_read_uleb128(ds->ds_data, offsetp);
+		if (!_dwarf_attr_uleb(ds, cu, offsetp, &atref.u[0].u64))
+			goto invalid;
 		break;
 	case DW_FORM_sdata:
 		atref.u[0].s64 = _dwarf_read_sleb128(ds->ds_data, offsetp);
@@ -251,6 +283,8 @@ _dwarf_attr_init(Dwarf_Debug dbg, Dwarf_Section *ds, uint64_t *offsetp,
 		break;
 	case DW_FORM_ref_sig8:
 		atref.u[0].u64 = 8;
+		if (atref.u[0].u64 > cu->cu_next_offset - *offsetp)
+			goto invalid;
 		atref.u[1].u8p = _dwarf_read_block(ds->ds_data, offsetp,
 		    atref.u[0].u64);
 		break;
@@ -258,12 +292,16 @@ _dwarf_attr_init(Dwarf_Debug dbg, Dwarf_Section *ds, uint64_t *offsetp,
 		/* This form has no value encoded in the DIE. */
 		atref.u[0].u64 = 1;
 		break;
+	case DW_FORM_GNU_str_index:
 	case DW_FORM_strx:
-		atref.u[0].u64 = _dwarf_read_uleb128(ds->ds_data, offsetp);
+		if (!_dwarf_attr_uleb(ds, cu, offsetp, &atref.u[0].u64))
+			goto invalid;
 		/* Resolved lazily by dwarf_formstring after CU parsing. */
 		break;
+	case DW_FORM_GNU_addr_index:
 	case DW_FORM_addrx:
-		atref.u[0].u64 = _dwarf_read_uleb128(ds->ds_data, offsetp);
+		if (!_dwarf_attr_uleb(ds, cu, offsetp, &atref.u[0].u64))
+			goto invalid;
 		/* TODO: .debug_addr */
 		break;
 	case DW_FORM_strp_sup:
@@ -277,6 +315,8 @@ _dwarf_attr_init(Dwarf_Debug dbg, Dwarf_Section *ds, uint64_t *offsetp,
 		break;
 	case DW_FORM_data16:
 		atref.u[0].u64 = 16;
+		if (atref.u[0].u64 > cu->cu_next_offset - *offsetp)
+			goto invalid;
 		atref.u[1].u8p = _dwarf_read_block(ds->ds_data, offsetp,
 		    atref.u[0].u64);
 		break;
@@ -320,6 +360,7 @@ _dwarf_attr_init(Dwarf_Debug dbg, Dwarf_Section *ds, uint64_t *offsetp,
 		break;
 
 	default:
+invalid:
 		DWARF_SET_ERROR(dbg, error, DW_DLE_ATTR_FORM_BAD);
 		ret = DW_DLE_ATTR_FORM_BAD;
 		break;

@@ -87,9 +87,10 @@ CPPFLAGS+=	-I. -I${SRCDIR} -I${TOP}/common -I${TOP}/libelf
 LIBDPLIBS+=	elf ${.CURDIR}/../libelf
 
 SHLIB_MAJOR=	2
-SHLIB_MINOR=	1
+SHLIB_MINOR=	2
 
-MAN=	dwarf.3                                         \
+MAN=	dwarf_elf_init_section.3 \
+	dwarf.3                                         \
 	dwarf_add_arange.3				\
 	dwarf_add_AT_comp_dir.3				\
 	dwarf_add_AT_const_value_string.3		\

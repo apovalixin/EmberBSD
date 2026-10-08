@@ -1,7 +1,7 @@
 # Live DTrace and external DWARF
 
 EmberBSD keeps GCC's DWARF5 default. Its CTF tools read ordinary C debug
-units, standalone split objects and standard supplementary objects. The
+units, split and supplementary objects, indexed packages and type units. The
 FBT provider reads both CTF2 and CTF3, including the running GCC16 kernel's
 argument types. This allows a D script to inspect kernel structures rather
 than receive untyped probe arguments.
@@ -23,39 +23,41 @@ The FBT module includes the repaired `kern_ctf.c` reader.
 | Consumer | Executed check |
 | --- | --- |
 | Host CTF tools | Six ordinary DWARF groups, including GCC/Clang DWARF4/5, DWARF32/64, string bounds and merging |
-| Host external-DWARF reader | GCC/Clang standalone DWO32/64; supplementary strings, `ref_sup4`/`ref_sup8`, imported units, multiple supplementary CUs and inherited types |
-| Native CTF tools | All eight external-object results match host output; six malformed inputs fail without changing the ELF |
+| Host external-DWARF reader | GCC/Clang DWARF4/5 DWO/DWP32/64, signature type units, combined supplements and multiple primary CUs |
+| Native CTF tools | 46 format results, nine earlier external cases and six linked multi-CU results match host output; bounds/API and atomic rejection checks pass |
 | FBT decoder | ASan/UBSan, CTF2/3 widths, large type IDs, truncated records and all 20,771 types in the actual kernel CTF |
 | Live DTrace | Syscall and FBT entry/return probes, profile ticks and `args[0]->l_proc->p_pid` dereferences |
 
 The final live run reported `calls=101 returns=101 fbt=101 fbt_returns=101
-typed=101 ticks=24` and exited successfully. This is a bounded VM run, not
+typed=101 ticks=21` and exited successfully. This is a bounded VM run, not
 physical-board acceptance, a soak test or coverage of every DTrace provider.
 Loading a module or listing probes alone is insufficient evidence.
 
-CTF conversion still accepts one primary compilation unit per object. It
-explicitly rejects multiple skeleton CUs instead of silently losing types.
-The supported external relationships are a standalone `.dwo` or a
-`.debug_sup` supplement. A combined split-plus-supplement relationship,
-indexed `.dwp` packages, signature-referenced type units and general DWARF
-location/expression evaluation are outside this CTF acceptance.
-CTF is a type consumer; it does not establish every debugger's DWARF support.
+CTF conversion accepts multiple primary CUs and skeletons, indexed DWP packages,
+signature-referenced type units and combined split/supplementary inputs.
+Static symbols with ambiguous source basenames and duplicate private auxiliary
+sections are rejected explicitly. Arbitrary runtime expressions remain outside
+this type consumer. See [CTF external type units](ctf-external-types.md) for the
+exact matrix, remaining limits and reproducible host/native checks.
+CTF acceptance does not establish every debugger's DWARF support.
 
-Separately, [Ports GDB 18.1](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain/gdb)
-passes all eight external-object cases and live DWARF32/64 debugging in
-the same VM. Its native backend repairs FP register ordering and signal
-unwinding; Unicode conversion and malformed supplementary metadata are
-also checked. It is registered as a pkgsrc package and selected by `/usr/bin/gdb`.
-The [expanded installed matrix](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/development-toolchain/gdb/dwarf-variants.md)
-passes 32 format cases, four additional DWP helper-CU checks, 22 expression
-cases and 14 agent-expression checks. Two valid `DW_OP_entry_value` cases
-remain unsupported, so this is not universal DWARF conformance.
+Separately, [Ports GDB 18.1nb1](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain/gdb)
+is installed as a pkgsrc package and selected by `/usr/bin/gdb`. It passes
+32 format, 24 expression, 14 agent-expression and 72 entry-state checks,
+plus the external-object and live FP-register/signal-unwinding suite.
+General entry operands now evaluate constants, nested procedures and
+reconstructible register arithmetic, including float/SIMD values. Missing
+historical state remains unavailable rather than being replaced by current state.
 
-The [development image](../image/README.md) includes this package and passes
-offline installation, a normal reboot and live split-DWARF32/64 debugging.
-The base source import remains GDB 15.1; image assembly removes its executable
-entry points and selects the Ports package. GDB's DWP results do not extend
-the CTF converter's accepted scope.
+The common [LLVM 23.1.2nb1 package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/cross/llvm-dwp-tests.md)
+passes 104 DWP creation/repackaging checks, including mixed offset widths,
+shared indexed CU/TU tables and string-offset promotion. Both packages retain
+normal pkgsrc integrity checks. These executed profiles do not establish
+universal DWARF conformance across every language and producer extension.
+
+The [development image](../image/README.md) owns offline package installation
+and reboot acceptance. The base source import remains GDB 15.1; image assembly
+removes its executable entry points and selects the current Ports package.
 
 ## Build and check the host readers
 
@@ -112,8 +114,11 @@ For an isolated build against an older installed header, pass
 to the converter's make invocation. A full build installs the new header
 normally. Do not replace the complete CPPFLAGS include configuration.
 
-The new exported `dwarf_set_tied_dbg` API advances libdwarf from 2.0 to 2.1;
-the ABI major remains 2. Install the matching library and converter together.
+The exported `dwarf_elf_init_section` API advances libdwarf from 2.1 to 2.2;
+the ABI major remains 2. It selects an isolated ordinary or split section,
+retaining the original `dwarf_elf_init` behavior when the index is zero.
+Install the matching library and converter together.
+Install both public headers, `libdwarf.h` and `dwarf.h`, with the library.
 Copy the host external-test directory and run on the target:
 
 ```sh
@@ -121,7 +126,7 @@ sh ember/tests/ctf-external-target.sh /usr/bin/ctfconvert /usr/bin/ctfdump \
     /absolute/host-external-tests /absolute/new-native-tests
 ```
 
-The API borrows a caller-owned supplementary context. The caller validates
+The `dwarf_set_tied_dbg` API borrows a caller-owned supplementary context. The caller validates
 file identity, keeps it alive and resolves supplementary reference offsets
 in that object's namespace. See `dwarf_set_tied_dbg(3)` for its lifetime and
 error contract. It does not search arbitrary files on behalf of callers.

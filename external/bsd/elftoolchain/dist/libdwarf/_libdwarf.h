@@ -538,7 +538,7 @@ int		_dwarf_die_parse(Dwarf_Debug, Dwarf_Section *, Dwarf_CU, int,
 		    uint64_t, uint64_t, Dwarf_Die *, int, Dwarf_Error *);
 void		_dwarf_die_pro_cleanup(Dwarf_P_Debug);
 void		_dwarf_elf_deinit(Dwarf_Debug);
-int		_dwarf_elf_init(Dwarf_Debug, Elf *, Dwarf_Error *);
+int		_dwarf_elf_init(Dwarf_Debug, Elf *, Dwarf_Unsigned, Dwarf_Error *);
 int		_dwarf_elf_load_section(void *, Dwarf_Half, Dwarf_Small **,
 		    int *);
 Dwarf_Endianness _dwarf_elf_get_byte_order(void *);

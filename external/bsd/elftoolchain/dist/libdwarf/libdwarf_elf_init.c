@@ -210,16 +210,18 @@ _dwarf_elf_relocate(Dwarf_Debug dbg, Elf *elf, Dwarf_Elf_Data *ed, size_t shndx,
 }
 
 int
-_dwarf_elf_init(Dwarf_Debug dbg, Elf *elf, Dwarf_Error *error)
+_dwarf_elf_init(Dwarf_Debug dbg, Elf *elf, Dwarf_Unsigned section,
+    Dwarf_Error *error)
 {
 	Dwarf_Obj_Access_Interface *iface;
 	Dwarf_Elf_Object *e;
-	const char *name;
+	const char *name, *selected;
 	GElf_Shdr sh;
 	Elf_Scn *scn;
 	Elf_Data *symtab_data;
 	size_t symtab_ndx;
-	int elferr, i, j, n, ret;
+	int elferr, i, j, n, ret, split = 0;
+	unsigned char seen[sizeof(debug_name) / sizeof(debug_name[0])] = {0};
 
 	ret = DW_DLE_NONE;
 
@@ -261,6 +263,17 @@ _dwarf_elf_init(Dwarf_Debug dbg, Elf *elf, Dwarf_Error *error)
 		goto fail_cleanup;
 	}
 
+	if (section != 0) {
+		scn = elf_getscn(elf, section);
+		if (scn == NULL || gelf_getshdr(scn, &sh) == NULL ||
+		    (selected = elf_strptr(elf, e->eo_strndx, sh.sh_name)) == NULL) {
+			DWARF_SET_ERROR(dbg, error, DW_DLE_ARGUMENT);
+			ret = DW_DLE_ARGUMENT;
+			goto fail_cleanup;
+		}
+		split = strstr(selected, ".dwo") != NULL;
+	}
+
 	n = 0;
 	symtab_ndx = 0;
 	symtab_data = NULL;
@@ -294,9 +307,31 @@ _dwarf_elf_init(Dwarf_Debug dbg, Elf *elf, Dwarf_Error *error)
 			continue;
 		}
 
+		/* Origin: EmberBSD (AI-assisted), select isolated type namespaces. */
+		if (section != 0 && elf_ndxscn(scn) != section &&
+		    (!strcmp(name, ".debug_info") ||
+		    !strcmp(name, ".debug_info.dwo") ||
+		    !strcmp(name, ".debug_types") ||
+		    !strcmp(name, ".debug_types.dwo")))
+			continue;
+
+		/* Keep auxiliary tables in the selected ordinary/split namespace. */
+		if (section != 0 &&
+		    ((!split && strstr(name, ".dwo") != NULL) ||
+		    (split && (!strcmp(name, ".debug_abbrev") ||
+		    !strcmp(name, ".debug_str") || !strcmp(name, ".debug_str_offsets") ||
+		    !strcmp(name, ".debug_line")))))
+			continue;
+
 		for (i = 0; debug_name[i] != NULL; i++) {
-			if (!strcmp(name, debug_name[i]))
+			if (!strcmp(name, debug_name[i])) {
+				if (section != 0 && seen[i]++) {
+					DWARF_SET_ERROR(dbg, error, DW_DLE_ARGUMENT);
+					ret = DW_DLE_ARGUMENT;
+					goto fail_cleanup;
+				}
 				n++;
+			}
 		}
 	}
 	elferr = elf_errno();
@@ -334,6 +369,21 @@ _dwarf_elf_init(Dwarf_Debug dbg, Elf *elf, Dwarf_Error *error)
 			ret = DW_DLE_ELF;
 			goto fail_cleanup;
 		}
+
+		if (section != 0 && elf_ndxscn(scn) != section &&
+		    (!strcmp(name, ".debug_info") ||
+		    !strcmp(name, ".debug_info.dwo") ||
+		    !strcmp(name, ".debug_types") ||
+		    !strcmp(name, ".debug_types.dwo")))
+			continue;
+
+		/* Keep auxiliary tables in the selected ordinary/split namespace. */
+		if (section != 0 &&
+		    ((!split && strstr(name, ".dwo") != NULL) ||
+		    (split && (!strcmp(name, ".debug_abbrev") ||
+		    !strcmp(name, ".debug_str") || !strcmp(name, ".debug_str_offsets") ||
+		    !strcmp(name, ".debug_line")))))
+			continue;
 
 		for (i = 0; debug_name[i] != NULL; i++) {
 			if (strcmp(name, debug_name[i]))

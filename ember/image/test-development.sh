@@ -37,6 +37,34 @@ expect()
 	printf 'PASS: %s\n' "$label"
 }
 expect pass 'complete bundle'
+printf 'LLVM fixture\n' > "$bundle/llvm-23.1.2nb1.tgz"
+(cd "$bundle"; shasum -a 256 ./*.tgz | sed 's,  ./,  ,') > "$bundle/packages.sha256"
+expect pass 'current common LLVM provider'
+cp "$bundle/llvm-23.1.2nb1.tgz" "$bundle/llvm-23.1.2.tgz"
+(cd "$bundle"; shasum -a 256 ./*.tgz | sed 's,  ./,  ,') > "$bundle/packages.sha256"
+expect fail 'parallel LLVM revisions'
+rm "$bundle/llvm-23.1.2.tgz"
+mv "$bundle/llvm-23.1.2nb1.tgz" "$bundle/llvm-21.1.8.tgz"
+(cd "$bundle"; shasum -a 256 ./*.tgz | sed 's,  ./,  ,') > "$bundle/packages.sha256"
+expect fail 'obsolete LLVM provider'
+rm "$bundle/llvm-21.1.8.tgz"
+cp "$work/good-manifest" "$bundle/packages.sha256"
+mv "$bundle/gdb-18.1.tgz" "$bundle/gdb-18.1nb1.tgz"
+sed 's/gdb-18[.]1[.]tgz/gdb-18.1nb1.tgz/' "$work/good-manifest" > "$bundle/packages.sha256"
+expect pass 'current debugger package revision'
+cp "$bundle/gdb-18.1nb1.tgz" "$bundle/gdb-18.1.tgz"
+(cd "$bundle"; shasum -a 256 ./*.tgz | sed 's,  ./,  ,') > "$bundle/packages.sha256"
+expect fail 'parallel debugger revisions'
+rm "$bundle/gdb-18.1nb1.tgz"
+cp "$bundle/gdb-18.1.tgz" "$bundle/gdb-15.1.tgz"
+(cd "$bundle"; shasum -a 256 ./*.tgz | sed 's,  ./,  ,') > "$bundle/packages.sha256"
+expect fail 'parallel obsolete debugger'
+rm "$bundle/gdb-15.1.tgz"
+mv "$bundle/gdb-18.1.tgz" "$bundle/gdb-15.1.tgz"
+sed 's/gdb-18[.]1[.]tgz/gdb-15.1.tgz/' "$work/good-manifest" > "$bundle/packages.sha256"
+expect fail 'obsolete debugger'
+mv "$bundle/gdb-15.1.tgz" "$bundle/gdb-18.1.tgz"
+cp "$work/good-manifest" "$bundle/packages.sha256"
 sed '/gdb-18[.]1[.]tgz$/d' "$work/good-manifest" > "$bundle/packages.sha256"
 expect fail 'unlisted root debugger'
 sed '/gmp-6[.]3[.]0[.]tgz$/d' "$work/good-manifest" > "$bundle/packages.sha256"
@@ -82,15 +110,18 @@ expect pass 'retry with prior receipts'
 # Tiny distribution fixtures preserve the metadata shapes used by NetBSD
 # release sets. The fake makefs stops at the image boundary, without a disk.
 for set in base etc comp; do mkdir -p "$work/$set/etc/mtree"; done
-mkdir -p "$work/base/usr/bin" "$work/base/usr/mdec" "$work/base/sbin" "$work/base/rescue" \
+mkdir -p "$work/base/usr/bin" "$work/base/usr/mdec" "$work/base/usr/lib" \
+    "$work/base/usr/include" "$work/base/sbin" "$work/base/rescue" \
     "$work/base/var/chroot/nsd/var/db" "$work/base/usr/share/man/man1" \
     "$work/base/var/spool/ftp/hidden/nested" \
     "$work/etc/etc/rc.d" "$work/etc/dev" "$work/comp/usr/bin" \
-    "$work/sets" "$work/packages" "$work/tools/bin"
+    "$work/sets" "$work/packages" "$work/tools/bin" "$work/ctf"
 printf 'wall\n' > "$work/base/usr/bin/wall"
 printf 'write\n' > "$work/base/usr/bin/write"
 printf 'firmware\n' > "$work/base/usr/mdec/bootaa64.efi"
 printf 'old fsck\n' > "$work/base/sbin/fsck_ffs"
+printf 'old dwarf library\n' > "$work/base/usr/lib/libdwarf.so.2.0"
+ln -s libdwarf.so.2.0 "$work/base/usr/lib/libdwarf.so.2"
 printf 'old crunch\n' > "$work/base/rescue/cat"
 ln "$work/base/rescue/cat" "$work/base/rescue/fsck_ffs"
 printf 'omitted manual\n' > "$work/base/usr/share/man/man1/example.1"
@@ -108,6 +139,8 @@ cat > "$work/base/etc/mtree/NetBSD.dist" <<'EOF'
 ./sbin
 ./rescue
 ./usr/bin
+./usr/include
+./usr/lib
 ./usr/libexec
 ./usr/mdec
 ./usr/share
@@ -132,6 +165,8 @@ cat > "$work/base/etc/mtree/set.base" <<'EOF'
 ./usr/bin/write type=file uname=root gname=tty mode=02555
 ./usr/mdec/bootaa64.efi type=file uname=root gname=wheel mode=0444
 ./sbin/fsck_ffs type=file uname=root gname=wheel mode=0555 size=9
+./usr/lib/libdwarf.so.2.0 type=file uname=root gname=wheel mode=0444 size=18
+./usr/lib/libdwarf.so.2 type=link uname=root gname=wheel mode=0755 link=libdwarf.so.2.0
 ./rescue/fsck_ffs type=file uname=root gname=wheel mode=0555 size=11
 ./rescue/cat type=file uname=root gname=wheel mode=0555
 ./var/chroot/nsd/var/db type=dir uname=_nsd gname=_nsd mode=0755
@@ -177,12 +212,17 @@ for set in base etc comp; do
 	    "$(shasum -a 512 "$work/sets/$set.tar.xz" | awk '{print $1}')" >> "$work/sets/SHA512"
 done
 cp "$bundle"/*.tgz "$work/packages/"
+mv "$work/packages/gdb-18.1.tgz" "$work/packages/gdb-18.1nb1.tgz"
 printf 'kernel\n' > "$work/netbsd"
 printf 'accepted fsck\n' > "$work/fsck_ffs"
+for file in ctfconvert libdwarf.so.2.2 libdwarf.a libdwarf_p.a libdwarf_pic.a libdwarf.h dwarf.h; do
+	printf 'accepted %s\n' "$file" > "$work/ctf/$file"
+done
 revision=$(printf '%040d' 1)
 status=0
 sh "$here/development-image.sh" "$work/sets" "$work/netbsd" "$revision" \
-    "$work/fsck_ffs" "$revision" "$work/packages" "$revision" "$work/tools" \
+    "$work/fsck_ffs" "$revision" "$work/ctf" "$revision" \
+    "$work/packages" "$revision" "$work/tools" \
     "$work/stage" > "$work/stage.log" 2>&1 || status=$?
 if [ "$status" != 99 ]; then cat "$work/stage.log" >&2; exit 1; fi
 root=$work/stage/root
@@ -202,6 +242,17 @@ grep '^./usr/bin/gdb ' "$work/normalized.spec" | grep -q 'type=link'
 ! grep -q 'size=' "$work/normalized.spec"
 [ "$(readlink "$root/usr/bin/gdb")" = /usr/pkg/bin/gdb ]
 [ ! -e "$root/usr/bin/gdbtui" ]
+cmp "$work/ctf/ctfconvert" "$root/usr/bin/ctfconvert"
+cmp "$work/ctf/libdwarf.so.2.2" "$root/usr/lib/libdwarf.so.2.2"
+cmp "$work/ctf/libdwarf.h" "$root/usr/include/libdwarf.h"
+cmp "$work/ctf/dwarf.h" "$root/usr/include/dwarf.h"
+[ "$(readlink "$root/usr/lib/libdwarf.so.2")" = libdwarf.so.2.2 ]
+[ "$(readlink "$root/usr/lib/libdwarf.so")" = libdwarf.so.2.2 ]
+[ ! -e "$root/usr/lib/libdwarf.so.2.0" ]
+! grep -q '^./usr/lib/libdwarf.so.2.0 ' "$work/normalized.spec"
+grep '^./usr/lib/libdwarf.so.2 ' "$work/normalized.spec" | grep -q 'type=link'
+grep '^ctf-source=' "$work/stage/inputs.txt" > /dev/null
+grep '^SHA256 (libdwarf.so.2.2) = ' "$work/stage/inputs.txt" > /dev/null
 [ ! -e "$root/usr/share/man" ]
 [ ! -e "$work/stage/disk.raw" ]
 cmp "$work/fsck_ffs" "$root/sbin/fsck_ffs"
