@@ -20,7 +20,7 @@ rpi5button_status()
 
 rpi5button_start()
 {
-	if ! /usr/bin/pgrep -x powerd >/dev/null; then
+	if ! /etc/rc.d/powerd onestatus >/dev/null 2>&1; then
 		warn "Start powerd before loading the power-button fallback"
 		return 1
 	fi
