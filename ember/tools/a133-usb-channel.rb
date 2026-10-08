@@ -22,67 +22,81 @@ module A133Usb
         input_bytes >= 0 && limit.is_a?(Integer) && limit >= 0 && (source || input_bytes == 0)
       output = ''.b
       digest = Digest::SHA256.new
-      Open3.popen3(@adb, *arguments, pgroup: true) do |input, out, err, waiter|
-        workers = []
-        begin
-          [input, out, err].each(&:binmode)
-          writer = Thread.new do
-            remaining = input_bytes
-            while remaining > 0
-              chunk = source.read([remaining, 1048576].min)
-              raise Invalid, 'usb_input_short' if chunk.nil? || chunk.empty?
-              digest.update(chunk)
-              input.write(chunk)
-              remaining -= chunk.bytesize
-            end
-            input.close
+      input, out, err, waiter = Open3.popen3(@adb, *arguments, pgroup: true)
+      workers = []
+      begin
+        [input, out, err].each(&:binmode)
+        writer = Thread.new do
+          Thread.current.report_on_exception = false
+          remaining = input_bytes
+          while remaining > 0
+            chunk = source.read([remaining, 1048576].min)
+            raise Invalid, 'usb_input_short' if chunk.nil? || chunk.empty?
+            digest.update(chunk)
+            input.write(chunk)
+            remaining -= chunk.bytesize
           end
-          workers << writer
-          reader = Thread.new do
-            while (chunk = out.read(65536))
-              if block_given?
-                yield chunk
-              else
-                raise Invalid, 'usb_output_too_large' if output.bytesize + chunk.bytesize > limit
-                output << chunk
-              end
-            end
-          end
-          workers << reader
-          diagnostics = Thread.new do
-            noisy = false
-            noisy = true while err.read(16384)
-            noisy
-          end
-          workers << diagnostics
-          workers.each { |worker| worker.report_on_exception = false }
-          Timeout.timeout(@timeout) do
-            writer.value
-            reader.value
-            noisy = diagnostics.value
-            raise Invalid, 'usb_command_failed' unless waiter.value.success?
-            raise Invalid, 'usb_diagnostics' if noisy
-          end
-        rescue Timeout::Error
-          raise Invalid, 'usb_timeout'
-        rescue SystemCallError, IOError
-          raise Invalid, 'usb_pipe_failed'
-        ensure
-          begin
-            Process.kill('KILL', -waiter.pid)
-          rescue Errno::ESRCH
-            # Also terminate descendants retaining a pipe after the parent exits.
-          end
-          workers.each(&:kill)
-          [input, out, err].each { |io| io.close unless io.closed? }
-          workers.each do |worker|
-            begin
-              worker.join
-            rescue StandardError
-              # A worker's failure was propagated by value; do not replace it in cleanup.
+          input.close
+        end
+        workers << writer
+        reader = Thread.new do
+          Thread.current.report_on_exception = false
+          while (chunk = out.read(65536))
+            if block_given?
+              yield chunk
+            else
+              raise Invalid, 'usb_output_too_large' if output.bytesize + chunk.bytesize > limit
+              output << chunk
             end
           end
         end
+        workers << reader
+        diagnostics = Thread.new do
+          Thread.current.report_on_exception = false
+          noisy = false
+          noisy = true while err.read(16384)
+          noisy
+        end
+        workers << diagnostics
+        Timeout.timeout(@timeout) do
+          writer.value
+          reader.value
+          noisy = diagnostics.value
+          raise Invalid, 'usb_command_failed' unless waiter.value.success?
+          raise Invalid, 'usb_diagnostics' if noisy
+        end
+      rescue Timeout::Error
+        raise Invalid, 'usb_timeout'
+      rescue SystemCallError, IOError
+        raise Invalid, 'usb_pipe_failed'
+      ensure
+        primary = $!
+        cleanup_failed = false
+        begin
+          Process.kill('KILL', -waiter.pid)
+        rescue Errno::ESRCH
+          # Also terminate descendants retaining a pipe after the parent exits.
+        rescue SystemCallError
+          cleanup_failed = true
+        end
+        workers.each(&:kill)
+        [input, out, err].each do |io|
+          begin
+            io.close unless io.closed?
+          rescue SystemCallError, IOError
+            cleanup_failed = true
+          end
+        end
+        workers.each do |worker|
+          begin
+            cleanup_failed = true unless worker.join(0.2)
+          rescue StandardError
+            # A worker's failure was propagated by value; do not replace it in cleanup.
+          end
+        end
+        # Non-block Open3 avoids its automatic, unbounded wait_thr.join.
+        cleanup_failed = true unless waiter.join(1)
+        raise Invalid, 'usb_cleanup_failed' if cleanup_failed && !primary
       end
       {output: output, input_sha256: source ? digest.hexdigest : nil}
     rescue Errno::ENOENT, Errno::EACCES

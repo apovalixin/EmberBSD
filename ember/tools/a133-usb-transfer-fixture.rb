@@ -27,7 +27,7 @@ abort 'fixture requires non-PTY shell' unless ARGV.shift(2) == ['shell','-T'] &&
 command = ARGV.first
 case command
 when 'id -u' then puts state.fetch('root','0')
-when 'getprop ro.product.model' then puts state.fetch('model','YS-M33')
+when 'getprop ro.product.model' then puts state.fetch('model','a133')
 when 'getprop ro.boot.flash.locked' then puts state.fetch('locked','0')
 when 'getprop ro.boot.verifiedbootstate' then puts state.fetch('verified','orange')
 when 'cat /proc/device-tree/compatible' then STDOUT.write(state.fetch('compatible',"allwinner,a133\0vendor,board\0"))
@@ -45,6 +45,8 @@ else
     parts.each_with_index { |(_,start,size),i| puts(start); puts(state['numbers_bad'] && i == 16 ? 1 : size) }
   elsif command == mapping
     (1..17).each { |i| puts "/dev/block/mmcblk0p#{state['mapping_bad'] && i == 17 ? 3 : i}" }
+  elsif (match = command.match(%r{\Afor d in ([0-9: ]+); do if \[ -e /sys/dev/block/\$d \]; then echo \$d; fi; done\z}))
+    match[1].split.each { |id| puts id if state.fetch('block_ids',[]).include?(id) }
   elsif (match = command.match(%r{\Aexec dd if=/dev/block/mmcblk0(p[0-9]+)? bs=512 skip=([0-9]+) count=([0-9]+) 2>/dev/null\z}))
     part = match[1] ? "part#{match[1][1..]}" : 'disk'
     file = File.join(base,part)

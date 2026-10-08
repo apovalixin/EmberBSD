@@ -94,5 +94,62 @@ Dir.mktmpdir('a133-channel-') do |dir|
     abort 'FAIL: closed receiver reason' unless %w[usb_command_failed usb_pipe_failed].include?(error.message)
   end
   checks += 1
+  # Fault injection at the observed OS signal boundary; subprocess I/O remains real.
+  original_kill = Process.method(:kill)
+  Process.define_singleton_method(:kill) do |*args|
+    begin
+      original_kill.call(*args)
+    rescue Errno::ESRCH
+      # The real fixture child is already gone.
+    end
+    raise Errno::EPERM
+  end
+  begin
+    channel.run(['failure'])
+    abort 'FAIL: command failure accepted during cleanup error'
+  rescue A133Usb::Invalid => error
+    abort 'FAIL: cleanup hid primary failure' unless error.message == 'usb_command_failed'
+  ensure
+    Process.define_singleton_method(:kill,original_kill)
+  end
+  checks += 1
+  Process.define_singleton_method(:kill) do |*args|
+    begin
+      original_kill.call(*args)
+    rescue Errno::ESRCH
+    end
+    raise Errno::EPERM
+  end
+  begin
+    channel.run(['echo'])
+    abort 'FAIL: successful cleanup claim after signal failure'
+  rescue A133Usb::Invalid => error
+    abort 'FAIL: cleanup failure reason' unless error.message == 'usb_cleanup_failed'
+  ensure
+    Process.define_singleton_method(:kill,original_kill)
+  end
+  checks += 1
+  # Simulate a real signal refusal while the actual child remains alive.
+  blocked_pid = nil
+  Process.define_singleton_method(:kill) do |_,group|
+    blocked_pid = -group
+    raise Errno::EPERM
+  end
+  start = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+  begin
+    Timeout.timeout(4) { channel.run(['stall']) }
+    abort 'FAIL: live-child cleanup refusal accepted'
+  rescue A133Usb::Invalid => error
+    abort 'FAIL: live-child primary deadline lost' unless error.message == 'usb_timeout' &&
+      Process.clock_gettime(Process::CLOCK_MONOTONIC) - start < 4
+  ensure
+    Process.define_singleton_method(:kill,original_kill)
+    begin
+      original_kill.call('KILL',-blocked_pid) if blocked_pid
+    rescue Errno::ESRCH
+      # Test owns cleanup of the intentionally unkillable fixture.
+    end
+  end
+  checks += 1
 end
 puts "USB channel: #{checks} actual subprocess cases passed"

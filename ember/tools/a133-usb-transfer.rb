@@ -49,7 +49,7 @@ module A133Usb
       raise Invalid, 'usb_root_required' unless query('id -u') == '0'
       raise Invalid, 'usb_recovery_unlock_required' unless query('getprop ro.boot.flash.locked') == '0' &&
         query('getprop ro.boot.verifiedbootstate') == 'orange'
-      raise Invalid, 'usb_board_mismatch' unless query('getprop ro.product.model') == 'YS-M33' &&
+      raise Invalid, 'usb_board_mismatch' unless query('getprop ro.product.model') == 'a133' &&
         query('cat /proc/device-tree/compatible').split("\0").include?('allwinner,a133')
       inventory = A133Backup::INVENTORY
       paths = ['/sys/class/block/mmcblk0/size','/sys/class/block/mmcblk0/device/cid'] +
@@ -71,6 +71,9 @@ module A133Usb
         critical_ids.all? { |value| value.match?(/\A[0-9]+:[0-9]+\z/) } && !mountinfo.empty? &&
         mountinfo.all? { |fields| fields.size >= 10 && fields[2].match?(/\A[0-9]+:[0-9]+\z/) && (fields.index('-') || 0) >= 6 }
       raise Invalid, 'usb_target_mounted' if mountinfo.any? { |fields| critical_ids.include?(fields[2]) }
+      mounted_ids = mountinfo.map { |fields| fields[2] }.uniq
+      block_mounts = query("for d in #{mounted_ids.join(' ')}; do if [ -e /sys/dev/block/$d ]; then echo $d; fi; done")
+      raise Invalid, 'usb_target_mounted' unless block_mounts.empty?
       mounts = query('cat /proc/mounts')
       raise Invalid, 'usb_target_mounted' if mounts.lines.any? do |line|
         source, point = line.split.first(2)

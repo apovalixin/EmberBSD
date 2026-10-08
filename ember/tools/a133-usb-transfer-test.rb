@@ -113,6 +113,8 @@ Dir.mktmpdir('a133-usb-') do |dir|
     [{'mounts'=>"/dev/block/dm-0 /system ext4 ro 0 0\n"},'usb_target_mounted'],
     [{'mountinfo'=>"42 1 179:17 / /mnt rw - ext4 /dev/custom-alias rw\n"},'usb_target_mounted'],
     [{'mountinfo'=>''},'usb_mount_inventory_invalid'],
+    [{'mountinfo'=>"42 1 253:0 / /mnt rw - ext4 /dev/custom-alias rw\n",
+      'mounts'=>"/dev/custom-alias /mnt ext4 rw 0 0\n", 'block_ids'=>['253:0']},'usb_target_mounted'],
     [{'mounts'=>"tmpfs /data tmpfs rw 0 0\n"},'usb_target_mounted'] ].each { |updates,reason| reject.call(updates,reason) }
   reject.call({},'invalid_backup_receipt',options.merge(backup: backup.merge('cid'=>'f'*32)))
   reject.call({},'invalid_backup_receipt',options.merge(backup: backup.merge('gpt_arrays_crc'=>false)))

@@ -23,12 +23,14 @@ separately. Public CLI is inspection-only: there is no executable write flag.
 `A133Usb::Client.new(adb:, serial:, cid:, timeout:)` requires an explicit ASCII
 USB serial and lowercase 32-hex eMMC CID. It must reselect the same USB transport
 and read CID on every inspection. Require recovery, root, unlocked/orange,
-shell_v2, YS-M33 model, allwinner,a133 compatibility, disk size 31037849600 and
+shell_v2, the recorded factory Android model `a133`, allwinner,a133 compatibility,
+disk size 31037849600 and
 the full 17-entry reference inventory. Check both live GPT copies/CRCs with
 the existing A133Backup validator and the by-name mapping of every partition.
 Check target major/minor IDs against mountinfo so aliases cannot evade the gate.
-Reject mounted target partitions/aliases, /data or /metadata, and ambiguous
-device-mapper mounts. No root restart, reboot, unlock, wireless ADB or fallback.
+Refuse every mounted block device found through /sys/dev/block, including
+device-mapper aliases, as well as /data or /metadata. No root restart, reboot,
+unlock, wireless ADB or fallback.
 
 `write_verified(role:, path:, bytes:, sha256:, backup:, protected_env:)` allows
 only boot, resources and root. Boot/resources are exactly 33554432 bytes; root
@@ -58,7 +60,10 @@ trust model; a dedicated physical cable remains required.
 
 ## Failure and output
 
-No retries after a write starts. Exit/error status must distinguish a rejected
+Reaping after termination is bounded to one second; signal/cleanup failure
+must not replace a primary error or turn a successful body into accepted success.
+Non-block Open3 avoids its automatic unbounded join. No retries after a write starts.
+Exit/error status must distinguish a rejected
 write from a possibly partial write. Errors contain bounded symbolic reasons,
 never stderr, serial, CID, paths or env contents. Killing local ADB does not
 prove a disconnected device stopped its remote process; never promise rollback

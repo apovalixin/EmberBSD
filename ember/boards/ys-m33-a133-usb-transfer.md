@@ -25,12 +25,15 @@ EmberBSD is refused by this recovery-specific stage; do not reboot one merely
 to try the inspection.
 
 Inspection requires USB, an explicit serial/CID, shell_v2, root recovery,
-unlocked/orange, the YS-M33 model, A133 compatibility and the exact full eMMC
+unlocked/orange, the recorded factory Android model `a133`, A133 compatibility and the exact full eMMC
 geometry, GPT copies and by-name mappings. Target device IDs are checked
 against mountinfo so mount aliases cannot evade the gate. Mounted /data,
-/metadata, target partitions and ambiguous device-mapper mounts are refused.
+/metadata and every mounted block device found through /sys/dev/block are refused,
+including device-mapper under an arbitrary source alias. This conservative stage
+requires recovery with no mounted block-backed filesystems, even read-only ones.
 These checks distinguish the inspected profile; they do not authenticate
 vendor firmware or establish that another YS-M33 revision has identical hardware.
+YS-M33 is the board label, not its recorded Android model property.
 
 ## API integration boundary
 
@@ -91,6 +94,8 @@ ruby ember/tools/a133-usb-transfer-test.rb
 The channel contract executes actual child processes and binary pipe I/O,
 including NUL/CR/LF preservation, simultaneous large diagnostics/output,
 failed exit, output limits, short input, deadline and descendant termination.
+Signal-refusal injection at the OS boundary checks primary-error preservation,
+failure after unsuccessful cleanup and a bounded return with a live child.
 The transfer contract substitutes only the unavailable ADB/device boundary:
 a strict executable maps approved commands onto sparse files, and real dd
 writes/reads actual bytes. It checks full-range hash, preserved tail, intact
@@ -101,3 +106,10 @@ test-device profile. These checks do not claim physical USB/recovery acceptance.
 On 2026-10-08 installed host ADB was 37.0.1; its help confirms `shell -T`
 disables PTY and keeps remote exit codes/stdout-stderr separation. No Android
 ADB device was attached; the working EmberBSD reference was not rewritten.
+
+Ruby 4.0.5 and compatibility Ruby 2.6.10 passed 12 channel cases and 41 transfer
+cases. Independent review reproduced a device-mapper alias bypass and observed
+an intermittent EPERM cleanup failure; both received failing regressions before
+fixes. A stored factory-model mismatch was also reproduced and fixed using the
+recorded `a133` metadata. Private images/IDs and physical acceptance are outside
+these host receipts.
