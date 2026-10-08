@@ -80,7 +80,20 @@ The second sample instead has `bootdelay=0`,
 environment or erase its hook. Recovery access should be established while
 still locked before attempting an unlock. A temporary recovery command needs
 a demonstrated return to the original Android boot when USB recovery fails;
-a persistent recovery loop is not a fleet recovery mechanism.
+a persistent recovery loop is not a fleet recovery mechanism. This factory
+normal script provides an unused `hook`. A copied-file candidate keeps both
+normal boot scripts intact, sets the hook to two `run` variables, first clears
+the hook and saves the normal environment, then selects USB device mode and
+enters recovery. Restore the exact original per-device environment after
+recovery ADB is available. Do not execute it before checking the full backup.
+
+On the reference sample, volatile command trials established that the vendor
+`run` expands both hook variables before the first removes the hook, that a
+failed first variable skips the second, and that the normal script's Android
+fallback remains reachable. The save step was mocked: this validates the
+vendor parser and ordering, not a physical environment save or the second
+sample's recovery boot. The reference environment and installed boot hash
+were unchanged after returning to EmberBSD.
 
 ## Android backup and QEMU
 
