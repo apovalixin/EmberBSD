@@ -1,6 +1,6 @@
 # VirtIO-GPU acceleration for EmberBSD in UTM
 
-Status: experimental native 2D implementation; VirGL remains disabled.
+Status: native 2D verified; the separate [classic VirGL opt-in](utm-virgl-optin.md) awaits guest draw acceptance.
 Reviewed on 2026-10-06 against EmberBSD `b1d21397dca` and UTM 4.7.5.
 Target: the current NetBSD 11/aarch64-based EmberBSD installation.
 
