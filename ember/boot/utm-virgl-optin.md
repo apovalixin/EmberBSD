@@ -45,7 +45,29 @@ The [installed Mesa26/libepoxy consumer](https://github.com/oxtech-ember/EmberBS
 passed four EGL 1.5/GLES 3.0 shader/pixel/cleanup lifecycles with renderer
 `virgl`; the paired host proved ANGLE Metal on Apple M3. Target and QEMU exited
 zero, with unchanged input filesystem and verified live library providers.
-This accepts that offscreen workload, not a native Wayland session, live guest
-3D reset, console recovery, physical GPU support or sustained stability. The
-[design's validation sequence](utm-virgl-design.md#validation-sequence) remains
-the acceptance boundary.
+The subsequent matched kernel from
+`9c0b92bea0af2b69fbdfcbf633b7c0be74be650c` also passes four
+[accelerated wlroots DRM presentations](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/wlroots-virgl.md)
+at 1280x800, including GLES2 pixel checks, matching presentation events, an
+active libseat session and enumeration of two actual wscons devices. The
+paired host must include the Ports Cocoa context fix; both target and QEMU
+exit zero with the recorded package and host providers.
+
+That kernel commit fixes native modern PCI queue disable after child teardown
+has cleared the queue registry. The disable operation uses its supplied index;
+only activation needs the registered queue. Run its focused regression with:
+
+```sh
+sh ember/tools/virtio-pci-queue-contract.sh
+```
+
+The extracted production paths pass 192 cases in each of two assertion modes,
+including native execution in the guest. The same new kernel with the old
+host still fails the scanout fence, but now returns consumer failure and halts
+cleanly without the original panic. This verifies that observed teardown path,
+not recovery of rendering after arbitrary in-flight 3D reset.
+
+Application surfaces, physical input events, a complete native Wayland session,
+live guest 3D reset, console recovery, physical GPU support and sustained
+stability remain unaccepted. The [design's validation sequence](utm-virgl-design.md#validation-sequence)
+remains the acceptance boundary.
