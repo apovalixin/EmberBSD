@@ -134,8 +134,11 @@ Fault-aware access cannot guarantee completion of a stalled bus transaction.
 
 Ordinary `pdc_get` still reads only PWPR/PMER/PWSR twice and retains its
 strict errors. In physical kernel #6, CORE6 had policy `8`, emulation `0`
-and status `0`, hence `EBUSY`. The expanded diagnostic has not yet run on
-the board. Arm DEN0051E section 5.2.8 requires the requested static mode to
+and status `0`, hence `EBUSY`. Matched physical #7 confirms that mismatch
+and identifies both domains as one-Q-Channel PCK-600/PPU v1.1. Both have
+PWCR `0x101`; CORE MISR is `0`, whereas TOP MISR is `0x100`.
+All 80 reads succeeded with unchanged samples. The [physical receipt](a733-gpu-identification.md#physical-result-2026-10-08)
+records the remaining values and scope. Arm DEN0051E section 5.2.8 requires the requested static mode to
 be reached before changing PWCR.DEVREQEN. The pinned BSP's manual
 `PWCR=0; PWPR=8` GPU initialization is therefore not a justified recovery
 sequence for that mismatch. No active initialization is added here.

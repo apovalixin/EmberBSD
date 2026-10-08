@@ -358,7 +358,7 @@ on every board in the hardware catalog.
   identifies its Vivante NPU's missing Mesa TP path and pins the exact PowerVR
   firmware. The OS now supplies an [A733 PCK600 power-domain provider](ember/boot/a733-power-domains.md)
   with bounded transitions, error propagation and retained legacy FDT callbacks.
-  Its 38 software cases and GCC16 cross object builds pass. The
+  Its 45 transition scenarios and GCC16 cross object builds pass. The
   [accelerator clock providers](ember/boot/a733-accelerator-clocks.md) add module
   clocks, interface gates and resets while preserving firmware-owned PLLs.
   They pass 199 software assertions and GCC12/GCC16 object builds. A complete
@@ -369,7 +369,10 @@ on every board in the hardware catalog.
   and bus clocks gated and reset asserted, with DCDC4 programmed to 800 mV.
   A subsequent matched boot classifies the physical DCXO as 26 MHz while
   preserving the nominal DT clock. GPU_CORE's ON policy disagrees with its
-  status, so the strict reader refuses readiness. The observe-only probe
+  status, so the strict reader refuses readiness. The matched #7 kernel
+  reads stable power-controller snapshots and identifies both GPU domains
+  as single-Q-Channel PPUs; the inconsistent CORE state remains unresolved.
+  The observe-only probe
   stops before GPU MMIO; the actual GPU identity remains unverified.
   Power sequencing, shared clock arbitration, DMA/MMU
   and command submission still require porting. These are

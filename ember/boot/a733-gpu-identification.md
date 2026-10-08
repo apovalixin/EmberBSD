@@ -8,16 +8,16 @@ allocate DMA, submit commands, expose a DRM device, or provide acceleration.
 The [driver](https://github.com/oxtech-ember/EmberBSD/blob/main/sys/arch/arm/sunxi/sun60i_a733_gpu.c)
 is owned by EmberBSD. Software contracts, the complete GCC16 kernel build
 and physical attachment on Zero 3W are verified. Physical GPU identification
-has not yet been accepted. The read-only RTC/DCXO and GPU_CORE observations
-are verified in the matched #6 kernel below.
+has not yet been accepted. The read-only RTC/DCXO and expanded GPU
+power-controller observations are verified in the matched #7 kernel below.
 
 ## Physical result, 2026-10-08
 
-A 4 GiB Orange Pi Zero 3W booted the matched `EMBER64 #6` kernel, four
-modules and A733 DTBs from `bd1581bffc1da287f793e8b9bad02cfadd7b593a`.
+A 4 GiB Orange Pi Zero 3W booted the matched `EMBER64 #7` kernel, four
+modules and A733 DTBs from `dfe456bf1fba2ec41c0fe11a6a8469b1bd960b99`.
 The board revision was not recorded. Vendor boot0/U-Boot and the boot script
 were preserved. Eight CPUs, microSD root and Wi-Fi/SSH returned. Installed
-hashes matched the bundle; the previous #5 boot files were backed up on
+hashes matched the bundle; the previous #6 boot files were backed up on
 the board and development host before installation.
 
 RTC status was stable at `0x183fb0f7`, classifying DCXO as 26 MHz. Both RTC
@@ -26,10 +26,21 @@ still reports its unchanged 24 MHz DT value. With the hardware-classified
 26 MHz input, PLL_REF `0xf8675f00` (N=96, M=104, P=1) normalizes exactly to
 24 MHz. This is register decoding, not an independent frequency measurement.
 
-The earlier PCK attachment observed GPU_CORE domain 6 twice: PWPR `0x8`,
-PMER `0x0`, PWSR `0x0`. The static-ON policy and status disagree, so its strict
-reader returns `EBUSY` instead of declaring the domain ready. This separate
-attach-time observation is not a guarantee for the later GPU consumer.
+The bounded [PCK diagnostic](a733-power-domains.md#read-only-gpu-ppu-diagnostic)
+read 20 registers twice for each GPU domain, with no changed values.
+Both identify as PCK-600, PPU v1.1, with one Q-Channel: IDR0 `0x10130101`,
+IDR1 `0x2`, IIDR `0x0b61143b`, AIDR `0x11`. The key states were:
+
+| Domain | PWPR | PMER | PWSR | DISR | MISR | PWCR |
+| --- | --- | --- | --- | --- | --- | --- |
+| GPU_TOP (5) | `0x8` | `0` | `0x8` | `0` | `0x100` | `0x101` |
+| GPU_CORE (6) | `0x8` | `0` | `0` | `0x1` | `0` | `0x101` |
+
+CORE's static-ON policy and status remain inconsistent with the strict
+reader's readiness contract. MISR reports sampled input levels, not the
+controller's transition phase or its request output. These observations
+do not establish the cause or justify overriding the handshake enables.
+No register writes or GPU accesses were added by this diagnostic.
 
 `sun60igpuid0` reports `GPU module gated (error 16)`, with DCDC4 programmed to
 800000 microvolts and GPU_TOP statically ON. Both complete CCU snapshots
@@ -48,12 +59,14 @@ This was a short reboot/observation check, not a sustained run.
 
 RTC, CCU, PCK and GPU contracts pass 134, 14,997, 1,661 and 864 assertions
 with fake hardware on the host and under #5; PCK also passes 45 scenarios.
-Host ASan/UBSan and five rejecting mutation controls passed. The prior native
-kernel suite is reused because all 14 source inputs are unchanged. The #6
-build includes current CTF tools; its CTF and split-debug CRC checks pass.
+The expanded PCK diagnostic adds 236 scenarios, accepted on the host and
+under physical #6 with fake MMIO; host ASan/UBSan and eight rejecting
+mutation controls pass. The prior native kernel suite is reused because
+all 14 source inputs are unchanged. The #7 build includes current CTF tools;
+its 20,792 CTF types and split-debug CRC checks pass.
 These software results do not substitute for physical GPU identification.
 Native image SHA256:
-`064a8b24242fba4d63b90cfc20b3c3e5eb82d8d68119bf40ba0e2bbec23637c7`;
+`8dcabd7fda12aa3af054bdb771b303df11885f5351aebf36147b10a836ef9f3e`;
 Zero 3W DTB SHA256:
 `a2bd07430948db61140040a1a5c0d5872f5797a4719d7af6ff00b6c0d8d88113`.
 
