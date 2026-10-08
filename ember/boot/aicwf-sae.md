@@ -12,13 +12,15 @@ The station path accepts SAE, CCMP and required PMF with BIP-CMAC-128.
 The firmware key command has no initial IGTK packet-number field. The
 client therefore rejects a nonzero initial IPN instead of silently losing
 the replay boundary. Networks/rekeys supplying such an IPN cannot complete
-this path yet. Firmware PMF behavior needs separate physical acceptance;
-passing the software checks alone is not a WPA3 support claim.
+this path yet. On a physical Zero 3W, required PMF negotiation, SAE/H2E,
+IGTK installation and bidirectional traffic pass. Management-frame forgery
+and replay injection remain untested; this is not a WPA3 certification claim.
 
 SAE configuration is privileged. A generation and peer bind commands to one
 association. Authentication frames must have bounded length, the selected
 AP's addresses and SAE algorithm; fragments, foreign peers and other frame
-types are rejected. Firmware response status must be present. External-auth requests accept
+types are rejected. An internal lifetime counter also retires queued commands and late replies
+after a disconnect or profile change. Firmware response status must be present. External-auth requests accept
 the two SAE selector byte orders supported by upstream wpa_supplicant. IGTK hardware
 slots are separate from the pairwise-data-key slot.
 
@@ -33,16 +35,43 @@ This work does not add 802.11r fast transition, 802.11v BSS transition
 management, 802.11ac/ax or host AP mode. The [Zero 3W board page](../boards/orange-pi-zero-3w.md)
 records actual physical results separately.
 
+## Band steering and acceptance
+
+A successful SAE handshake does not prove sustained data traffic. A mesh AP
+can remove a 2.4 GHz station under its band-steering policy while the client
+still reports `COMPLETED`. Compare the AP log with host-side SSH and packet
+checks before attributing that failure to SAE or the kernel. In the physical
+Zero 3W trial, the AP explicitly prohibited 2.4 GHz about a minute after joining;
+the same policy removed WPA2 and WPA3 associations.
+
+Do not pin the client to a BSSID that the AP's policy forbids. For a network
+that requires 5 GHz, set the network profile's `freq_list` to its allowed
+5 GHz frequencies, without a BSSID lock. Other network profiles can retain
+2.4 GHz support. `freq_list` restricts candidate APs; it is not a preference
+with a 2.4 GHz fallback. Preserve another profile if that fallback is needed.
+
+When testing the only network interface, keep the recovery timer armed until
+a separate host confirms SSH and bidirectional traffic after the operation.
+A single successful gateway ping immediately after association is insufficient.
+
 ## Checks
 
 ```sh
 sh ember/tests/aicwf-sae.sh
 sh ember/tests/aicwf-scan.sh
+sh ember/tests/aicwf-scan-channel.sh
+sh ember/tests/aicwf-flow-control.sh
 sh ember/tests/aicwf-command.sh
+sh ember/tests/aicwf-sae-lifetime.sh
+sh ember/tests/aicwf-sae-event.sh
 ```
 
 The first runs bounded AIC request/frame/IGTK checks and the shared RSN
-security checks also used by bwfm. For a live ABI check, build
+security checks also used by bwfm. The extracted-function regressions cover
+connected scans, adjacent-channel beacons, the D80 free-buffer register,
+short command replies, stale commands and confirmations,
+CONFIGURE during requested leave, and allocation failure in SAE events.
+For a live ABI check, build
 `ember/tools/bwfm-sae-ioctl.c` with the current net80211 headers and run it as
 root with `aicwf0`, with the supplicant stopped and recovery arranged.
 It checks lengths, version/reserved fields, stale authorization and denial
@@ -54,6 +83,6 @@ the driver being tested.
 The wire layout was inspected in Radxa's AIC8800 SDIO driver at revision
 [`d13d07963cd15d731e2895e8288a04cca6152ac9`](https://github.com/radxa-pkg/aic8800/tree/d13d07963cd15d731e2895e8288a04cca6152ac9/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv):
 `lmac_msg.h`, `lmac_mac.h`, `rwnx_msg_tx.c`, `rwnx_msg_rx.c`, `rwnx_tx.c`
-and `rwnx_rx.h`. The BSD implementation uses those protocol facts; it does
+`rwnx_rx.h` and `aicwf_sdio.c`. The BSD implementation uses those protocol facts; it does
 not import the GPL Linux driver. Keep the vendor firmware's redistribution
 terms separate from the host driver's licence.

@@ -607,10 +607,12 @@ passed without command timeouts. No WPA3 throughput improvement is claimed.
   The published driver disables autonomous firmware WNM transitions.
   A seamless handover is not claimed.
 - **802.11r fast transition** is not implemented by the external-SAE work.
-- **Zero 3W connected scans** can lose network access with AIC8800D80;
-  [the board page](ember/boards/orange-pi-zero-3w.md#wi-fi-limits-and-connected-scan-regression)
-  records two occurrences and recovery limits. Its current Wi-Fi support is
-  WPA2, without the bwfm SAE or roaming extensions.
+- **Zero 3W Wi-Fi:** the AIC8800D80 connected-scan recovery is fixed and
+  physically checked. [External SAE/H2E with required PMF](ember/boot/aicwf-sae.md)
+  connects on 5 GHz and passes an 8 MiB transfer each way. Nonzero initial
+  IGTK packet numbers are rejected; 802.11r/v and long-duration acceptance
+  remain outside this result. The [board page](ember/boards/orange-pi-zero-3w.md#wi-fi-limits-and-connected-scan-regression)
+  records the firmware, bundle and tests.
 - **Short firmware replies** still need a command-transport fix and regression.
 
 Changes to association and command handling should preserve the SAE and

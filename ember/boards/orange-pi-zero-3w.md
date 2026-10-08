@@ -16,7 +16,7 @@ Board revision: not recorded in the original support table.
 | Serial console | Tested |
 | All CPU cores | Tested (8 cores, a minute of full load at 62 degC with the kit's cooler) |
 | Ethernet | No port |
-| Wi-Fi | Tested: WPA2 on 2.4 and 5 GHz with 802.11n, 32 MiB transfers each way with matching checksums; needs the vendor firmware file; see connected-scan regression below |
+| Wi-Fi | Tested: WPA2 on 2.4 and 5 GHz with 802.11n, 32 MiB transfers each way with matching checksums; WPA3-SAE/H2E with required PMF and 8 MiB each way also passes; needs vendor firmware; see Wi-Fi limits below |
 | Bluetooth | Classic: inquiry Tested, pairing not tried; BLE: No; needs the vendor patch files |
 | Temperature sensor | Tested (five sensors) |
 | Fan control | No |
@@ -58,22 +58,61 @@ devices, Bluetooth pairing, a long run
 
 ## Wi-Fi limits and connected-scan regression
 
-On 2026-10-08, a 4 GiB Zero 3W running `EMBER64 #8` (built 12:48 UTC)
-connected to a 5 GHz channel-60 mesh AP using WPA2-PSK/CCMP. The installed
-ELF kernel SHA256 was
-`39db19d163b493dff8ac5044e46ed3a7f566cf0c9ab010f017e79855edb09ed3`. The radio was
-AIC8800D80 SDIO, firmware 0x06090101 (`g586bc1e8`, built 2025-12-05).
-This installation and driver do not advertise SAE; external SAE/PMF,
-802.11r FT and 802.11v BSS transitions are not implemented in the AIC path.
-CM5 bwfm results do not validate this radio.
+The 2026-10-08 check used a 4 GiB Zero 3W, AIC8800D80 SDIO firmware
+0x06090101 (`g586bc1e8`, built 2025-12-05), and wpa_supplicant 2.11.
+The GCC16 `EMBER64 #9` bundle from `060cf95ccc75b47a6c225425214d40596f672a3e`
+booted with eight CPUs, microSD root and Wi-Fi. WPA3-Personal completed on a
+5 GHz channel-60 mesh AP: SAE group 19, H2E, required PMF and BIP-CMAC-128.
+An 8 MiB file transferred each way with an exact comparison. The persistent
+5 GHz SAE profile uses the normal rc service and leaves BSSID selection open.
+On the preceding `c8fabb0f4` bundle, three reconnects
+to the same AP without flushing PMKSA took 9, 10 and 9 seconds. A wrong
+password caused three SAE attempts without connection over 30 seconds;
+restoring the password, a WPA2 regression and the return to SAE passed. All 16 live
+SAE ioctl checks passed. See [configuration, protocol and checks](../boot/aicwf-sae.md).
 
-Requesting a scan while connected lost network access twice: once through
-`wpa_cli scan` and once through `ifconfig aicwf0 list scan`. The latter also
-starts an active scan; it is not a read-only cache query. Both cases required
-an operator power cycle to restore access. No serial trace or crash dump
-established the cause, so neither a kernel panic nor a firmware deadlock is
-claimed. Use cached `wpa_cli scan_results` for inspection, and arrange
-serial access or an independent recovery path before reproducing the failure.
+The earlier connected-scan failure is fixed: a user scan forced net80211
+into INIT without notifying the supplicant that the old station had left.
+The firmware disconnected, while the client retained its COMPLETED state.
+The corrected path emits the missing departure before scanning. Three
+`wpa_cli scan` and three `ifconfig aicwf0 list scan` trials recovered
+association and traffic automatically; repeated trials took 11–30 seconds
+to a successful gateway check. One required a retry after AP refusal.
+On the final bundle, three SAE/PMF scans recovered 5 GHz traffic in 9, 11
+and 9 seconds across two mesh APs. Host-side SSH and an exact 8 MiB transfer
+passed after the series. These scans interrupt traffic; seamless scanning
+is not claimed. The driver also respects beacon DS/HT primary channels
+and the D80's eight-bit SDIO buffer count; both have causal regressions.
+
+A forced 2.4 GHz SAE association completed, but a subsequent file transfer
+stopped after about a minute. The AP log recorded band-steering removal at
+the same time; a WPA2 control reproduced that policy. The firmware/client
+can still report COMPLETED after this removal. This trial does not establish
+sustained WPA3 traffic on 2.4 GHz. The installed network profile restricts
+candidates to 5 GHz to match the AP policy, without pinning one BSSID.
+Other profiles retain their existing band choices. See
+[band steering and acceptance](../boot/aicwf-sae.md#band-steering-and-acceptance).
+
+`ifconfig aicwf0 list scan` actively scans. Use cached `wpa_cli scan_results`
+to inspect results without starting another scan. On a board with Wi-Fi as
+its only link, arrange serial access or a tested hardware-watchdog recovery
+before changing the driver or authentication policy. The controlled baseline
+kept running after the failed scan; no kernel panic was established.
+
+The firmware key interface has no initial IGTK packet-number field.
+Nonzero initial IPNs are rejected; networks or rekeys requiring them are
+not supported yet. Protected-management replay/forgery injection and a
+long-duration run remain unverified. This AIC path does not implement
+802.11r FT, 802.11v BSS transition management, 802.11ac/ax or host AP mode.
+CM5 bwfm results do not validate these features on AIC8800D80.
+
+Bundle SHA256: ELF
+`48080e3123b837b3afcc977602116ecd2b1f806fd727a832b029f94e2d20e3ff`;
+native image
+`3149a3e78f8db19643a2bcbb0bda572f10f35132bc3a398eba2c61d8e8335267`.
+The four modules were installed from the same build. Existing DTB, boot
+firmware and partition layout were preserved; a previous kernel remains
+available for recovery.
 
 ## Evidence
 
