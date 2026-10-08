@@ -30,6 +30,7 @@ Board revision: not recorded in the original support table.
 | Voltage regulators | All outputs of the AXP8191 read at boot; not measured |
 | USB | Controllers and the Type-C controller attach; no device tried |
 | Hardware random numbers | Tested |
+| GPU/NPU power domains | Native PCK600 provider passes software contracts and GCC16 cross object builds; physical transitions and acceleration unverified ([guide](../boot/a733-power-domains.md)) |
 
 Long-run stability has not been established. Application results from an
 AArch64 VM do not validate this board's camera, audio or GPU/NPU paths.

@@ -69,6 +69,9 @@ fdtbus_register_powerdomain_controller(device_t dev, int phandle,
 		aprint_debug_dev(dev, "missing #power-domain-cells");
 		return EINVAL;
 	}
+	if (cells > INT_MAX || funcs == NULL ||
+	    (funcs->pdc_set == NULL && funcs->pdc_enable == NULL))
+		return EINVAL;
 
 	pdc = kmem_alloc(sizeof(*pdc), KM_SLEEP);
 	pdc->pdc_dev = dev;
@@ -100,7 +103,7 @@ fdtbus_powerdomain_enable_internal(int phandle, int index, bool enable)
 	int len;
 	const uint32_t *pds = fdtbus_get_prop(phandle, "power-domains", &len);
 
-	if (pds == NULL)
+	if (pds == NULL || len <= 0 || len % sizeof(*pds) != 0)
 		return EINVAL;
 
 	for (const uint32_t *pd = pds; pd < pds + len / sizeof(*pd); index--) {
@@ -112,8 +115,22 @@ fdtbus_powerdomain_enable_internal(int phandle, int index, bool enable)
 		if (pdc == NULL)
 			return ENXIO;
 
-		if (index < 0 || index == 0)
-			pdc->pdc_funcs->pdc_enable(pdc->pdc_dev, pd, enable);
+		/* Do not pass a truncated specifier to a controller. */
+		if (pdc->pdc_cells < 0 ||
+		    pdc->pdc_cells >= pds + len / sizeof(*pd) - pd)
+			return EINVAL;
+
+		if (index <= 0) {
+			if (pdc->pdc_funcs->pdc_set != NULL) {
+				const int error = pdc->pdc_funcs->pdc_set(
+				    pdc->pdc_dev, pd, enable);
+				if (error != 0)
+					return error;
+			} else {
+				pdc->pdc_funcs->pdc_enable(pdc->pdc_dev,
+				    pd, enable);
+			}
+		}
 		if (index == 0)
 			break;
 

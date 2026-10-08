@@ -219,6 +219,8 @@ struct fdtbus_powerdomain_controller;
 
 struct fdtbus_powerdomain_controller_func {
 	void 	(*pdc_enable)(device_t, const uint32_t *, bool);
+	/* Optional checked operation; takes precedence over pdc_enable. */
+	int	(*pdc_set)(device_t, const uint32_t *, bool);
 };
 
 

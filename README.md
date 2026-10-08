@@ -333,8 +333,11 @@ on every board in the hardware catalog.
   NPU execution remain unverified.
   The [A733 Ports audit](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/a733-accelerators)
   identifies its Vivante NPU's missing Mesa TP path and pins the exact PowerVR
-  firmware. On the available Zero 3W, accelerator drivers are not attached;
-  native power, DMA/MMU and command submission still require porting. These are
+  firmware. The OS now supplies an [A733 PCK600 power-domain provider](ember/boot/a733-power-domains.md)
+  with bounded transitions, error propagation and retained legacy FDT callbacks.
+  Its 38 software cases and GCC16 cross object builds pass; physical power
+  transitions are unverified. On the available Zero 3W, accelerator drivers
+  are not attached; device clocks, DMA/MMU and command submission still require porting. These are
   porting targets, not available EmberBSD acceleration. Board bring-up,
   driver/DMA integration, compatible runtime and real model execution must
   all pass before an accelerated AI workflow is claimed.

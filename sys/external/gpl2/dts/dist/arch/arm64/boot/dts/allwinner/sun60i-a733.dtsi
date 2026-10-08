@@ -1009,6 +1009,14 @@
 			#reset-cells = <1>;
 		};
 
+		/* No consumer is powered merely by attaching this provider. */
+		pck600: power-controller@7060000 {
+			compatible = "allwinner,sun60i-a733-pck-600";
+			reg = <0x07060000 0xb000>;
+			clocks = <&r_ccu CLK_BUS_R_PPU>;
+			#power-domain-cells = <1>;
+		};
+
 		/* Pins of the always-on domain. */
 		r_pio: pinctrl@7025000 {
 			compatible = "allwinner,sun60i-a733-r-pinctrl";
