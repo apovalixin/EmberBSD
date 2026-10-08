@@ -40,6 +40,12 @@
 #define TOUCH SOC "/twi@0x05002c00/goodix_ts@5d"
 #define CODEC SOC "/codec@0x05096000"
 #define SOUND SOC "/sound@0"
+#define SDIO SOC "/sdmmc@04021000"
+#define SDIO_GROUP PIO "/sdc1@0"
+#define SDIO_PINS PIO "/ember-mmc1-pins"
+#define WLAN SOC "/wlan@0"
+#define RPIO SOC "/pinctrl@07022000"
+#define SDIO_MARK "ember,ys-m33-sdio-host"
 
 int sun50i_a133_fdt_fixup(void *);
 
@@ -287,6 +293,149 @@ a133_framebuffer(void *fdt)
 	return 0;
 }
 
+static bool
+a133_sdio_value(const void *fdt, const char *path, const char *name,
+    const void *value, int size)
+{
+	const void *p;
+	int node, len;
+
+	node = fdt_path_offset(fdt, path);
+	if (node < 0)
+		return false;
+	p = fdt_getprop(fdt, node, name, &len);
+	return p != NULL && len == size && memcmp(p, value, size) == 0;
+}
+
+static bool
+a133_sdio_cell(const void *fdt, const char *path, const char *name,
+    uint32_t value)
+{
+	fdt32_t cell = cpu_to_fdt32(value);
+
+	return a133_sdio_value(fdt, path, name, &cell, sizeof(cell));
+}
+
+/* Host discovery only: preserve radio power and all legacy GPIO providers. */
+static int
+a133_sdio(void *fdt, uint32_t ccu)
+{
+	static const char pins[] = "PG0\0PG1\0PG2\0PG3\0PG4\0PG5";
+	static const char *remove[] = {
+		"vmmc-supply", "vqmmc-supply", "sd-uhs-sdr12",
+		"sd-uhs-sdr25", "sd-uhs-sdr50", "sd-uhs-sdr104",
+		"sd-uhs-ddr50", "pinctrl-1"
+	};
+	fdt32_t cells[7], cell;
+	uint32_t rpio, legacy, pinhandle, gic;
+	bool owned, valid_marker, okay;
+	int node, len, error;
+
+	node = fdt_path_offset(fdt, SDIO);
+	if (node < 0)
+		return 0;
+	owned = fdt_getprop(fdt, node, SDIO_MARK, &len) != NULL;
+	valid_marker = owned && len == 0;
+	okay = a133_audio_okay(fdt, SDIO);
+	if (owned) {
+		/* Withdraw attachment before checking opt-in or altered resources. */
+		A133_STRING(SDIO, "status", "disabled");
+		node = fdt_path_offset(fdt, SDIO);
+		error = fdt_delprop(fdt, node, SDIO_MARK);
+		if (error != 0)
+			return error;
+	}
+	if (fdt_getprop(fdt, 0, "ember,ys-m33-sdio-probe", &len) == NULL ||
+	    len != 0 || !okay || (owned && !valid_marker) ||
+	    !a133_audio_okay(fdt, WLAN))
+		return 0;
+	node = fdt_path_offset(fdt, SDIO);
+	if (fdt_node_check_compatible(fdt, node,
+	    "allwinner,sunxi-mmc-v5p3x") != 0 &&
+	    (!valid_marker || fdt_node_check_compatible(fdt, node,
+	    "allwinner,sun50i-a100-mmc") != 0))
+		return 0;
+	if (fdt_getprop(fdt, node, "mmc-pwrseq", &len) != NULL)
+		return 0;
+	cells[0] = 0; cells[1] = cpu_to_fdt32(0x04021000);
+	cells[2] = 0; cells[3] = cpu_to_fdt32(0x1000);
+	if (!a133_sdio_value(fdt, SDIO, "reg", cells, 16) ||
+	    !a133_sdio_cell(fdt, SDIO, "bus-width", 4) ||
+	    !a133_sdio_value(fdt, SDIO, "device_type", "sdc1", 5))
+		return 0;
+	cells[0] = 0; cells[1] = cpu_to_fdt32(40); cells[2] = cpu_to_fdt32(4);
+	if (!a133_sdio_value(fdt, SDIO, "interrupts", cells, 12) ||
+	    !a133_sdio_value(fdt, SDIO_GROUP, "allwinner,pins",
+	    pins, sizeof(pins)) ||
+	    !a133_sdio_value(fdt, SDIO_GROUP, "allwinner,function", "sdc1", 5) ||
+	    !a133_sdio_cell(fdt, SDIO_GROUP, "allwinner,muxsel", 2) ||
+	    !a133_sdio_cell(fdt, SDIO_GROUP, "allwinner,drive", 3) ||
+	    !a133_sdio_cell(fdt, SDIO_GROUP, "allwinner,pull", 1))
+		return 0;
+	node = fdt_path_offset(fdt, SDIO_GROUP);
+	legacy = fdt_get_phandle(fdt, node);
+	node = fdt_path_offset(fdt, RPIO);
+	if (node < 0 || (rpio = fdt_get_phandle(fdt, node)) == 0 ||
+	    !a133_sdio_cell(fdt, RPIO, "#gpio-cells", 6) ||
+	    !a133_sdio_cell(fdt, WLAN, "wlan_busnum", 1) || legacy == 0)
+		return 0;
+	node = fdt_path_offset(fdt, WLAN);
+	if (fdt_node_check_compatible(fdt, node, "allwinner,sunxi-wlan") != 0)
+		return 0;
+	cells[0] = cpu_to_fdt32(rpio); cells[1] = cpu_to_fdt32(11);
+	cells[2] = cpu_to_fdt32(5); cells[3] = cpu_to_fdt32(1);
+	cells[4] = cells[5] = cpu_to_fdt32(UINT32_MAX); cells[6] = 0;
+	if (!a133_sdio_value(fdt, WLAN, "wlan_regon", cells, 28))
+		return 0;
+	cells[2] = cpu_to_fdt32(6); cells[3] = cpu_to_fdt32(6);
+	if (!a133_sdio_value(fdt, WLAN, "wlan_hostwake", cells, 28))
+		return 0;
+	node = fdt_path_offset(fdt, SDIO_PINS);
+	if (owned) {
+		if (node < 0 || (pinhandle = fdt_get_phandle(fdt, node)) == 0 ||
+		    !a133_sdio_cell(fdt, SDIO, "pinctrl-0", pinhandle) ||
+		    !a133_sdio_value(fdt, SDIO_PINS, "pins", pins, sizeof(pins)) ||
+		    !a133_sdio_value(fdt, SDIO_PINS, "function", "mmc1", 5))
+			return 0;
+	} else if (node >= 0 || !a133_sdio_cell(fdt, SDIO, "pinctrl-0", legacy))
+		return 0;
+	node = fdt_path_offset(fdt, "/interrupt-controller@03020000");
+	if (node < 0 || (gic = fdt_get_phandle(fdt, node)) == 0)
+		return 0;
+
+	/* Keep the host disabled until all resource updates have succeeded. */
+	A133_STRING(SDIO, "status", "disabled");
+	node = a133_node(fdt, PIO, "ember-mmc1-pins", &pinhandle);
+	if (node < 0)
+		return node;
+	A133_SET(SDIO_PINS, "pins", pins, sizeof(pins));
+	A133_STRING(SDIO_PINS, "function", "mmc1");
+	A133_CELL(SDIO_PINS, "drive-strength", 30);
+	A133_SET(SDIO_PINS, "bias-pull-up", NULL, 0);
+	cells[0] = cpu_to_fdt32(ccu); cells[1] = cpu_to_fdt32(A100_CLK_BUS_MMC1);
+	cells[2] = cpu_to_fdt32(ccu); cells[3] = cpu_to_fdt32(A100_CLK_MMC1);
+	A133_SET(SDIO, "clocks", cells, 16);
+	A133_STRING(SDIO, "clock-names", "ahb\0mmc");
+	cells[1] = cpu_to_fdt32(A100_RST_BUS_MMC1);
+	A133_SET(SDIO, "resets", cells, 8);
+	A133_STRING(SDIO, "reset-names", "ahb");
+	A133_CELL(SDIO, "interrupt-parent", gic);
+	A133_CELL(SDIO, "pinctrl-0", pinhandle);
+	A133_STRING(SDIO, "pinctrl-names", "default");
+	A133_CELL(SDIO, "max-frequency", 25000000);
+	A133_SET(SDIO, "non-removable", NULL, 0);
+	for (unsigned int i = 0; i < sizeof(remove) / sizeof(remove[0]); i++) {
+		node = fdt_path_offset(fdt, SDIO);
+		error = fdt_delprop(fdt, node, remove[i]);
+		if (error != 0 && error != -FDT_ERR_NOTFOUND)
+			return error;
+	}
+	A133_SET(SDIO, SDIO_MARK, NULL, 0);
+	A133_STRING(SDIO, "compatible", "allwinner,sun50i-a100-mmc");
+	A133_STRING(SDIO, "status", "okay");
+	return 0;
+}
+
 int
 sun50i_a133_fdt_fixup(void *fdt)
 {
@@ -413,6 +562,9 @@ sun50i_a133_fdt_fixup(void *fdt)
 				    "interrupt-parent", gic);
 		}
 	}
+	error = a133_sdio(fdt, ccu);
+	if (error != 0)
+		return error;
 	error = a133_audio(fdt);
 	if (error != 0)
 		return error;
