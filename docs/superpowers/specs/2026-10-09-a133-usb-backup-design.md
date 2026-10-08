@@ -52,6 +52,11 @@ Freshly verify it with A133Capture, reinspect the source, then publish the final
 manifest without replacement and fsync the directory. A failed invocation never
 reports success; an interrupted publication must not be inferred ready merely
 from filenames. No host/device power-loss durability is claimed by these tests.
+Retain parent/destination directory descriptors through the invocation and all
+eight output descriptors through fresh verification, final source inspection
+and publication. Recheck paths/privacy/stat before and after publication.
+Publishing the manifest deliberately changes ctime; compare its actual content
+with the original generated record in addition to the retained inode/mtime.
 
 Return a redacted usb_backup_captured receipt: counts/bytes, boot-area verification,
 filesystem_consistency=not_established_by_integrity_check, writes_performed0 and

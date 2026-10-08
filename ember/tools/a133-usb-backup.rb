@@ -49,6 +49,60 @@ module A133UsbBackup
     {bytes:count,sha256:digest.hexdigest}
   end
 
+  def private_directory(path)
+    before = File.lstat(path)
+    File.open(path,File::RDONLY|File::NOFOLLOW|File::NONBLOCK) do |directory|
+      check = lambda do
+        [directory.stat,File.lstat(path)].each do |stat|
+          raise Invalid,'usb_backup_unsafe_directory' unless stat.directory? && stat.uid==Process.uid &&
+            stat.mode&07777==0700 && stat.dev==before.dev && stat.ino==before.ino
+        end
+      end
+      check.call
+      result = yield check
+      check.call
+      result
+    end
+  end
+
+  def retained_outputs(directory,names,manifest_text)
+    opened = []
+    names.each do |name|
+      path = File.join(directory,name)
+      before = File.lstat(path)
+      file = File.open(path,File::RDONLY|File::NOFOLLOW|File::NONBLOCK)
+      opened << {name:name,file:file,before:file.stat}
+      same_inode!(path,before)
+      raise Invalid,'usb_backup_output_changed' unless file.stat.dev==before.dev && file.stat.ino==before.ino
+    end
+    expected_manifest_sha = Digest::SHA256.hexdigest(manifest_text)
+    check = lambda do |published|
+      opened.each do |entry|
+        manifest = entry[:name]=='capture.json.partial'
+        path = File.join(directory,manifest && published ? 'capture.json' : entry[:name])
+        fields = [:dev,:ino,:size,:mtime,:ctime,:uid,:mode,:nlink]
+        # Publishing this same inode changes ctime by link/unlink intentionally.
+        # Its actual bytes are additionally checked against the generated record.
+        fields -= [:ctime] if manifest && published
+        [entry[:file].stat,File.lstat(path)].each do |stat|
+          raise Invalid,'usb_backup_output_changed' unless stat.file? && stat.uid==Process.uid &&
+            stat.mode&07777==0600 && stat.nlink==1 && fields.all? do |field|
+              stat.public_send(field)==entry[:before].public_send(field)
+            end
+        end
+        if manifest
+          entry[:file].rewind
+          text = entry[:file].read(65537) || ''.b
+          raise Invalid,'usb_backup_output_changed' unless Digest::SHA256.hexdigest(text)==expected_manifest_sha
+        end
+      end
+    end
+    check.call(false)
+    yield check
+  ensure
+    opened.each { |entry| entry[:file].close unless entry[:file].closed? } if opened
+  end
+
   def collect(directory:,adb:'adb',serial:nil,state:'device',root_method:'vendor_su',timeout:3600)
     raise Invalid,'invalid_arguments' unless directory.is_a?(String) && timeout.is_a?(Integer) && (1..7200).cover?(timeout)
     directory = File.expand_path(directory)
@@ -59,37 +113,48 @@ module A133UsbBackup
     raise Invalid,'usb_backup_destination_exists' if File.exist?(directory) || File.symlink?(directory)
     source = Source.new(adb:adb,serial:serial,state:state,root_method:root_method,timeout:timeout)
     Timeout.timeout(timeout,Deadline) do
-      identity = source.inspect!
-      begin
-        Dir.mkdir(directory,0700)
-      rescue Errno::EEXIST
-        raise Invalid,'usb_backup_destination_exists'
+      private_directory(File.dirname(directory)) do |parent_check|
+        identity = source.inspect!
+        begin
+          Dir.mkdir(directory,0700)
+        rescue Errno::EEXIST
+          raise Invalid,'usb_backup_destination_exists'
+        end
+        private_directory(directory) do |directory_check|
+          results = {}
+          names = {'disk'=>'emmc.raw','bootloader'=>'bootloader.bin','env'=>'env.bin','boot'=>'boot.bin',
+            'recovery'=>'recovery.bin','boot0'=>'boot0.bin','boot1'=>'boot1.bin'}
+          names.each do |role,name|
+            results[role] = save_stream(directory,name) { |sink| source.read(role) { |chunk| sink.call(chunk) } }
+          end
+          manifest = {'schema'=>2,'board'=>'ys-m33-a133','serial'=>identity[:serial],'cid'=>identity[:cid],
+            'capture_state'=>identity[:state],'root_method'=>identity[:root_method],
+            'uncompressed_sha256'=>results.fetch('disk').fetch(:sha256),
+            'backup'=>{'file'=>'emmc.raw','format'=>'raw'},
+            'partitions'=>%w[bootloader env boot recovery].map { |role| {'role'=>role,'file'=>names.fetch(role)} },
+            'hardware_boot'=>%w[boot0 boot1].map { |role| {'role'=>role,'file'=>names.fetch(role),
+              'bytes'=>results.fetch(role).fetch(:bytes),'sha256'=>results.fetch(role).fetch(:sha256)} }}
+          manifest_text = JSON.generate(manifest)
+          candidate = File.join(directory,'capture.json.partial')
+          candidate_stat = nil
+          File.open(candidate,File::WRONLY|File::CREAT|File::EXCL,0600) do |file|
+            candidate_stat = file.stat
+            file.write(manifest_text); file.flush; file.fsync
+          end
+          retained_outputs(directory,names.values+['capture.json.partial'],manifest_text) do |check|
+            verified = A133Capture.verify(candidate,serial:identity[:serial],cid:identity[:cid],timeout:timeout)
+            source.inspect!
+            check.call(false)
+            directory_check.call; parent_check.call
+            publish(candidate,File.join(directory,'capture.json'),candidate_stat)
+            check.call(true)
+            directory_check.call; parent_check.call
+            {status:'usb_backup_captured',host_files_created:8,saved_bytes:results.values.sum { |entry| entry[:bytes] },
+              hardware_boot_copies_verified:verified.fetch('hardware_boot_copies_verified'),
+              filesystem_consistency:verified.fetch('filesystem_consistency'),writes_performed:0,installation_ready:false}
+          end
+        end
       end
-      results = {}
-      names = {'disk'=>'emmc.raw','bootloader'=>'bootloader.bin','env'=>'env.bin','boot'=>'boot.bin',
-        'recovery'=>'recovery.bin','boot0'=>'boot0.bin','boot1'=>'boot1.bin'}
-      names.each do |role,name|
-        results[role] = save_stream(directory,name) { |sink| source.read(role) { |chunk| sink.call(chunk) } }
-      end
-      manifest = {'schema'=>2,'board'=>'ys-m33-a133','serial'=>identity[:serial],'cid'=>identity[:cid],
-        'capture_state'=>identity[:state],'root_method'=>identity[:root_method],
-        'uncompressed_sha256'=>results.fetch('disk').fetch(:sha256),
-        'backup'=>{'file'=>'emmc.raw','format'=>'raw'},
-        'partitions'=>%w[bootloader env boot recovery].map { |role| {'role'=>role,'file'=>names.fetch(role)} },
-        'hardware_boot'=>%w[boot0 boot1].map { |role| {'role'=>role,'file'=>names.fetch(role),
-          'bytes'=>results.fetch(role).fetch(:bytes),'sha256'=>results.fetch(role).fetch(:sha256)} }}
-      candidate = File.join(directory,'capture.json.partial')
-      candidate_stat = nil
-      File.open(candidate,File::WRONLY|File::CREAT|File::EXCL,0600) do |file|
-        candidate_stat = file.stat
-        file.write(JSON.generate(manifest)); file.flush; file.fsync
-      end
-      verified = A133Capture.verify(candidate,serial:identity[:serial],cid:identity[:cid],timeout:timeout)
-      source.inspect!
-      publish(candidate,File.join(directory,'capture.json'),candidate_stat)
-      {status:'usb_backup_captured',host_files_created:8,saved_bytes:results.values.sum { |entry| entry[:bytes] },
-        hardware_boot_copies_verified:verified.fetch('hardware_boot_copies_verified'),
-        filesystem_consistency:verified.fetch('filesystem_consistency'),writes_performed:0,installation_ready:false}
     end
   rescue Invalid,A133Capture::Invalid,A133Usb::Invalid,A133Backup::Invalid => error
     raise Invalid,error.message,cause:nil
@@ -100,7 +165,7 @@ module A133UsbBackup
   rescue ArgumentError
     raise Invalid,'invalid_arguments',cause:nil
   end
-  private_class_method :directory_sync,:same_inode!,:publish,:save_stream
+  private_class_method :directory_sync,:same_inode!,:publish,:save_stream,:private_directory,:retained_outputs
 end
 
 if $PROGRAM_NAME==__FILE__

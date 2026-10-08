@@ -53,6 +53,11 @@ records identity, raw hash and hardware evidence. The capture checker then
 freshly rereads the full image and all copies, using retained distinct input
 inodes and full hashes. Only after that and another source check is
 `capture.json` published without replacement, followed by directory fsync.
+Parent/destination directory descriptors remain pinned through the invocation.
+All eight output descriptors stay open across verification, last source
+inspection and publication. Paths/private metadata are rechecked before and
+after publication; the manifest's bytes also match the original generated
+record, accounting for the ctime change caused by link/unlink.
 
 The redacted result is usb_backup_captured, host_files_created8,
 saved_bytes, hardware_boot_copies_verified=true, writes_performed0 and
@@ -91,6 +96,7 @@ is trusted evidence, not a signature.
 
 ```sh
 ruby ember/tools/a133-usb-backup-test.rb
+ruby ember/tools/a133-usb-backup-lifetime-test.rb
 ruby ember/tools/a133-capture-hardware-test.rb
 ruby ember/tools/a133-capture-check-test.rb
 ruby ember/tools/a133-capture-regression-test.rb
@@ -104,3 +110,11 @@ root/state/layout/mount failures, exact stream bounds/exit/deadline, private
 publication, fsync failure, output collision and redaction. Small geometry exists
 only in the test process; production has no fixture mode. No physical tablet is
 read or rewritten by these test commands.
+
+On Ruby4.0.5 and system2.6.10, acquisition26, late-lifetime5, hardware18,
+capture37, capture-review-regression6, library14 and backup29 passed.
+Channel13/transfer43/session25/environment contracts passed on Ruby4.
+Independent GPT-6 Astra review found one Important publication/lifetime gap;
+five late boot/manifest/directory and postpublication mutations failed against
+the pre-fix revision on both Rubies, then passed after the implementer's fix.
+The reviewer examined the pre-fix range; no new physical acquisition was run.
