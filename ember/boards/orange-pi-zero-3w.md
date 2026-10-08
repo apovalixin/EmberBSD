@@ -31,6 +31,7 @@ Board revision: not recorded in the original support table.
 | USB | Controllers and the Type-C controller attach; no device tried |
 | Hardware random numbers | Tested |
 | GPU/NPU power domains | Native PCK600 provider passes software contracts and GCC16 cross object builds; physical transitions and acceleration unverified ([guide](../boot/a733-power-domains.md)) |
+| GPU/NPU clocks and resets | Native main CCU providers pass 199 software assertions and GCC12/GCC16 object builds; firmware PLLs stay unchanged, physical sequencing unverified ([guide](../boot/a733-accelerator-clocks.md)) |
 
 Long-run stability has not been established. Application results from an
 AArch64 VM do not validate this board's camera, audio or GPU/NPU paths.

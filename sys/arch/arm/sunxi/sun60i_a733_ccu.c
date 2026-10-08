@@ -30,6 +30,11 @@
  * The register map was read on an Orange Pi Zero 4 and agrees with the
  * vendor kernel. The boot loader leaves the peripheral PLL at 2400 MHz;
  * this driver reports it and never retunes it.
+ *
+ * Origin: EmberBSD; AI-assisted accelerator clock support, using hardware
+ * facts from the Orange Pi BSP and Junhui Liu's A733 CCU v5 submission.
+ * Exact revisions and conservative PLL ownership are documented in
+ * ember/boot/a733-accelerator-clocks.md.
  */
 
 #include <sys/cdefs.h>
@@ -46,13 +51,32 @@ __KERNEL_RCSID(1, "$NetBSD$");
 #include <arm/sunxi/sun60i_a733_ccu.h>
 
 #define	PLL_PERIPH0_CTRL_REG	0x0a0
+#define	PLL_GPU0_CTRL_REG	0x0e0
+#define	PLL_NPU_CTRL_REG		0x2a0
+#define	ACCEL_PLL_ENABLE	__BIT(31)
+#define	ACCEL_PLL_LDO		__BIT(30)
+#define	ACCEL_PLL_LOCK_ENABLE	__BIT(29)
+#define	ACCEL_PLL_LOCK		__BIT(28)
+#define	ACCEL_PLL_OUTPUT	__BIT(27)
+#define	ACCEL_PLL_N		__BITS(15,8)
+#define	ACCEL_PLL_M		__BITS(22,20)
+#define	ACCEL_PLL_P		__BIT(1)
 #define	AHB_CFG_REG		0x500
 #define	APB0_CFG_REG		0x510
 #define	APB1_CFG_REG		0x518
 #define	APB_UART_CFG_REG	0x538
+#define	AHB_MASTER_GATE_REG	0x5c0
+#define	MBUS_MASTER_GATE_REG	0x5e0
 #define	MBUS_GATE_REG		0x5e4
 #define	CE_CLK_REG		0xac0
 #define	CE_BGR_REG		0xac4
+#define	NPU_CLK_REG		0xb00
+#define	NPU_BGR_REG		0xb04
+#define	GPU0_CLK_REG		0xb20
+#define	GPU0_BGR_REG		0xb24
+#define	ACCEL_CLK_ENABLE	__BIT(31)
+#define	ACCEL_CLK_SEL		__BITS(26,24)
+#define	GPU_CLK_UPDATE		__BIT(27)
 #define	SMHC0_CLK_REG		0xd00
 #define	SMHC0_BGR_REG		0xd0c
 #define	SMHC1_CLK_REG		0xd10
@@ -92,6 +116,11 @@ CFATTACH_DECL_NEW(sunxi_a733_ccu, sizeof(struct sunxi_ccu_softc),
 static struct sunxi_ccu_reset sun60i_a733_ccu_resets[] = {
 	SUNXI_CCU_RESET(A733_RST_BUS_CE, CE_BGR_REG, 16),
 	SUNXI_CCU_RESET(A733_RST_BUS_CE_SYS, CE_BGR_REG, 17),
+	SUNXI_CCU_RESET(A733_RST_BUS_NPU_CORE, NPU_BGR_REG, 16),
+	SUNXI_CCU_RESET(A733_RST_BUS_NPU_AXI, NPU_BGR_REG, 17),
+	SUNXI_CCU_RESET(A733_RST_BUS_NPU_AHB, NPU_BGR_REG, 18),
+	SUNXI_CCU_RESET(A733_RST_BUS_NPU_SRAM, NPU_BGR_REG, 19),
+	SUNXI_CCU_RESET(A733_RST_BUS_GPU0, GPU0_BGR_REG, 16),
 
 	SUNXI_CCU_RESET(A733_RST_BUS_MMC0, SMHC0_BGR_REG, 16),
 	SUNXI_CCU_RESET(A733_RST_BUS_MMC1, SMHC1_BGR_REG, 16),
@@ -141,6 +170,14 @@ static const char *mmc_parents[] = {
 static const char *ce_parents[] = {
 	"sys-24M", "pll-periph0-400M", "pll-periph0-600M"
 };
+static const char *gpu_parents[] = {
+	"pll-gpu0", "pll-periph0-800M", "pll-periph0-600M",
+	"pll-periph0-400M", "pll-periph0-300M", "pll-periph0-200M"
+};
+static const char *npu_parents[] = {
+	"pll-npu", "pll-periph0-800M", "pll-periph0-600M",
+	"pll-periph0-480M", "pll-ve0", "pll-ve1", "pll-de-3x"
+};
 static const char *usb2_suspend_parents[] = { "losc", "sys-24M" };
 static const char *usb2_300M_parents[] = {
 	"sys-24M", "pll-periph0-300M", "hosc"
@@ -156,6 +193,242 @@ static const char *emmc_parents[] = {
 	"sys-24M", "pll-periph0-800M", "pll-periph0-600M",
 	"pll-periph1-800M", "pll-periph1-600M"
 };
+
+/*
+ * PLL_NPU can also feed DRAM, MBUS and video engines. Until ownership of
+ * those consumers is implemented, neither accelerator PLL is retuned or
+ * disabled here. Accept only a running integer PLL supplied by firmware.
+ */
+static u_int
+sun60i_a733_accel_pll_rate(struct sunxi_ccu_softc *sc,
+    struct sunxi_ccu_clk *clk)
+{
+	const bus_size_t reg = clk->u.nkmp.reg;
+	const uint32_t running = ACCEL_PLL_ENABLE | ACCEL_PLL_LDO |
+	    ACCEL_PLL_LOCK_ENABLE | ACCEL_PLL_LOCK | ACCEL_PLL_OUTPUT;
+	struct clk *parent;
+	uint32_t val;
+	uint64_t rate;
+	u_int n, m, p;
+
+	val = CCU_READ(sc, reg);
+	if ((val & running) != running)
+		return 0;
+	/* These PLLs have two SDM pattern registers, with separate enables. */
+	if ((CCU_READ(sc, reg + 8) & __BIT(31)) != 0 ||
+	    (CCU_READ(sc, reg + 12) & __BIT(27)) != 0)
+		return 0;
+	parent = clk_get_parent(&clk->base);
+	if (parent == NULL)
+		return 0;
+	n = __SHIFTOUT(val, ACCEL_PLL_N) + 1;
+	m = __SHIFTOUT(val, ACCEL_PLL_M) + 1;
+	p = __SHIFTOUT(val, ACCEL_PLL_P) + 1;
+	if (n < 11)
+		return 0;
+	rate = (uint64_t)clk_get_rate(parent) * n / m / p;
+	return rate <= UINT_MAX ? (u_int)rate : 0;
+}
+
+static int
+sun60i_a733_accel_pll_enable(struct sunxi_ccu_softc *sc,
+    struct sunxi_ccu_clk *clk, int enable)
+{
+	if (!enable)
+		return EBUSY;
+	return sun60i_a733_accel_pll_rate(sc, clk) != 0 ? 0 : ENXIO;
+}
+
+/* Check only writable fields: the GPU update bit may clear itself. */
+static int
+sun60i_a733_accel_write(struct sunxi_ccu_softc *sc, bus_size_t reg,
+    uint32_t mask, uint32_t bits)
+{
+	uint32_t old, val;
+
+	old = CCU_READ(sc, reg);
+	val = (old & ~mask) | bits;
+	if (val == old)
+		return 0;
+	if (reg == GPU0_CLK_REG)
+		val |= GPU_CLK_UPDATE;
+	CCU_WRITE(sc, reg, val);
+	bus_space_barrier(sc->sc_bst, sc->sc_bsh, reg, 4,
+	    BUS_SPACE_BARRIER_WRITE | BUS_SPACE_BARRIER_READ);
+	return (CCU_READ(sc, reg) & mask) == bits ? 0 : EIO;
+}
+
+static int
+sun60i_a733_accel_gate_enable(struct sunxi_ccu_softc *sc,
+    struct sunxi_ccu_clk *clk, int enable)
+{
+	return sun60i_a733_accel_write(sc, clk->u.gate.reg,
+	    clk->u.gate.mask, enable ? clk->u.gate.mask : 0);
+}
+
+static u_int
+sun60i_a733_accel_gate_rate(struct sunxi_ccu_softc *sc,
+    struct sunxi_ccu_clk *clk)
+{
+	struct clk *parent;
+
+	if ((CCU_READ(sc, clk->u.gate.reg) & clk->u.gate.mask) == 0)
+		return 0;
+	parent = clk_get_parent(&clk->base);
+	return parent != NULL ? clk_get_rate(parent) : 0;
+}
+
+static const char *
+sun60i_a733_accel_parent(struct sunxi_ccu_softc *sc,
+    struct sunxi_ccu_clk *clk)
+{
+	struct sunxi_ccu_div *div = &clk->u.div;
+	u_int sel;
+
+	sel = __SHIFTOUT(CCU_READ(sc, div->reg), ACCEL_CLK_SEL);
+	return sel < div->nparents ? div->parents[sel] : NULL;
+}
+
+static int
+sun60i_a733_accel_enable(struct sunxi_ccu_softc *sc,
+    struct sunxi_ccu_clk *clk, int enable)
+{
+	struct clk *parent;
+
+	if (enable) {
+		parent = clk_get_parent(&clk->base);
+		if (parent == NULL || clk_get_rate(parent) == 0)
+			return ENXIO;
+	}
+	return sun60i_a733_accel_write(sc, clk->u.div.reg,
+	    ACCEL_CLK_ENABLE, enable ? ACCEL_CLK_ENABLE : 0);
+}
+
+static u_int
+sun60i_a733_accel_rate(struct sunxi_ccu_softc *sc,
+    struct sunxi_ccu_clk *clk)
+{
+	struct sunxi_ccu_div *div = &clk->u.div;
+	struct clk *parent;
+	uint32_t val;
+	uint64_t rate;
+	u_int m;
+
+	parent = clk_get_parent(&clk->base);
+	if (parent == NULL)
+		return 0;
+	val = CCU_READ(sc, div->reg);
+	if ((val & ACCEL_CLK_ENABLE) == 0)
+		return 0;
+	m = __SHIFTOUT(val, div->div);
+	rate = clk_get_rate(parent);
+	if (div->reg == GPU0_CLK_REG)
+		return (u_int)(rate * (16 - m) / 16);
+	return (u_int)(rate / (m + 1));
+}
+
+static int
+sun60i_a733_accel_set_parent(struct sunxi_ccu_softc *sc,
+    struct sunxi_ccu_clk *clk, const char *name)
+{
+	struct sunxi_ccu_div *div = &clk->u.div;
+	struct sunxi_ccu_clk *parent;
+	u_int sel;
+	uint32_t val;
+
+	for (sel = 0; sel < div->nparents; sel++)
+		if (strcmp(name, div->parents[sel]) == 0)
+			break;
+	if (sel == div->nparents)
+		return EINVAL;
+	parent = sunxi_ccu_clock_find(sc, name);
+	if (parent == NULL || clk_get_rate(&parent->base) == 0)
+		return ENXIO;
+	val = CCU_READ(sc, div->reg);
+	if (__SHIFTOUT(val, ACCEL_CLK_SEL) == sel)
+		return 0;
+	if ((val & ACCEL_CLK_ENABLE) != 0)
+		return EBUSY;
+	return sun60i_a733_accel_write(sc, div->reg, ACCEL_CLK_SEL,
+	    __SHIFTIN(sel, ACCEL_CLK_SEL));
+}
+
+static int
+sun60i_a733_accel_set_rate(struct sunxi_ccu_softc *sc,
+    struct sunxi_ccu_clk *clk, u_int rate)
+{
+	struct sunxi_ccu_div *div = &clk->u.div;
+	struct clk *parent;
+	uint64_t prate, candidate;
+	uint32_t val;
+	u_int m, max;
+
+	if (rate == 0)
+		return EINVAL;
+	parent = clk_get_parent(&clk->base);
+	if (parent == NULL || (prate = clk_get_rate(parent)) == 0)
+		return ENXIO;
+	max = __SHIFTOUT(div->div, div->div);
+	for (m = 0; m <= max; m++) {
+		if (div->reg == GPU0_CLK_REG) {
+			/* Program only the documented integer divisors. */
+			if (m != 0 && m != 8 && m != 12 && m != 14 && m != 15)
+				continue;
+			candidate = prate * (16 - m);
+			if (candidate == (uint64_t)rate * 16)
+				break;
+		} else if (prate == (uint64_t)rate * (m + 1)) {
+			break;
+		}
+	}
+	if (m > max)
+		return ERANGE;
+	val = CCU_READ(sc, div->reg);
+	if (__SHIFTOUT(val, div->div) == m)
+		return 0;
+	if ((val & ACCEL_CLK_ENABLE) != 0)
+		return EBUSY;
+	return sun60i_a733_accel_write(sc, div->reg, div->div,
+	    __SHIFTIN(m, div->div));
+}
+
+#define	A733_ACCEL_PLL(_id, _name, _reg)			\
+	[_id] = {						\
+		.type = SUNXI_CCU_NKMP,				\
+		.base.name = (_name),				\
+		.u.nkmp.reg = (_reg),				\
+		.u.nkmp.parent = "pll-ref",			\
+		.enable = sun60i_a733_accel_pll_enable,		\
+		.get_rate = sun60i_a733_accel_pll_rate,		\
+		.get_parent = sunxi_ccu_nkmp_get_parent,	\
+	}
+
+#define	A733_ACCEL_GATE(_id, _name, _parent, _reg, _bit)	\
+	[_id] = {						\
+		.type = SUNXI_CCU_GATE,				\
+		.base.name = (_name),				\
+		.u.gate.reg = (_reg),				\
+		.u.gate.mask = __BIT(_bit),			\
+		.u.gate.parent = (_parent),			\
+		.enable = sun60i_a733_accel_gate_enable,	\
+		.get_rate = sun60i_a733_accel_gate_rate,	\
+		.get_parent = sunxi_ccu_gate_get_parent,	\
+	}
+
+#define	A733_ACCEL_MOD(_id, _name, _parents, _reg, _div)	\
+	[_id] = {						\
+		.type = SUNXI_CCU_DIV,				\
+		.base.name = (_name),				\
+		.u.div.reg = (_reg),				\
+		.u.div.div = (_div),				\
+		.u.div.parents = (_parents),			\
+		.u.div.nparents = __arraycount(_parents),	\
+		.enable = sun60i_a733_accel_enable,		\
+		.get_rate = sun60i_a733_accel_rate,		\
+		.set_rate = sun60i_a733_accel_set_rate,		\
+		.get_parent = sun60i_a733_accel_parent,		\
+		.set_parent = sun60i_a733_accel_set_parent,	\
+	}
 
 /*
  * The SD/MMC controllers halve their module clock, so a card clock of
@@ -177,6 +450,23 @@ static struct sunxi_ccu_clk sun60i_a733_ccu_clks[] = {
 	 */
 	SUNXI_CCU_FIXED_FACTOR(A733_CLK_PLL_REF, "pll-ref", "hosc", 1, 1),
 	SUNXI_CCU_FIXED_FACTOR(A733_CLK_SYS_24M, "sys-24M", "pll-ref", 1, 1),
+	A733_ACCEL_PLL(A733_CLK_PLL_GPU0, "pll-gpu0", PLL_GPU0_CTRL_REG),
+	A733_ACCEL_PLL(A733_CLK_PLL_NPU, "pll-npu", PLL_NPU_CTRL_REG),
+	A733_ACCEL_GATE(A733_CLK_AHB_NPU, "ahb-npu", "ahb",
+	    AHB_MASTER_GATE_REG, 6),
+	A733_ACCEL_GATE(A733_CLK_AHB_GPU0, "ahb-gpu0", "ahb",
+	    AHB_MASTER_GATE_REG, 7),
+	/* MBUS rates and the undocumented NPU bus parent are not modeled. */
+	A733_ACCEL_GATE(A733_CLK_MBUS_GPU0, "mbus-gpu0", NULL,
+	    MBUS_MASTER_GATE_REG, 16),
+	A733_ACCEL_GATE(A733_CLK_MBUS_NPU, "mbus-npu", NULL,
+	    MBUS_MASTER_GATE_REG, 18),
+	A733_ACCEL_GATE(A733_CLK_BUS_NPU, "bus-npu", NULL, NPU_BGR_REG, 0),
+	A733_ACCEL_GATE(A733_CLK_BUS_GPU0, "bus-gpu0", "ahb", GPU0_BGR_REG, 0),
+	A733_ACCEL_MOD(A733_CLK_NPU, "npu", npu_parents, NPU_CLK_REG,
+	    __BITS(4,0)),
+	A733_ACCEL_MOD(A733_CLK_GPU0, "gpu0", gpu_parents, GPU0_CLK_REG,
+	    __BITS(3,0)),
 
 	SUNXI_CCU_NKMP(A733_CLK_PLL_PERIPH0_4X, "pll-periph0-4x", "pll-ref",
 	    PLL_PERIPH0_CTRL_REG,	/* reg */

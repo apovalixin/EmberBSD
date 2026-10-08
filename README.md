@@ -315,6 +315,10 @@ on every board in the hardware catalog.
   with EINVAL; full native decoder checks preserve valid-command behavior.
   Reported surface/GL errors now reject classic submissions and poisoned contexts,
   tested on Metal with upstream GL checking both enabled and disabled.
+  [Query-result checks](https://github.com/neonix20b/EmberBSD-Ports/blob/main/probes/utm-virgl-host/host/query-results.md)
+  reject incomplete output backing and preserve delayed errors and fence ownership.
+  Native Metal checks and 226 causal software assertions pass; concurrent access
+  and guest execution remain outside that validation.
   The [full paired QEMU recipe](https://github.com/neonix20b/EmberBSD-Ports/tree/main/probes/utm-virgl-host/qemu)
   builds and passes an isolated 2D guest boot on ANGLE Metal, including libdrm
   and 32 GEM/PRIME lifetimes. A separate [live 2D backing check](https://github.com/neonix20b/EmberBSD-Ports/blob/main/probes/utm-virgl-host/qemu/reset.md)
@@ -335,9 +339,13 @@ on every board in the hardware catalog.
   identifies its Vivante NPU's missing Mesa TP path and pins the exact PowerVR
   firmware. The OS now supplies an [A733 PCK600 power-domain provider](ember/boot/a733-power-domains.md)
   with bounded transitions, error propagation and retained legacy FDT callbacks.
-  Its 38 software cases and GCC16 cross object builds pass; physical power
-  transitions are unverified. On the available Zero 3W, accelerator drivers
-  are not attached; device clocks, DMA/MMU and command submission still require porting. These are
+  Its 38 software cases and GCC16 cross object builds pass. The
+  [accelerator clock providers](ember/boot/a733-accelerator-clocks.md) add module
+  clocks, interface gates and resets while preserving firmware-owned PLLs.
+  They pass 199 software assertions and GCC12/GCC16 object builds; physical
+  power/clock transitions are unverified. On the available Zero 3W, accelerator
+  drivers are not attached. Power sequencing, shared clock arbitration, DMA/MMU
+  and command submission still require porting. These are
   porting targets, not available EmberBSD acceleration. Board bring-up,
   driver/DMA integration, compatible runtime and real model execution must
   all pass before an accelerated AI workflow is claimed.

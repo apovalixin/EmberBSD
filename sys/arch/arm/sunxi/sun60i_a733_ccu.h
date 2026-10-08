@@ -31,6 +31,8 @@
  * Clock and reset numbers follow the device tree binding
  * allwinner,sun60i-a733-ccu as posted for Linux (v3, September 2026).
  * Only the clocks this driver implements are listed.
+ * Origin: EmberBSD; AI-assisted accelerator providers, see
+ * ember/boot/a733-accelerator-clocks.md for the pinned hardware sources.
  */
 
 #define	A733_CLK_PLL_REF		0
@@ -45,15 +47,25 @@
 #define	A733_CLK_PLL_PERIPH0_200M	10
 #define	A733_CLK_PLL_PERIPH0_160M	11
 #define	A733_CLK_PLL_PERIPH0_150M	12
+#define	A733_CLK_PLL_GPU0		23
+#define	A733_CLK_PLL_NPU		39
 #define	A733_CLK_AHB			43
 #define	A733_CLK_APB0			44
 #define	A733_CLK_APB1			45
 #define	A733_CLK_APB_UART		46
+#define	A733_CLK_AHB_NPU		65
+#define	A733_CLK_AHB_GPU0		66
+#define	A733_CLK_MBUS_GPU0		77
+#define	A733_CLK_MBUS_NPU		78
 #define	A733_CLK_MBUS_CE		86
 #define	A733_CLK_MBUS_GMAC0		91
 #define	A733_CLK_CE			127
 #define	A733_CLK_BUS_CE		128
 #define	A733_CLK_BUS_CE_SYS		129
+#define	A733_CLK_NPU			130
+#define	A733_CLK_BUS_NPU		131
+#define	A733_CLK_GPU0			132
+#define	A733_CLK_BUS_GPU0		133
 #define	A733_CLK_MMC0			139
 #define	A733_CLK_BUS_MMC0		140
 #define	A733_CLK_MMC1			141
@@ -91,6 +103,11 @@
 
 #define	A733_RST_BUS_CE		25
 #define	A733_RST_BUS_CE_SYS		26
+#define	A733_RST_BUS_NPU_CORE		27
+#define	A733_RST_BUS_NPU_AXI		28
+#define	A733_RST_BUS_NPU_AHB		29
+#define	A733_RST_BUS_NPU_SRAM		30
+#define	A733_RST_BUS_GPU0		31
 #define	A733_RST_BUS_MMC0		34
 #define	A733_RST_BUS_MMC1		35
 #define	A733_RST_BUS_MMC2		36
