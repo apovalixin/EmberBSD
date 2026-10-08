@@ -81,6 +81,12 @@ SSH, Ethernet, MCU keepalive, Xorg, awesomeWM and terminal/clock windows
 remained active after boot. `ddb.onpanic=0` was verified; no panic was induced.
 No physical playback or microphone recording was performed.
 
+A subsequent ordinary software reboot also loaded this kernel from eMMC
+through the unchanged vendor autoboot path, without serial interception or
+manual `bootm`. Xorg, awesomeWM, Ethernet and MCU keepalive restarted. Audio
+routes, stream open/active counts and sample counters remained disabled/zero.
+This is a warm reboot check, not cold power-loss or sustained-use acceptance.
+
 ## Remaining acceptance
 
 Physical IRQ streaming, latency/CPU use, underrun/overrun behavior,
