@@ -3,7 +3,7 @@
 The native `sun60igpuid` consumer can identify an already prepared A733 GPU.
 The current A733 DT enables its diagnostic `netbsd,observe-only` stage, which
 never maps or reads GPU registers, even when the queried providers are ready.
-It does not initialize or power the GPU, load firmware, establish interrupts,
+This default mode does not initialize or power the GPU, load firmware, establish interrupts,
 allocate DMA, submit commands, expose a DRM device, or provide acceleration.
 The [driver](https://github.com/oxtech-ember/EmberBSD/blob/main/sys/arch/arm/sunxi/sun60i_a733_gpu.c)
 is owned by EmberBSD. Software contracts, the complete GCC16 kernel build
@@ -95,7 +95,7 @@ The local binding requires:
   or GPU mapping, including when readiness succeeds.
 
 The hardware description also records GPU reset and SPI interrupt 63, but
-the identification consumer does not acquire or operate them. CCU readiness
+the normal identification path does not acquire or operate them. CCU readiness
 checks the actual GPU reset bit. The SoC node is disabled by default.
 Zero 4 supplies DCDC4 and enables the identification consumer; Zero 3W
 inherits those declarations. Use these DTBs with their matching kernel.
@@ -151,13 +151,62 @@ hardware state is never unwound by disabling resources.
 Queries are observations, not a reservation against later writers. Equal CCU
 snapshots cannot exclude every intervening change. Fault-aware reads handle
 synchronous faults but do not guarantee that a stalled bus transaction will
-finish. The consumer has no cold-start path or retry policy; firmware that
+finish. The normal consumer has no cold-start path or retry policy; firmware that
 leaves the GPU OFF produces an explicit unavailable result. GPU_CORE domain 6
 is not requested by the pinned BSP GPU binding and is not operated here.
 The PCK provider separately reports its raw state at attachment. That earlier
 observation is not consumed as a GPU readiness guarantee or power capability.
 The pinned DDK selects a live `USE_FPGA` path that operates CORE6 directly;
-this must be resolved before a native cold-start implementation.
+the experimental path below preserves that handshake instead of copying the write.
+
+## Experimental clock preparation
+
+This unaccepted hardware experiment has a separate, empty local property:
+`netbsd,experimental-clock-prepare`. It is mutually exclusive with
+`netbsd,observe-only`; malformed or conflicting properties fail before any
+provider action. The normal board DTS files remain observe-only. Build a
+separate Zero 3W artifact, with the matching kernel sources and host tools:
+
+```sh
+CPP=/path/to/aarch64--netbsd-cpp DTC=/path/to/nbdtc \
+    sh ember/tools/a733-gpu-experimental-dtb.sh /absolute/output
+```
+
+The builder produces `sun60i-a733-orangepi-zero3w-gpu-experimental.dtb`;
+it neither replaces the normal DTB nor installs anything. Acceptance requires
+a recoverable matched kernel/modules/DTB bundle and an explicitly selected
+experimental boot. Zero 4 active preparation is not covered by this builder.
+
+The one-shot path requires enabled DCDC4 programmed to 800000 microvolts,
+TOP statically ON, the observed PCK-600 v1.1 single-Q configuration and CORE
+policy ON/status OFF. Native CCU ownership excludes preexisting writers.
+The actual RTC/DCXO and normalized REF must yield an already running 400 MHz
+PERIPH0 branch and 200 MHz AHB. With the GPU gates off and reset asserted,
+it selects mux 3/M=0, releases bus reset, enables the bus gate and then the
+module gate. Only `GPU_CLK` and `GPU_BGR` are written. It never calls recursive
+clock enable, changes a PLL/supply or writes a PCK register, including PWCR.
+
+PCK then takes at most 1001 observations, separated by at most 10000 microseconds
+of total delay. MMIO acquisition time is additional. Both domains must reach
+strict stable ON with QACCEPTn high and QDENY low. Supply and clock checks repeat
+before the single PBVNC read. This attempts to complete the pending transition;
+the #7 snapshot cannot distinguish a stalled PCSM phase from Q exit. A timeout
+is not evidence of which phase failed.
+
+The clock lease is irreversible before its first attempted configuration write.
+PCK ownership is retained before that call. Every later error retains resources
+until reboot, including rejected writes, timeouts and an unexpected PBVNC.
+No gate removal, reset assertion, CORE power-off, detach or automatic retry is
+performed. Shared firmware sources are borrowed; native retune/disable and
+GPU-local mutations are refused while reserved. External firmware writers
+cannot be excluded by these native locks.
+
+The production-body contracts cover reservation, ordering, failures at each
+write, bounded waiting, conflicting opt-ins and retention. Run the three
+existing A733 clock/power/identification contracts and
+`sh ember/tools/a733-gpu-prepare-mutations.sh` for the causal negatives.
+Cross-compilation and software checks do not establish physical identification
+or acceleration. The last accepted hardware result remains the read-only #7.
 
 ## Sources and software checks
 

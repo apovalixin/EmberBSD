@@ -352,8 +352,10 @@ on every board in the hardware catalog.
   fixes descriptor ownership during initialization and cleanup, and rejects
   out-of-range partition/cluster queries while preserving legacy NPU counts.
   On NetBSD/AArch64 with GCC 16.2, 13 descriptor cases and 58 core-count
-  cases pass against isolated production methods; a full runtime build and
-  NPU execution remain unverified.
+  cases pass against isolated production methods. The [complete 27-source UMD](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/compass-umd/full-umd.md)
+  cross-builds with GCC16; its actual DSO passes 85 no-device API checks over
+  four cycles on the A733 Zero 3W. Native kernel transport, DMA and model
+  execution remain unverified.
   The [A733 Ports audit](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/a733-accelerators)
   identifies its Vivante NPU's missing Mesa TP path and pins the exact PowerVR
   firmware. The OS now supplies an [A733 PCK600 power-domain provider](ember/boot/a733-power-domains.md)

@@ -93,8 +93,10 @@ struct device_compatible_entry { const char *compat; };
 struct fdtbus_regulator { int acquired; };
 struct clk { int acquired; };
 #include "sun60i_a733_ccu.h"
+#include "sun60i_a733_pck600.h"
 
 static uint32_t pd[2], clocks[2], power_cells, clock_cells;
+static int prepare_len = -1;
 static int pd_len, clock_len, managed_len, supply_len, observe_len;
 static bool bad_power_compat, bad_pmic, bad_supply;
 static bool missing_supply, missing_clock;
@@ -103,6 +105,7 @@ static int map_error, peek_error, match_result;
 static bus_addr_t binding_addr;
 static bus_size_t binding_size;
 static bool supply_on, power_on;
+static unsigned supply_calls, fail_supply_call;
 static u_int voltage, core_hz, bus_hz;
 static uint64_t pbvnc;
 static struct fdtbus_regulator regulator;
@@ -134,6 +137,8 @@ swap32(uint32_t value)
 static int
 OF_getproplen(int phandle, const char *name)
 {
+	if (strcmp(name, "netbsd,experimental-clock-prepare") == 0)
+		return prepare_len;
 	if (strcmp(name, "netbsd,observe-only") == 0)
 		return observe_len;
 	if (strcmp(name, "netbsd,consumer-managed-power") == 0)
@@ -216,6 +221,8 @@ fdtbus_regulator_is_enabled(struct fdtbus_regulator *reg, bool *enabled)
 {
 	assert(reg->acquired);
 	record('S');
+	if (++supply_calls == fail_supply_call)
+		return EIO;
 	*enabled = supply_on;
 	return state_error;
 }
@@ -324,6 +331,25 @@ aprint_error_dev(device_t dev, const char *fmt, ...)
 	va_end(ap);
 }
 #include "autoconf.h"
+static int prepare_error, reserve_error, wait_error, retain_error;
+static int power_reserve_error, second_wait_error, final_ready_error;
+static unsigned prepares, reserves, waits, retains, unreserves;
+int sun60i_a733_ccu_gpu_reserve(struct clk *c, const void *owner)
+{ reserves++; record('C'); return reserve_error; }
+int sun60i_a733_pck_gpu_reserve(int node, const void *owner)
+{ reserves++; record('P'); return power_reserve_error; }
+int sun60i_a733_ccu_gpu_release(struct clk *c, const void *owner)
+{ unreserves++; record('c'); return 0; }
+int sun60i_a733_pck_gpu_release(int node, const void *owner)
+{ unreserves++; record('p'); return 0; }
+int sun60i_a733_pck_gpu_retain(int node, const void *owner)
+{ retains++; record('H'); return retain_error; }
+int sun60i_a733_ccu_gpu_prepare(struct clk *c, const void *owner, bool *held)
+{ prepares++; record('W'); *held = true; return prepare_error; }
+int sun60i_a733_pck_gpu_wait(int node, const void *owner)
+{ waits++; record('Q'); return waits == 2 ? second_wait_error : wait_error; }
+int sun60i_a733_ccu_gpu_ready(struct clk *c, u_int *core, u_int *bus)
+{ record('F'); *core = core_hz; *bus = bus_hz; return final_ready_error; }
 #include "driver.h"
 #define CHECK(c) do { assert(c); checks++; } while (0)
 static struct sun60i_gpu_softc sc;
@@ -349,7 +375,11 @@ reset(void)
 	power_cells = clock_cells = 1;
 	pd_len = clock_len = 8;
 	managed_len = 0;
-	observe_len = -1;
+	observe_len = prepare_len = -1;
+	prepare_error = reserve_error = wait_error = retain_error = 0;
+	power_reserve_error = second_wait_error = final_ready_error = 0;
+	prepares = reserves = waits = retains = unreserves = 0;
+	supply_calls = fail_supply_call = 0;
 	supply_len = 4;
 	bad_power_compat = bad_pmic = bad_supply = false;
 	missing_supply = missing_clock = false;
@@ -478,6 +508,68 @@ test_clock_observation(void)
 	clock_observation.reason = A733_GPU_CORE_PLL;
 	clock_observation.readiness_error = ERANGE;
 	unavailable(ERANGE);
+}
+
+static void
+test_experimental_prepare(void)
+{
+	unsigned start = checks;
+	const int errors[] = { EIO, EBUSY, EFAULT, ENXIO, ETIMEDOUT };
+
+	reset(); prepare_len = 0; observe_len = 0;
+	unavailable(EINVAL); CHECK(nevents == 0 && prepares == 0);
+	for (int len = 1; len <= 4; len++) {
+		reset(); prepare_len = len;
+		unavailable(EINVAL); CHECK(nevents == 0);
+	}
+	reset(); prepare_len = 0;
+	CHECK(sun60i_gpu_identify(&sc) == 0);
+	CHECK(prepares == 1 && reserves == 2 && retains == 1 && waits == 2);
+	CHECK(sc.sc_retained && peeks == 1 && unreserves == 0);
+	CHECK(strstr(events, "PCSVHW") != NULL);
+	CHECK(strstr(events, "SVQFMI") != NULL);
+	for (u_int i = 0; i < __arraycount(errors); i++) {
+		for (u_int stage = 0; stage < 5; stage++) {
+			reset(); prepare_len = 0;
+			switch (stage) {
+			case 0: power_reserve_error = errors[i]; break;
+			case 1: reserve_error = errors[i]; break;
+			case 2: retain_error = errors[i]; break;
+			case 3: prepare_error = errors[i]; break;
+			case 4: wait_error = errors[i]; break;
+			}
+			unavailable(errors[i]);
+			CHECK(sc.sc_retained == (stage >= 3));
+			CHECK(prepares == (stage >= 3 ? 1 : 0));
+			CHECK(unreserves == (stage == 1 ? 1 : stage == 2 ? 2 : 0));
+		}
+	}
+	for (unsigned call = 2; call <= 3; call++) {
+		reset(); prepare_len = 0; fail_supply_call = call;
+		unavailable(EIO);
+		CHECK(prepares == (call == 3 ? 1 : 0));
+		CHECK(sc.sc_retained == (call == 3));
+		CHECK(unreserves == (call == 2 ? 2 : 0));
+	}
+	reset(); prepare_len = 0; final_ready_error = EBUSY;
+	unavailable(EBUSY); CHECK(sc.sc_retained && unreserves == 0);
+	reset(); prepare_len = 0; second_wait_error = EIO;
+	unavailable(EIO); CHECK(sc.sc_retained && unreserves == 0);
+	reset(); prepare_len = 0; map_error = ENOMEM;
+	CHECK(sun60i_gpu_identify(&sc) == ENOMEM && sc.sc_retained && unreserves == 0);
+	reset(); prepare_len = 0; peek_error = 1;
+	CHECK(sun60i_gpu_identify(&sc) == EFAULT && sc.sc_retained && unreserves == 0);
+	reset(); prepare_len = 0; pbvnc = 0;
+	CHECK(sun60i_gpu_identify(&sc) == ENODEV && sc.sc_retained && unreserves == 0);
+	reset(); prepare_len = 0; prepare_error = EIO;
+	CHECK(sun60i_gpu_finalize(&gpu_device) == 0);
+	CHECK(strstr(error_output, "retained until reboot") != NULL);
+	CHECK(strstr(error_output, "firmware state left unchanged") == NULL);
+	CHECK(sun60i_gpu_finalize(&gpu_device) == 0 && prepares == 1);
+	reset(); observe_len = 0;
+	CHECK(sun60i_gpu_identify(&sc) == 0);
+	CHECK(prepares == 0 && reserves == 0 && retains == 0 && waits == 0 && peeks == 0);
+	printf("PASS: %u experimental GPU consumer checks\n", checks - start);
 }
 
 int
@@ -648,6 +740,7 @@ main(void)
 	}
 	test_clock_observation();
 
+	test_experimental_prepare();
 	printf("PASS: %u A733 GPU identification checks\n", checks);
 	return 0;
 }
