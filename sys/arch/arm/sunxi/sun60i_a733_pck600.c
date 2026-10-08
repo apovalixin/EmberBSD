@@ -46,6 +46,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 
 #define PCK600_DOMAIN_SIZE	0x1000
 #define PCK600_NDOMAINS		11
+#define PCK600_GPU_TOP		5
 #define PCK600_GPU_CORE		6
 #define PCK600_PWPR		0x000
 #define PCK600_PMER		0x004
@@ -256,28 +257,139 @@ sun60i_pck600_state(struct sun60i_pck600_softc *sc, u_int id, bool *enabled)
 	return 0;
 }
 
-static void
-sun60i_pck600_core_report(struct sun60i_pck600_softc *sc)
+/*
+ * Separate diagnostic allowlist, from Arm DEN0051E, Table 5-1. Reads of
+ * ISR/AISR do not clear their W1C events. Never access UNLK or reserved
+ * implementation-specific space. This is not the power-state query path.
+ */
+static const struct {
+	bus_size_t reg;
+	const char *name;
+} sun60i_pck600_diag_regs[] = {
+	{ PCK600_PWPR, "PWPR" },
+	{ PCK600_PMER, "PMER" },
+	{ PCK600_PWSR, "PWSR" },
+	{ 0x010, "DISR" },
+	{ 0x014, "MISR" },
+	{ 0x018, "STSR" },
+	{ 0x020, "PWCR" },
+	{ 0x024, "PTCR" },
+	{ 0x030, "IMR" },
+	{ 0x034, "AIMR" },
+	{ 0x038, "ISR" },
+	{ 0x03c, "AISR" },
+	{ 0x160, "EDTR0" },
+	{ 0x164, "EDTR1" },
+	{ PCK600_DCDR0, "DCDR0" },
+	{ PCK600_DCDR1, "DCDR1" },
+	{ 0xfb0, "IDR0" },
+	{ 0xfb4, "IDR1" },
+	{ 0xfc8, "IIDR" },
+	{ 0xfcc, "AIDR" },
+};
+#define PCK600_DIAG_IDR0		16
+#define PCK600_DIAG_IIDR		18
+#define PCK600_DIAG_AIDR		19
+
+static const struct {
+	u_int id;
+	const char *name;
+} sun60i_pck600_diag_domains[] = {
+	{ PCK600_GPU_TOP, "GPU_TOP" },
+	{ PCK600_GPU_CORE, "GPU_CORE" },
+};
+
+struct sun60i_pck600_diagnostic {
+	uint32_t sample[__arraycount(sun60i_pck600_diag_domains)][2]
+	    [__arraycount(sun60i_pck600_diag_regs)];
+	uint32_t changed[__arraycount(sun60i_pck600_diag_domains)];
+};
+
+static int
+sun60i_pck600_inspect(struct sun60i_pck600_softc *sc,
+    struct sun60i_pck600_diagnostic *state)
 {
-	struct sun60i_pck600_observation state;
-	int error;
+	struct sun60i_pck600_diagnostic observed = { 0 };
+	bus_size_t base, reg;
+
+	KASSERT(mutex_owned(&sc->sc_lock));
+	for (u_int d = 0; d < __arraycount(sun60i_pck600_diag_domains); d++)
+		if (sc->sc_failed[sun60i_pck600_diag_domains[d].id])
+			return EIO;
+
+	for (u_int d = 0; d < __arraycount(sun60i_pck600_diag_domains); d++) {
+		base = sun60i_pck600_diag_domains[d].id * PCK600_DOMAIN_SIZE;
+		for (u_int s = 0; s < 2; s++) {
+			for (u_int r = 0;
+			    r < __arraycount(sun60i_pck600_diag_regs); r++) {
+				reg = base + sun60i_pck600_diag_regs[r].reg;
+				if (bus_space_peek_4(sc->sc_bst, sc->sc_bsh,
+				    reg, &observed.sample[d][s][r]) != 0)
+					return EFAULT;
+			}
+		}
+		for (u_int r = 0; r < __arraycount(sun60i_pck600_diag_regs); r++)
+			if (observed.sample[d][0][r] != observed.sample[d][1][r])
+				observed.changed[d] |= __BIT(r);
+	}
+	/* Publish only complete acquisition, including unsupported raw identities. */
+	*state = observed;
+	return 0;
+}
+
+static int
+sun60i_pck600_channels(const struct sun60i_pck600_diagnostic *state, u_int d)
+{
+	const uint32_t *sample = state->sample[d][0];
+	const uint32_t idr0 = sample[PCK600_DIAG_IDR0];
+	const uint32_t channels = idr0 & __BITS(3, 0);
+
+	/* Decode only stable Arm PCK-600/PPU v1.1 identification metadata. */
+	if ((state->changed[d] & __BITS(19, 16)) != 0 ||
+	    sample[PCK600_DIAG_AIDR] != 0x11 ||
+	    (sample[PCK600_DIAG_IIDR] & 0xfff00fff) != 0x0b60043b ||
+	    (idr0 & 0x00030100) != 0x00030100 || channels > 8 ||
+	    (channels != 0 && (idr0 & __BITS(7, 4)) != 0))
+		return -1;
+	return channels;
+}
+
+static void
+sun60i_pck600_report(struct sun60i_pck600_softc *sc)
+{
+	struct sun60i_pck600_diagnostic state;
+	const char *name;
+	int channels, error;
 
 	mutex_enter(&sc->sc_lock);
-	error = sun60i_pck600_observe(sc, PCK600_GPU_CORE, &state);
+	error = sun60i_pck600_inspect(sc, &state);
 	mutex_exit(&sc->sc_lock);
 	if (error != 0) {
-		aprint_error_dev(sc->sc_dev, "GPU_CORE observation unavailable: "
+		aprint_error_dev(sc->sc_dev, "GPU PPU diagnostic unavailable: "
 		    "%d\n", error);
 		return;
 	}
-	aprint_normal_dev(sc->sc_dev, "GPU_CORE observation: %s (error %d); "
-	    "not a GPU readiness guarantee\n", state.state_error != 0 ?
-	    "unsupported or unstable" : state.enabled ? "static ON" : "static OFF",
-	    state.state_error);
-	for (u_int i = 0; i < 2; i++)
-		aprint_normal_dev(sc->sc_dev, "GPU_CORE sample %u: PWPR "
-		    "0x%08x PMER 0x%08x PWSR 0x%08x\n", i,
-		    state.sample[i][0], state.sample[i][1], state.sample[i][2]);
+	for (u_int d = 0; d < __arraycount(sun60i_pck600_diag_domains); d++) {
+		name = sun60i_pck600_diag_domains[d].name;
+		aprint_normal_dev(sc->sc_dev, "%s diagnostic: changed 0x%05x; "
+		    "not a power-state or GPU readiness guarantee\n", name,
+		    state.changed[d]);
+		channels = sun60i_pck600_channels(&state, d);
+		if (channels < 0)
+			aprint_normal_dev(sc->sc_dev, "%s PPU metadata: "
+			    "unrecognized or unstable, raw values only\n", name);
+		else
+			aprint_normal_dev(sc->sc_dev, "%s PPU metadata: %s, "
+			    "%u device channel(s)\n", name,
+			    channels == 0 ? "P-Channel" : "Q-Channel",
+			    channels == 0 ? 1 : (u_int)channels);
+		for (u_int r = 0; r < __arraycount(sun60i_pck600_diag_regs); r++)
+			aprint_normal_dev(sc->sc_dev, "%s %s [0x%03x]: "
+			    "0x%08x 0x%08x\n", name,
+			    sun60i_pck600_diag_regs[r].name,
+			    (u_int)sun60i_pck600_diag_regs[r].reg,
+			    state.sample[d][0][r], state.sample[d][1][r]);
+	}
 }
 
 static int
@@ -354,7 +466,7 @@ sun60i_pck600_attach(device_t parent, device_t self, void *aux)
 	}
 	aprint_naive("\n");
 	aprint_normal(": A733 PCK-600 power domains\n");
-	sun60i_pck600_core_report(sc);
+	sun60i_pck600_report(sc);
 	return;
 unmap:
 	bus_space_unmap(sc->sc_bst, sc->sc_bsh, size);

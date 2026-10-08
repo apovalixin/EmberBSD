@@ -22,8 +22,9 @@ preserve upstream numbering: NPU 4, GPU_TOP 5 and GPU_CORE 6.
 The other IDs are VI 0, DE_SYS 1, VE_DEC 2, VE_ENC 3, PCIE 7, USB2 8,
 VO 9 and VO1 10. This does not validate those peripherals.
 
-Attachment enables only the provider's programming clock. It neither reads
-nor writes domain registers. It publishes no GPU/NPU consumer node.
+Attachment enables only the provider's programming clock. It takes the
+bounded GPU_TOP/GPU_CORE diagnostic below without writing domain registers.
+It publishes no GPU/NPU consumer node.
 A later consumer must establish its supplies, device clocks, resets,
 interrupts and memory ownership in the required order before using hardware.
 Shared-domain lifetime management remains the consumer's responsibility;
@@ -89,8 +90,9 @@ Successfully attached nodes are not powered or attached again on a retry.
 This preserves pinctrl-before-power ordering for matched consumers. A
 failure does not undo the selected pinctrl state or earlier successful
 domains in a multi-domain request. Supply/clock sequencing and shared
-resource ownership still need a separate consumer design before GPU/NPU
-nodes are enabled; this check introduces no sequencing opt-out interface.
+resource ownership still need a separate consumer design. The later
+[GPU identification binding](a733-gpu-identification.md#fdt-power-opt-in)
+explicitly opts out of automatic power changes and currently observes only.
 
 Run `sh ember/tools/fdt-power-attach-contract.sh` for the production scan,
 pre/post-attach and power API regression. Use
@@ -99,6 +101,44 @@ for sanitizer checks. The contract covers quiet/default passes, absent
 and malformed properties, RK3399 SD/eMMC firmware fallback, strict explicit
 requests, checked and legacy callbacks, mixed domains, errors, retries,
 late provider matches, unmatched diagnostics and preserved side effects.
+
+## Read-only GPU PPU diagnostic
+
+The provider reads GPU_TOP (5) and GPU_CORE (6) through its existing mapping,
+under its existing lock. Each domain has two ordered samples of this fixed
+allowlist, for 80 fault-aware 32-bit reads in total:
+
+| Registers | Domain-relative offsets |
+| --- | --- |
+| PWPR, PMER, PWSR | `0x000`, `0x004`, `0x008` |
+| DISR, MISR, STSR | `0x010`, `0x014`, `0x018` |
+| PWCR, PTCR | `0x020`, `0x024` |
+| IMR, AIMR, ISR, AISR | `0x030`, `0x034`, `0x038`, `0x03c` |
+| EDTR0, EDTR1, DCDR0, DCDR1 | `0x160`, `0x164`, `0x170`, `0x174` |
+| IDR0, IDR1, IIDR, AIDR | `0xfb0`, `0xfb4`, `0xfc8`, `0xfcc` |
+
+The diagnostic publishes both domains only after every read succeeds. A
+synchronous read fault returns `EFAULT` without publishing partial output;
+an already quarantined domain returns `EIO` before any reads. Diagnostic
+faults do not quarantine a domain or prevent provider registration. There
+are no retries, polling delays, new mappings, W1C writes or GPU accesses.
+Reading ISR/AISR preserves events; only writes of one clear their bits.
+
+Output includes both samples and a changed-register mask in table order.
+Channel metadata is decoded only for stable Arm PCK-600/PPU v1.1 identity
+and a valid channel configuration. Unknown identities remain raw values.
+Neither recognized metadata nor equal samples establish GPU readiness.
+MISR exposes input levels, not the internal transition phase or PREQ output.
+The lock excludes native provider writers, not autonomous hardware changes.
+Fault-aware access cannot guarantee completion of a stalled bus transaction.
+
+Ordinary `pdc_get` still reads only PWPR/PMER/PWSR twice and retains its
+strict errors. In physical kernel #6, CORE6 had policy `8`, emulation `0`
+and status `0`, hence `EBUSY`. The expanded diagnostic has not yet run on
+the board. Arm DEN0051E section 5.2.8 requires the requested static mode to
+be reached before changing PWCR.DEVREQEN. The pinned BSP's manual
+`PWCR=0; PWPR=8` GPU initialization is therefore not a justified recovery
+sequence for that mismatch. No active initialization is added here.
 
 ## Reproduce the software checks
 
@@ -112,14 +152,24 @@ POWER_TEST_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' \
     sh ember/tools/a733-power-contract.sh
 ```
 
-The 38 scenarios cover enable/disable, delayed completion, idempotence,
+The 45 scenarios cover enable/disable, delayed completion, idempotence,
 preserved policy bits, timeout, denial, each ignored register write,
 quarantine, invalid IDs, GPU_CORE protection, firmware policy protection,
 attachment failure cleanup, truncated FDT data, checked errors and the
-legacy callback path. These are software contracts, not physical MMIO tests.
+legacy callback path. A separate 1,661-check matrix covers strict read-only
+state queries. The diagnostic adds 236 scenarios covering exact read order,
+each acquisition fault, unchanged error output, each changed field,
+recognized P/Q and unknown identities, quarantine and attachment behavior.
+These are software contracts, not physical MMIO tests.
 
-On 2026-10-08 both runs passed on Apple Silicon macOS. Separate `EMBER64`
-object directories cross-built the new driver, R-CCU, FDT power-domain code
+The expanded diagnostic passes on Apple Silicon macOS, including ASan/UBSan
+and eight rejecting mutation controls. Its PCK object and target contract
+cross-build with the corrected Ports GCC 16.2. The target contract also
+passes under physical kernel #6 with fake MMIO; the expanded physical
+register snapshot remains pending.
+
+Earlier provider validation used separate `EMBER64` object directories to
+cross-build the driver, R-CCU, FDT power-domain code
 and unchanged Apple PMGR using GCC 12.5 and the corrected Ports GCC 16.2.
 The GCC16 objects retain DWARF5 and CTF, with strict kernel warnings enabled.
 Both Zero 3W and Zero 4 DTBs compiled and decoded with the provider present.
@@ -132,8 +182,10 @@ and both A733 CCU providers; Wi-Fi/SSH and 37 local-socket checks passed.
 The booted ELF SHA256 is
 `b66cf8eae6199946810ea6e67d77b716aaa5b7b61357c096d8f6dff53f65cbbe`.
 This verifies provider attachment, not accelerator power transitions.
-No GPU/NPU consumer node is enabled. Supplies, device clocks/resets,
-identification, DMA/MMU, IRQs and command execution remain separate steps.
+The later GPU consumer currently enables only
+[read-only observation](a733-gpu-identification.md). Active supplies,
+device clocks/resets, identification, DMA/MMU, IRQs and command execution
+remain separate steps.
 Use the [cross-build instructions](cross-build.md) from a clean commit,
 including matching modules and DTBs; do not mix these artifacts across builds.
 

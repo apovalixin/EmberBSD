@@ -38,9 +38,9 @@ typedef struct { bool initialized, held; } kmutex_t;
 #define DEVICE_COMPAT_EOL { .compat = NULL }
 #define device_private(d) (d)
 #define aprint_debug_dev(...) ((void)0)
-#define aprint_error_dev(...) ((void)0)
+#define aprint_error_dev aprint_normal_dev
 #define aprint_error(...) ((void)0)
-static char core_output[1024];
+static char core_output[8192];
 static void
 aprint_normal_dev(device_t dev, const char *fmt, ...)
 {
@@ -86,6 +86,9 @@ static bool checked_state;
 static kmutex_t *required_read_lock;
 static bus_size_t unstable_reg;
 static unsigned int unstable_read, state_checks;
+static unsigned int peeks, fail_peek, change_peek;
+static bus_size_t peek_trace[80];
+static bus_size_t read_trace[6];
 static struct clk clock_fixture;
 
 static void *kmem_alloc(size_t n, int flags) { return calloc(1, n); }
@@ -150,6 +153,8 @@ bus_space_read_4(bus_space_tag_t tag, bus_space_handle_t handle, bus_size_t off)
 	if (required_read_lock != NULL)
 		assert(required_read_lock->held);
 	reads++;
+	if (reads <= __arraycount(read_trace))
+		read_trace[reads - 1] = off;
 	if (reads == unstable_read && off == unstable_reg)
 		registers[off / 4] ^= __BIT(3);
 	if (policy_written && off % 0x1000 == 8) {
@@ -160,6 +165,21 @@ bus_space_read_4(bus_space_tag_t tag, bus_space_handle_t handle, bus_size_t off)
 			registers[(off - 8) / 4] = registers[off / 4];
 	}
 	return registers[off / 4];
+}
+static int
+bus_space_peek_4(bus_space_tag_t tag, bus_space_handle_t handle,
+    bus_size_t off, uint32_t *value)
+{
+	assert(off < sizeof(registers) && off % 4 == 0);
+	assert(required_read_lock != NULL && required_read_lock->held);
+	assert(peeks < __arraycount(peek_trace));
+	peek_trace[peeks++] = off;
+	if (peeks == fail_peek)
+		return 1;
+	if (peeks == change_peek)
+		registers[off / 4] ^= __BIT(3);
+	*value = registers[off / 4];
+	return 0;
 }
 static void
 bus_space_write_4(bus_space_tag_t tag, bus_space_handle_t handle,
@@ -219,6 +239,9 @@ reset_fixture(void)
 	required_read_lock = NULL;
 	unstable_reg = SIZE_MAX;
 	unstable_read = 0;
+	peeks = fail_peek = change_peek = 0;
+	memset(peek_trace, 0, sizeof(peek_trace));
+	memset(read_trace, 0, sizeof(read_trace));
 	fail_write = SIZE_MAX;
 	specifier[0] = swap32(1);
 	specifier[1] = swap32(4);
@@ -229,10 +252,12 @@ reset_fixture(void)
 static void
 attach_controller(void)
 {
+	required_read_lock = &sc.sc_lock;
 	sun60i_pck600_attach(NULL, &sc, &attach_args);
 	assert(mapped == 1 && unmapped == 0 && clock_fixture.enabled == 1);
 	assert(LIST_FIRST(&fdtbus_powerdomain_controllers) != NULL);
-	assert(reads == 6 && writes == 0); /* CORE6 observation only. */
+	assert(reads == 0 && peeks == 80 && writes == 0);
+	peeks = 0;
 	reads = 0;
 }
 static void
@@ -267,6 +292,7 @@ expect_state(int index, int error, bool state)
 		    &enabled) == error);
 		assert(enabled == (error == 0 ? state : i != 0));
 		assert(writes == 0 && barriers == 0 && delay_us == 0);
+		assert(peeks == 0);
 		assert(!sc.sc_lock.held);
 		state_checks++;
 	}
@@ -400,28 +426,31 @@ test_core_observation(void)
 {
 	struct sun60i_pck600_observation observation, saved;
 	const bus_size_t base = 6 * PCK600_DOMAIN_SIZE;
-	const char *expect;
+	int error;
+
 	for (u_int scenario = 0; scenario < 6; scenario++) {
 		reset_fixture();
 		registers[base / 4] = registers[(base + 8) / 4] = PCK600_ON;
-		expect = "static ON (error 0)";
-		if (scenario == 1) {
+		error = 0;
+		if (scenario == 1)
 			registers[base / 4] = registers[(base + 8) / 4] = 0;
-			expect = "static OFF (error 0)";
-		}
 		if (scenario == 2) registers[base / 4] |= PCK600_DYNAMIC;
 		if (scenario == 3) registers[(base + 4) / 4] = PCK600_EMULATION;
 		if (scenario == 4) registers[(base + 8) / 4] = 0;
 		if (scenario == 5) { unstable_reg = base; unstable_read = 4; }
-		if (scenario >= 2) expect = "unsupported or unstable";
+		if (scenario >= 2) error = scenario < 4 ? EOPNOTSUPP : EBUSY;
 		required_read_lock = &sc.sc_lock;
-		sun60i_pck600_attach(NULL, &sc, &attach_args);
+		mutex_init(&sc.sc_lock, MUTEX_DEFAULT, IPL_NONE);
+		mutex_enter(&sc.sc_lock);
+		assert(sun60i_pck600_observe(&sc, 6, &observation) == 0);
+		mutex_exit(&sc.sc_lock);
+		assert(observation.state_error == error);
+		if (error == 0)
+			assert(observation.enabled == (scenario == 0));
 		assert(reads == 6 && writes == 0 && barriers == 0 && delay_us == 0);
-		assert(strstr(core_output, expect) != NULL);
-		assert(strstr(core_output, "not a GPU readiness guarantee") != NULL);
-		assert(strstr(core_output, "GPU_CORE sample 0: PWPR") != NULL);
-		assert(strstr(core_output, "GPU_CORE sample 1: PWPR") != NULL);
-		assert(strstr(core_output, "PMER 0x") != NULL && strstr(core_output, "PWSR 0x") != NULL);
+		assert(peeks == 0);
+		for (u_int i = 0; i < 6; i++)
+			assert(read_trace[i] == base + i % 3 * 4);
 		assert(!sc.sc_lock.held && !sc.sc_failed[6]);
 	}
 	memset(&observation, 0xa5, sizeof(observation)); saved = observation;
@@ -430,10 +459,179 @@ test_core_observation(void)
 	assert(sun60i_pck600_observe(&sc, 6, &observation) == EIO);
 	assert(memcmp(&observation, &saved, sizeof(saved)) == 0 && reads == 0);
 	mutex_exit(&sc.sc_lock);
-	sun60i_pck600_core_report(&sc);
-	assert(reads == 0 && writes == 0);
+	sun60i_pck600_report(&sc);
+	assert(reads == 0 && peeks == 0 && writes == 0);
 	reset_fixture();
-	printf("PASS: 6 CORE6 attach observations and quarantined-state control\n");
+	printf("PASS: 6 strict CORE6 observations and quarantined-state control\n");
+}
+
+/* Independent register order and domain bases, not the production tables. */
+static const bus_size_t diagnostic_offsets[] = {
+	0x000, 0x004, 0x008, 0x010, 0x014, 0x018, 0x020, 0x024,
+	0x030, 0x034, 0x038, 0x03c, 0x160, 0x164, 0x170, 0x174,
+	0xfb0, 0xfb4, 0xfc8, 0xfcc,
+};
+
+static void
+diagnostic_fixture(void)
+{
+	reset_fixture();
+	mutex_init(&sc.sc_lock, MUTEX_DEFAULT, IPL_NONE);
+	required_read_lock = &sc.sc_lock;
+	for (u_int d = 0; d < 2; d++) {
+		const bus_size_t base = d == 0 ? 0x5000 : 0x6000;
+
+		for (u_int r = 0; r < 20; r++)
+			registers[(base + diagnostic_offsets[r]) / 4] =
+			    0x10000000 | base | r;
+		registers[(base + 0xfb0) / 4] = 0x00030100;
+		registers[(base + 0xfb4) / 4] = 0;
+		registers[(base + 0xfc8) / 4] = 0x0b61443b;
+		registers[(base + 0xfcc) / 4] = 0x11;
+	}
+}
+
+static int
+diagnostic_inspect(struct sun60i_pck600_diagnostic *state)
+{
+	int error;
+
+	mutex_enter(&sc.sc_lock);
+	error = sun60i_pck600_inspect(&sc, state);
+	mutex_exit(&sc.sc_lock);
+	assert(reads == 0 && writes == 0 && barriers == 0 && delay_us == 0);
+	assert(mapped == 0 && unmapped == 0 && clock_fixture.enabled == 0);
+	for (u_int i = 0; i < peeks; i++)
+		assert(peek_trace[i] == (i < 40 ? 0x5000 : 0x6000) +
+		    diagnostic_offsets[i % 20]);
+	return error;
+}
+
+static void
+test_diagnostic(void)
+{
+	struct sun60i_pck600_diagnostic state, saved;
+	unsigned int checks = 0;
+
+	diagnostic_fixture();
+	assert(diagnostic_inspect(&state) == 0 && peeks == 80);
+	for (u_int d = 0; d < 2; d++) {
+		const bus_size_t base = d == 0 ? 0x5000 : 0x6000;
+
+		assert(state.changed[d] == 0);
+		for (u_int s = 0; s < 2; s++)
+			for (u_int r = 0; r < 20; r++)
+				assert(state.sample[d][s][r] ==
+				    registers[(base + diagnostic_offsets[r]) / 4]);
+	}
+	checks++;
+	/* Every read can fail, even after a complete earlier domain/sample. */
+	for (u_int i = 1; i <= 80; i++) {
+		diagnostic_fixture();
+		memset(&state, 0xa5, sizeof(state));
+		saved = state;
+		fail_peek = i;
+		assert(diagnostic_inspect(&state) == EFAULT && peeks == i);
+		assert(memcmp(&state, &saved, sizeof(state)) == 0);
+		assert(!sc.sc_failed[5] && !sc.sc_failed[6]);
+		/* A read fault is not a transition failure or a permanent quarantine. */
+		peeks = fail_peek = 0;
+		assert(diagnostic_inspect(&state) == 0 && peeks == 80);
+		checks++;
+	}
+	/* Each changed field is reported, including policy and identity words. */
+	for (u_int d = 0; d < 2; d++) {
+		for (u_int r = 0; r < 20; r++) {
+			diagnostic_fixture();
+			change_peek = d * 40 + 20 + r + 1;
+			assert(diagnostic_inspect(&state) == 0 && peeks == 80);
+			assert(state.changed[d] == __BIT(r));
+			assert(state.changed[1 - d] == 0);
+			assert((state.sample[d][0][r] ^ state.sample[d][1][r]) == __BIT(3));
+			assert(sun60i_pck600_channels(&state, d) == (r >= 16 ? -1 : 0));
+			checks++;
+		}
+	}
+	/* P and every supported Q-channel count, with two recognized revisions. */
+	for (u_int c = 0; c <= 8; c++) {
+		diagnostic_fixture();
+		registers[(0x5000 + 0xfb0) / 4] |= c;
+		registers[(0x6000 + 0xfb0) / 4] |= c;
+		registers[(0x6000 + 0xfc8) / 4] = 0x0b60043b;
+		assert(diagnostic_inspect(&state) == 0);
+		assert(sun60i_pck600_channels(&state, 0) == (int)c);
+		assert(sun60i_pck600_channels(&state, 1) == (int)c);
+		checks++;
+	}
+	for (u_int d = 0; d < 2; d++) {
+		const bus_size_t base = d == 0 ? 0x5000 : 0x6000;
+		static const struct {
+			bus_size_t reg;
+			uint32_t value;
+		} unknown[] = {
+			{ 0xfc8, 0 }, { 0xfc8, UINT32_MAX },
+			{ 0xfc8, 0x0b61443a }, { 0xfc8, 0x0b71443b },
+			{ 0xfcc, 0 }, { 0xfcc, 0x10 }, { 0xfcc, 0x12 },
+			{ 0xfcc, 0x10000011 }, { 0xfb0, 0 },
+			{ 0xfb0, 0x00030109 }, { 0xfb0, 0x00030111 },
+		};
+
+		for (u_int i = 0; i < __arraycount(unknown); i++) {
+			diagnostic_fixture();
+			registers[(base + unknown[i].reg) / 4] = unknown[i].value;
+			assert(diagnostic_inspect(&state) == 0 && peeks == 80);
+			assert(state.changed[d] == 0);
+			assert(sun60i_pck600_channels(&state, d) == -1);
+			assert(sun60i_pck600_channels(&state, 1 - d) == 0);
+			checks++;
+		}
+		diagnostic_fixture();
+		sc.sc_failed[d == 0 ? 5 : 6] = true;
+		memset(&state, 0x5a, sizeof(state));
+		saved = state;
+		assert(diagnostic_inspect(&state) == EIO && peeks == 0);
+		assert(memcmp(&state, &saved, sizeof(state)) == 0);
+		checks++;
+	}
+	/* Provider attachment publishes only a complete pair of raw samples. */
+	for (u_int i = 0; i <= 80; i++) {
+		diagnostic_fixture();
+		fail_peek = i;
+		registers[(0x5000 + 0xfb0) / 4] |= 2;
+		sun60i_pck600_attach(NULL, &sc, &attach_args);
+		assert(mapped == 1 && unmapped == 0 && clock_fixture.enabled == 1);
+		assert(LIST_FIRST(&fdtbus_powerdomain_controllers) != NULL);
+		assert(reads == 0 && writes == 0 && barriers == 0 && delay_us == 0);
+		assert(!sc.sc_lock.held && !sc.sc_failed[5] && !sc.sc_failed[6]);
+		if (i == 0) {
+			assert(peeks == 80);
+			assert(strstr(core_output, "GPU_TOP PPU metadata: Q-Channel, 2") != NULL);
+			assert(strstr(core_output, "GPU_CORE PPU metadata: P-Channel, 1") != NULL);
+			assert(strstr(core_output,
+			    "not a power-state or GPU readiness guarantee") != NULL);
+			assert(strstr(core_output, "GPU_TOP PWPR [0x000]:") != NULL);
+			assert(strstr(core_output, "GPU_CORE PWCR [0x020]:") != NULL);
+			assert(strstr(core_output,
+			    "GPU_CORE AIDR [0xfcc]: 0x00000011 0x00000011") != NULL);
+		} else {
+			assert(peeks == i);
+			assert(strstr(core_output, "diagnostic unavailable") != NULL);
+			assert(strstr(core_output, "GPU_TOP") == NULL);
+			assert(strstr(core_output, "GPU_CORE") == NULL);
+		}
+		checks++;
+	}
+	diagnostic_fixture();
+	registers[(0x6000 + 0xfc8) / 4] = 0;
+	sun60i_pck600_report(&sc);
+	assert(strstr(core_output, "GPU_CORE PPU metadata: "
+	    "unrecognized or unstable, raw values only") != NULL);
+	assert(strstr(core_output, "GPU_CORE PPU metadata: P-Channel") == NULL);
+	assert(strstr(core_output,
+	    "GPU_CORE IIDR [0xfc8]: 0x00000000 0x00000000") != NULL);
+	checks++;
+	reset_fixture();
+	printf("PASS: %u bounded TOP5/CORE6 diagnostic scenarios\n", checks);
 }
 
 int
@@ -556,6 +754,7 @@ main(void)
 	assert(fdtbus_register_powerdomain_controller(&sc, 1, &checked) == EINVAL);
 	test_core_observation();
 	printf("PASS: %u A733 PCK600/FDT production regression scenarios\n", cases);
+	test_diagnostic();
 	reset_fixture();
 	return 0;
 }
