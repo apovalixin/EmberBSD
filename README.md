@@ -308,6 +308,11 @@ on every board in the hardware catalog.
   EGL/GLES/GL and GBM. The same providers pass four guarded
   [GBM/PRIME/EGLImage pixel lifecycles](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/gbm.md)
   through native VirtGPU buffers in an isolated AArch64 VM, using llvmpipe.
+  [wlroots 0.20.2nb4](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/wlroots-package.md)
+  passes four GLES2/headless lifecycles both as root and after dropping
+  privileges, checking 1024 pixels and buffer lifetime across a real KMS
+  framebuffer import. This accepts another common-stack consumer; visible
+  scanout, input and an accelerated Wayland session remain unverified.
   This verifies the device-buffer path for Wayland; remaining consumer migration, a visible session and
   guest accelerated rendering still require acceptance.
   A Ports
