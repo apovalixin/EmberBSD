@@ -32,7 +32,7 @@ but never claims filesystem consistency. Shared silicon alone is not board proof
 Keep schema1 compatibility. Schema2 adds exact `capture_state` (device/recovery),
 `root_method` (vendor_su/adbd) and `hardware_boot` (exactly boot0/boot1 objects
 with role/file/bytes/sha256) to the existing fields. Both area lengths must agree,
-be positive512 multiples and <=33554432. All eight input files plus manifest
+be positive512 multiples and <=33554432. All eight inputs including the manifest
 must be distinct opened dev/inodes, private0600 in directory0700. Extend the
 existing lifetime/stat/hash checks to boot areas; their bytes/hashes are trusted
 capture metadata, not authenticated hardware geometry. Schema1 reports no

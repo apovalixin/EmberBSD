@@ -62,9 +62,11 @@ module A133Capture
   end
 
   def validate_record!(record,serial,cid,manifest_name)
-    fields!(record,%w[schema board serial cid uncompressed_sha256 backup partitions],'invalid_capture_fields')
+    fields = %w[schema board serial cid uncompressed_sha256 backup partitions]
+    fields += %w[capture_state root_method hardware_boot] if record.is_a?(Hash) && record['schema']==2
+    fields!(record,fields,'invalid_capture_fields')
     raise Invalid,'unsupported_capture' unless record['schema'].is_a?(Integer) &&
-      record['schema']==1 && record['board']=='ys-m33-a133'
+      [1,2].include?(record['schema']) && record['board']=='ys-m33-a133'
     identity!(record['serial'],record['cid'])
     raise Invalid,'capture_identity_mismatch' unless record['serial']==serial && record['cid']==cid
     raise Invalid,'invalid_capture_sha256' unless record['uncompressed_sha256'].is_a?(String) &&
@@ -76,11 +78,36 @@ module A133Capture
     parts.each { |part| fields!(part,%w[role file],'invalid_capture_partitions') }
     roles = parts.map { |part| part['role'] }
     raise Invalid,'invalid_capture_partitions' unless roles.all? { |role| role.is_a?(String) } && roles.sort==ROLES.sort
+    hardware = []
+    if record['schema']==2
+      raise Invalid,'invalid_capture_source' unless %w[device recovery].include?(record['capture_state']) &&
+        %w[vendor_su adbd].include?(record['root_method'])
+      hardware = record['hardware_boot']
+      raise Invalid,'invalid_capture_hardware' unless hardware.is_a?(Array) && hardware.size==2
+      hardware.each { |area| fields!(area,%w[role file bytes sha256],'invalid_capture_hardware') }
+      roles = hardware.map { |area| area['role'] }
+      raise Invalid,'invalid_capture_hardware' unless roles.all? { |role| role.is_a?(String) } && roles.sort==%w[boot0 boot1]
+      raise Invalid,'invalid_capture_hardware' unless hardware.all? do |area|
+        area['bytes'].is_a?(Integer) && area['bytes']>0 && area['bytes']%512==0 && area['bytes']<=33554432 &&
+          area['sha256'].is_a?(String) && area['sha256'].match?(/\A[0-9a-f]{64}\z/)
+      end
+      raise Invalid,'invalid_capture_hardware' unless hardware[0]['bytes']==hardware[1]['bytes']
+    end
     names = [record['backup']['file']] + parts.map { |part| part['file'] }
+    names += hardware.map { |area| area['file'] }
     raise Invalid,'invalid_capture_filename' unless names.all? do |name|
       name.is_a?(String) && name.bytesize.between?(1,128) && name.match?(/\A[a-zA-Z0-9][a-zA-Z0-9._-]*\z/)
     end
-    raise Invalid,'duplicate_capture_filename' unless names.uniq.size==5 && !names.include?(manifest_name)
+    raise Invalid,'duplicate_capture_filename' unless names.uniq.size==names.size && !names.include?(manifest_name)
+  end
+
+  def verify_copy(file,actual_size,size,sha,prefix)
+    raise Invalid,prefix+'_size_mismatch' unless actual_size==size && file.stat.size==size
+    digest = Digest::SHA256.new
+    while (chunk=file.read(1048576))
+      digest.update(chunk)
+    end
+    raise Invalid,prefix+'_hash_mismatch' unless digest.hexdigest==sha
   end
 
   def verify(path,serial:,cid:,zstd:'zstd',timeout:3600)
@@ -101,6 +128,8 @@ module A133Capture
         validate_record!(record,serial,cid,File.basename(path))
         backup_path = File.join(directory,record['backup']['file'])
         paths = [backup_path] + record['partitions'].map { |part| File.join(directory,part['file']) }
+        hardware = record['schema']==2 ? record['hardware_boot'] : []
+        paths += hardware.map { |area| File.join(directory,area['file']) }
         # Keep every input open; check each inode/path again before returning.
         private_files(paths,identities) do |opened|
           receipt = A133Backup.verify_file(backup_path,sha256:record['uncompressed_sha256'],
@@ -109,15 +138,15 @@ module A133Capture
             role = part['role']
             size = A133Backup::INVENTORY.find { |entry| entry[:name]==role }.fetch(:sectors)*512
             file,actual_size = opened.fetch(index+1)
-            raise Invalid,'critical_copy_size_mismatch' unless actual_size==size && file.stat.size==size
-            digest = Digest::SHA256.new
-            while (chunk=file.read(1048576))
-              digest.update(chunk)
-            end
-            raise Invalid,'critical_copy_hash_mismatch' unless digest.hexdigest==receipt[:partition_sha256].fetch(role)
+            verify_copy(file,actual_size,size,receipt[:partition_sha256].fetch(role),'critical_copy')
+          end
+          hardware.each_with_index do |area,index|
+            file,actual_size = opened.fetch(index+5)
+            verify_copy(file,actual_size,area['bytes'],area['sha256'],'hardware_copy')
           end
           bound = receipt.each_with_object({}) { |(key,value),out| out[key.to_s]=value }
           bound.merge('serial'=>serial,'cid'=>cid,'critical_copies_verified'=>true,
+            'hardware_boot_copies_verified'=>record['schema']==2,
             'device_binding'=>'matches_trusted_capture_identifiers')
         end
       end
@@ -136,7 +165,7 @@ module A133Capture
   rescue SystemCallError,IOError
     raise Invalid,'capture_file_unavailable',cause:nil
   end
-  private_class_method :fields!,:identity!,:private_file,:private_files,:read_record,:validate_record!
+  private_class_method :fields!,:identity!,:private_file,:private_files,:read_record,:validate_record!,:verify_copy
 end
 
 if $PROGRAM_NAME==__FILE__
@@ -154,6 +183,7 @@ if $PROGRAM_NAME==__FILE__
     receipt = A133Capture.verify(ARGV.first,**options)
     result.merge!(status:'capture_integrity_verified',bytes:receipt['bytes'],
       critical_copies_verified:true,identity_matches_record:true,
+      hardware_boot_copies_verified:receipt['hardware_boot_copies_verified'],
       filesystem_consistency:receipt['filesystem_consistency'])
     puts JSON.pretty_generate(result)
   rescue A133Capture::Invalid,OptionParser::ParseError => error
