@@ -12,7 +12,10 @@ Only a zero-length root `ember,ys-m33-sdio-probe` property opts in. Validate the
 inspected MMC1 legacy compatibility, 0x04021000/0x1000 register cells, SPI40
 level-high interrupt, four-bit bus, legacy PG0..PG5 pin group and enabled WLAN
 bus 1. Validate the WLAN's existing R_PIO provider and PL5/PL6 resource cells;
-do not change those GPIOs. Unknown or disabled resources remain untranslated.
+do not change those GPIOs. Validate complete compatibility strings, identity
+address mapping and the inspected PIO/R_PIO/GIC register and binding context.
+Reject alternate interrupt providers, card-detect/write-protect GPIOs and a
+PIO `vcc-pg-supply`; applying pinctrl can otherwise enable that regulator. Unknown or disabled resources remain untranslated.
 
 Create canonical `mmc1` pins, use A100 bus/module clock IDs 67/63 and bus reset
 16, copy the verified GIC parent and limit the bus to 25 MHz. Mark it

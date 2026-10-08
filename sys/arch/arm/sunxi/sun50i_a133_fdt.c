@@ -45,6 +45,7 @@
 #define SDIO_PINS PIO "/ember-mmc1-pins"
 #define WLAN SOC "/wlan@0"
 #define RPIO SOC "/pinctrl@07022000"
+#define SDIO_GIC "/interrupt-controller@03020000"
 #define SDIO_MARK "ember,ys-m33-sdio-host"
 
 int sun50i_a133_fdt_fixup(void *);
@@ -316,6 +317,22 @@ a133_sdio_cell(const void *fdt, const char *path, const char *name,
 	return a133_sdio_value(fdt, path, name, &cell, sizeof(cell));
 }
 
+static uint32_t
+a133_sdio_phandle(const void *fdt, const char *path)
+{
+	uint32_t phandle;
+	int node;
+
+	node = fdt_path_offset(fdt, path);
+	if (node < 0)
+		return 0;
+	phandle = fdt_get_phandle(fdt, node);
+	if (phandle == 0 || phandle == UINT32_MAX ||
+	    fdt_node_offset_by_phandle(fdt, phandle) != node)
+		return 0;
+	return phandle;
+}
+
 /* Host discovery only: preserve radio power and all legacy GPIO providers. */
 static int
 a133_sdio(void *fdt, uint32_t ccu)
@@ -326,7 +343,15 @@ a133_sdio(void *fdt, uint32_t ccu)
 		"sd-uhs-sdr25", "sd-uhs-sdr50", "sd-uhs-sdr104",
 		"sd-uhs-ddr50", "pinctrl-1"
 	};
-	fdt32_t cells[7], cell;
+	static const char gic_compat[] = "arm,cortex-a15-gic\0arm,cortex-a9-gic";
+	static const uint32_t gic_reg[] = {
+		0, 0x03021000, 0, 0x1000, 0, 0x03022000, 0, 0x2000,
+		0, 0x03024000, 0, 0x2000, 0, 0x03026000, 0, 0x2000
+	};
+	static const char *reject[] = {
+		"mmc-pwrseq", "interrupts-extended", "cd-gpios", "wp-gpios"
+	};
+	fdt32_t cells[16], cell;
 	uint32_t rpio, legacy, pinhandle, gic;
 	bool owned, valid_marker, okay;
 	int node, len, error;
@@ -349,13 +374,28 @@ a133_sdio(void *fdt, uint32_t ccu)
 	    len != 0 || !okay || (owned && !valid_marker) ||
 	    !a133_audio_okay(fdt, WLAN))
 		return 0;
-	node = fdt_path_offset(fdt, SDIO);
-	if (fdt_node_check_compatible(fdt, node,
-	    "allwinner,sunxi-mmc-v5p3x") != 0 &&
-	    (!valid_marker || fdt_node_check_compatible(fdt, node,
-	    "allwinner,sun50i-a100-mmc") != 0))
+	if (fdt_stringlist_count(fdt, 0, "compatible") < 1 ||
+	    !a133_sdio_cell(fdt, "/", "#address-cells", 2) ||
+	    !a133_sdio_cell(fdt, "/", "#size-cells", 2) ||
+	    !a133_sdio_cell(fdt, SOC, "#address-cells", 2) ||
+	    !a133_sdio_cell(fdt, SOC, "#size-cells", 2) ||
+	    !a133_sdio_value(fdt, SOC, "ranges", "", 0))
 		return 0;
-	if (fdt_getprop(fdt, node, "mmc-pwrseq", &len) != NULL)
+	if (!a133_sdio_value(fdt, SDIO, "compatible",
+	    "allwinner,sunxi-mmc-v5p3x", sizeof("allwinner,sunxi-mmc-v5p3x")) &&
+	    (!valid_marker || !a133_sdio_value(fdt, SDIO, "compatible",
+	    "allwinner,sun50i-a100-mmc", sizeof("allwinner,sun50i-a100-mmc"))))
+		return 0;
+	node = fdt_path_offset(fdt, SDIO);
+	for (unsigned int i = 0; i < sizeof(reject) / sizeof(reject[0]); i++)
+		if (fdt_getprop(fdt, node, reject[i], &len) != NULL)
+			return 0;
+	node = fdt_path_offset(fdt, PIO);
+	if (fdt_getprop(fdt, node, "vcc-pg-supply", &len) != NULL)
+		return 0;
+	cells[0] = 0; cells[1] = cpu_to_fdt32(0x0300b000);
+	cells[2] = 0; cells[3] = cpu_to_fdt32(0x400);
+	if (!a133_sdio_value(fdt, PIO, "reg", cells, 16))
 		return 0;
 	cells[0] = 0; cells[1] = cpu_to_fdt32(0x04021000);
 	cells[2] = 0; cells[3] = cpu_to_fdt32(0x1000);
@@ -372,15 +412,20 @@ a133_sdio(void *fdt, uint32_t ccu)
 	    !a133_sdio_cell(fdt, SDIO_GROUP, "allwinner,drive", 3) ||
 	    !a133_sdio_cell(fdt, SDIO_GROUP, "allwinner,pull", 1))
 		return 0;
-	node = fdt_path_offset(fdt, SDIO_GROUP);
-	legacy = fdt_get_phandle(fdt, node);
-	node = fdt_path_offset(fdt, RPIO);
-	if (node < 0 || (rpio = fdt_get_phandle(fdt, node)) == 0 ||
+	legacy = a133_sdio_phandle(fdt, SDIO_GROUP);
+	cells[0] = 0; cells[1] = cpu_to_fdt32(0x07022000);
+	cells[2] = 0; cells[3] = cpu_to_fdt32(0x400);
+	if (!a133_sdio_value(fdt, RPIO, "reg", cells, 16) ||
+	    !a133_sdio_value(fdt, RPIO, "compatible",
+	    "allwinner,sun50iw10p1-r-pinctrl",
+	    sizeof("allwinner,sun50iw10p1-r-pinctrl")) ||
+	    !a133_sdio_value(fdt, RPIO, "gpio-controller", "", 0) ||
+	    (rpio = a133_sdio_phandle(fdt, RPIO)) == 0 ||
 	    !a133_sdio_cell(fdt, RPIO, "#gpio-cells", 6) ||
 	    !a133_sdio_cell(fdt, WLAN, "wlan_busnum", 1) || legacy == 0)
 		return 0;
-	node = fdt_path_offset(fdt, WLAN);
-	if (fdt_node_check_compatible(fdt, node, "allwinner,sunxi-wlan") != 0)
+	if (!a133_sdio_value(fdt, WLAN, "compatible", "allwinner,sunxi-wlan",
+	    sizeof("allwinner,sunxi-wlan")))
 		return 0;
 	cells[0] = cpu_to_fdt32(rpio); cells[1] = cpu_to_fdt32(11);
 	cells[2] = cpu_to_fdt32(5); cells[3] = cpu_to_fdt32(1);
@@ -392,15 +437,23 @@ a133_sdio(void *fdt, uint32_t ccu)
 		return 0;
 	node = fdt_path_offset(fdt, SDIO_PINS);
 	if (owned) {
-		if (node < 0 || (pinhandle = fdt_get_phandle(fdt, node)) == 0 ||
+		if (node < 0 || (pinhandle = a133_sdio_phandle(fdt, SDIO_PINS)) == 0 ||
 		    !a133_sdio_cell(fdt, SDIO, "pinctrl-0", pinhandle) ||
 		    !a133_sdio_value(fdt, SDIO_PINS, "pins", pins, sizeof(pins)) ||
 		    !a133_sdio_value(fdt, SDIO_PINS, "function", "mmc1", 5))
 			return 0;
 	} else if (node >= 0 || !a133_sdio_cell(fdt, SDIO, "pinctrl-0", legacy))
 		return 0;
-	node = fdt_path_offset(fdt, "/interrupt-controller@03020000");
-	if (node < 0 || (gic = fdt_get_phandle(fdt, node)) == 0)
+	for (unsigned int i = 0; i < sizeof(gic_reg) / sizeof(gic_reg[0]); i++)
+		cells[i] = cpu_to_fdt32(gic_reg[i]);
+	if ((gic = a133_sdio_phandle(fdt, SDIO_GIC)) == 0 ||
+	    !a133_sdio_value(fdt, SDIO_GIC, "reg",
+	    cells, sizeof(cells)) ||
+	    !a133_sdio_value(fdt, SDIO_GIC, "compatible",
+	    gic_compat, sizeof(gic_compat)) ||
+	    !a133_sdio_cell(fdt, SDIO_GIC, "#interrupt-cells", 3) ||
+	    !a133_sdio_value(fdt, SDIO_GIC,
+	    "interrupt-controller", "", 0))
 		return 0;
 
 	/* Keep the host disabled until all resource updates have succeeded. */

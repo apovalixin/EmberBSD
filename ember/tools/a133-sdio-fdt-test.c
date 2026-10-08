@@ -15,10 +15,36 @@ static void
 sdio_fixture(void *fdt, const char *root)
 {
 	static const char pins[] = "PG0\0PG1\0PG2\0PG3\0PG4\0PG5";
-	fdt32_t cells[7];
+	fdt32_t cells[16];
 	int node, parent;
 
 	fixture(fdt, 16384, root);
+	assert(fdt_setprop_u32(fdt, 0, "#address-cells", 2) == 0);
+	assert(fdt_setprop_u32(fdt, 0, "#size-cells", 2) == 0);
+	node = fdt_path_offset(fdt, "/soc@03000000");
+	assert(fdt_setprop(fdt, node, "ranges", NULL, 0) == 0);
+	node = fdt_path_offset(fdt, "/soc@03000000/pinctrl@0300b000");
+	cells[0] = 0; cells[1] = cpu_to_fdt32(0x0300b000);
+	cells[2] = 0; cells[3] = cpu_to_fdt32(0x400);
+	assert(fdt_setprop(fdt, node, "reg", cells, 16) == 0);
+	node = fdt_path_offset(fdt, "/interrupt-controller@03020000");
+	assert(fdt_setprop(fdt, node, "compatible",
+	    "arm,cortex-a15-gic\0arm,cortex-a9-gic", sizeof("arm,cortex-a15-gic\0arm,cortex-a9-gic")) == 0);
+	assert(fdt_setprop_u32(fdt, node, "#interrupt-cells", 3) == 0);
+	assert(fdt_setprop(fdt, node, "interrupt-controller", NULL, 0) == 0);
+	memset(cells, 0, sizeof(cells));
+	cells[1] = cpu_to_fdt32(0x03021000); cells[3] = cpu_to_fdt32(0x1000);
+	cells[5] = cpu_to_fdt32(0x03022000); cells[7] = cpu_to_fdt32(0x2000);
+	cells[9] = cpu_to_fdt32(0x03024000); cells[11] = cpu_to_fdt32(0x2000);
+	cells[13] = cpu_to_fdt32(0x03026000); cells[15] = cpu_to_fdt32(0x2000);
+	assert(fdt_setprop(fdt, node, "reg", cells, sizeof(cells)) == 0);
+	node = fdt_path_offset(fdt, RPIO);
+	assert(fdt_setprop_string(fdt, node, "compatible",
+	    "allwinner,sun50iw10p1-r-pinctrl") == 0);
+	assert(fdt_setprop(fdt, node, "gpio-controller", NULL, 0) == 0);
+	cells[0] = 0; cells[1] = cpu_to_fdt32(0x07022000);
+	cells[2] = 0; cells[3] = cpu_to_fdt32(0x400);
+	assert(fdt_setprop(fdt, node, "reg", cells, 16) == 0);
 	assert(fdt_setprop(fdt, 0, OPT, NULL, 0) == 0);
 	node = fdt_path_offset(fdt, RPIO);
 	assert(fdt_setprop_u32(fdt, node, "#gpio-cells", 6) == 0);
@@ -117,21 +143,26 @@ main(void)
 	node = fdt_path_offset(fdt, HOST);
 	assert(fdt_getprop(fdt, node, MARK, &len) == NULL);
 	assert(strcmp(fdt_getprop(fdt, node, "status", &len), "disabled") == 0);
-	for (which = 0; which < 4; which++) {
+	for (which = 0; which < 6; which++) {
 		sdio_fixture(fdt, "allwinner,a133");
 		assert(sun50i_a133_fdt_fixup(fdt) == 0);
-		node = fdt_path_offset(fdt, which == 0 ? HOST : WLAN);
+		node = fdt_path_offset(fdt, which == 0 || which == 5 ? HOST : WLAN);
 		if (which == 0) assert(fdt_setprop_u32(fdt, node, MARK, 1) == 0);
 		if (which == 1) assert(fdt_setprop_u32(fdt, node, "wlan_busnum", 0) == 0);
 		if (which == 2) assert(fdt_setprop_string(fdt, node, "status", "disabled") == 0);
 		if (which == 3) assert(fdt_setprop_u32(fdt, 0, OPT, 1) == 0);
+		if (which == 4) {
+			node = fdt_path_offset(fdt, "/soc@03000000/pinctrl@0300b000");
+			assert(fdt_setprop_u32(fdt, node, "vcc-pg-supply", 199) == 0);
+		}
+		if (which == 5) assert(fdt_setprop_u32(fdt, node, "interrupts-extended", 99) == 0);
 		assert(sun50i_a133_fdt_fixup(fdt) == 0);
 		node = fdt_path_offset(fdt, HOST);
 		assert(fdt_getprop(fdt, node, MARK, &len) == NULL);
 		assert(strcmp(fdt_getprop(fdt, node, "status", &len), "disabled") == 0);
 	}
 
-	for (which = 0; which < 13; which++) {
+	for (which = 0; which < 28; which++) {
 		sdio_fixture(fdt, "allwinner,a133");
 		node = fdt_path_offset(fdt, HOST);
 		if (which == 0) assert(fdt_delprop(fdt, 0, OPT) == 0);
@@ -166,6 +197,45 @@ main(void)
 		if (which == 12) {
 			node = fdt_path_offset(fdt, RPIO);
 			assert(fdt_setprop_u32(fdt, node, "#gpio-cells", 3) == 0);
+		}
+		if (which == 13) {
+			node = fdt_path_offset(fdt, "/soc@03000000/pinctrl@0300b000");
+			assert(fdt_setprop_u32(fdt, node, "vcc-pg-supply", 199) == 0);
+		}
+		if (which == 14) assert(fdt_setprop_u32(fdt, node, "interrupts-extended", 99) == 0);
+		if (which == 15 || which == 16 || which == 17) {
+			node = fdt_path_offset(fdt, "/soc@03000000");
+			if (which == 15) assert(fdt_setprop_u32(fdt, node, "#address-cells", 1) == 0);
+			if (which == 16) assert(fdt_setprop_u32(fdt, node, "#size-cells", 1) == 0);
+			if (which == 17) assert(fdt_setprop_u32(fdt, node, "ranges", 1) == 0);
+		}
+		if (which == 18 || which == 19) {
+			node = fdt_path_offset(fdt, RPIO);
+			if (which == 18) assert(fdt_setprop_string(fdt, node, "compatible", "foreign,rpio") == 0);
+			if (which == 19) assert(fdt_setprop_u32(fdt, node, "reg", 1) == 0);
+		}
+		if (which == 20 || which == 21 || which == 22) {
+			node = fdt_path_offset(fdt, "/interrupt-controller@03020000");
+			if (which == 20) assert(fdt_setprop_string(fdt, node, "compatible", "foreign,gic") == 0);
+			if (which == 21) assert(fdt_setprop_u32(fdt, node, "#interrupt-cells", 1) == 0);
+			if (which == 22) assert(fdt_setprop_u32(fdt, node, "reg", 1) == 0);
+		}
+		if (which == 23) assert(fdt_setprop(fdt, node, "compatible",
+		    "allwinner,sunxi-mmc-v5p3x\0x", sizeof("allwinner,sunxi-mmc-v5p3x\0x") - 1) == 0);
+		if (which == 25) {
+			node = fdt_path_offset(fdt, WLAN);
+			assert(fdt_setprop(fdt, node, "compatible", "allwinner,sunxi-wlan\0x",
+			    sizeof("allwinner,sunxi-wlan\0x") - 1) == 0);
+		}
+		if (which == 26) {
+			node = fdt_path_offset(fdt, RPIO);
+			assert(fdt_setprop_u32(fdt, node, "phandle", 42) == 0);
+		}
+		if (which == 27) assert(fdt_setprop(fdt, 0, "compatible", "allwinner,a133\0x",
+		    sizeof("allwinner,a133\0x") - 1) == 0);
+		if (which == 24) {
+			node = fdt_path_offset(fdt, "/soc@03000000/pinctrl@0300b000");
+			assert(fdt_setprop_u32(fdt, node, "reg", 1) == 0);
 		}
 		assert(sun50i_a133_fdt_fixup(fdt) == 0);
 		node = fdt_path_offset(fdt, HOST);
