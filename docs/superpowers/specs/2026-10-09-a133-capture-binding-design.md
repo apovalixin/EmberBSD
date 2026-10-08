@@ -34,15 +34,17 @@ Directory0700 and files0600 must belong to the current UID. Reject leaf
 symlinks, non-regular files, hardlinks, unsafe modes, duplicate JSON keys and
 fields, oversized (>65536) manifests, path traversal and repeated filenames.
 Hold each source descriptor while checking it; compare dev/ino/size/mtime/ctime
-before/after reading. Keep the full-image descriptor open across its verifier
-and all critical-copy checks, then recheck it. This detects accidental mutation,
+before/after reading. Keep all six input descriptors open across verification,
+refuse duplicate dev/inode identities, then recheck every inode and current path.
+This detects accidental mutation,
 not hostile changes by the local owner or parent-directory replacement.
 
 Each critical copy must have its fixed partition size and its full SHA256 must
 equal the corresponding range hash from the just-verified main snapshot.
 The returned receipt retains `backup_integrity_verified`, adds the recorded
 serial/CID and always has writes_performed0/installation_ready=false.
-Errors use bounded symbolic reasons, with no contents, identifiers or paths.
+Errors use bounded symbolic reasons, with no contents, identifiers or paths;
+discard original/inherited exception causes at each public library boundary.
 An inspection-only CLI emits a redacted receipt, never the private bound one.
 
 ## Limits and next consumer

@@ -194,12 +194,14 @@ module A133Backup
     end
     verified.merge(status: 'backup_integrity_verified', writes_performed: 0,
       installation_ready: false, filesystem_consistency: 'not_established_by_integrity_check')
+  rescue Invalid => error
+    raise Invalid, error.message, cause: nil
   rescue Timeout::Error
-    raise Invalid, 'backup_read_timeout'
+    raise Invalid, 'backup_read_timeout', cause: nil
   rescue SystemCallError, IOError
-    raise Invalid, 'backup_read_failed'
+    raise Invalid, 'backup_read_failed', cause: nil
   rescue ArgumentError
-    raise Invalid, 'invalid_arguments'
+    raise Invalid, 'invalid_arguments', cause: nil
   end
 end
 

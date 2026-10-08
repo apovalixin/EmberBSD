@@ -56,8 +56,10 @@ a cached success receipt cannot replace those reads.
 Keep a capture manifest in the same private directory as its five files.
 Directory mode must be0700, every input file0600, owned by the current UID,
 regular and single-linked. Leaf symlinks, hardlinks and unsafe modes are
-refused. The full-image descriptor remains open across all copy checks;
-changed stat/inode/path or a deadline prevents success.
+refused. All six input descriptors remain open across the checks, with distinct
+device/inode identities. Names differing only by case cannot masquerade as
+separate copies on a case-insensitive filesystem. Changed stat/inode/path or
+a deadline prevents success; an early copy is checked again after later reads.
 
 The JSON manifest has these exact fields, with no additional receipt object:
 
@@ -85,6 +87,8 @@ without identifiers, filenames or image hashes. The library
 a **private** string-keyed `backup_integrity_verified` receipt with recorded
 serial/CID and `critical_copies_verified=true`, for the guarded USB consumer.
 Both report writes_performed0/installation_ready=false. No write/reboot flag.
+Normalized library exceptions discard original and inherited causes so ordinary
+full exception logging does not reveal input paths or malformed JSON contents.
 
 The capture record is trusted input, not a signature. Offline matching labels
 does not discover hardware: the caller must obtain live identity and use the
@@ -132,6 +136,7 @@ decoder subprocesses, not a 31 GB allocation:
 ruby ember/tools/a133-backup-check-test.rb
 ruby ember/tools/a133-backup-library-test.rb
 ruby ember/tools/a133-capture-check-test.rb
+ruby ember/tools/a133-capture-regression-test.rb
 ruby ember/tools/a133-recovery-env-test.rb
 ruby ember/tools/a133-env-edit-test.rb
 ruby ember/tools/a133-install-bundle-test.rb
@@ -155,4 +160,15 @@ review found no blocking defect. Its regression-coverage finding was addressed
 with successful-exit/noisy-stderr and exited-parent/stalled-descendant cases;
 the latter checks that the descendant is actually terminated.
 The reviewer did not independently inspect private images or accept hardware
-restoration. Production code was unchanged after the full-image check.
+restoration. Later library and capture-binding additions retain the streaming
+GPT algorithms; that private31GB archive was not reread for these additions.
+
+On 2026-10-09, library14, capture37, review-regression6 and backup29 passed on
+Ruby4.0.5 and system2.6.10. USB43/session25/environment contracts also passed
+after the fixes. Independent GPT-6 Astra review found three Important defects:
+late mutation of an early critical copy, case-insensitive inode aliases and
+private exception causes. Six regressions failed on both Ruby versions before
+the fixes, then passed along with the relevant suites. The alias case ran on
+this host's case-insensitive filesystem; it reports inapplicable elsewhere.
+Fixes were verified by the implementer; the reviewer examined the pre-fix range.
+No new full private-image, physical USB or restoration acceptance was performed.

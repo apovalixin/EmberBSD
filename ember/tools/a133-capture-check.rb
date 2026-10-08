@@ -25,7 +25,7 @@ module A133Capture
       cid.is_a?(String) && cid.match?(/\A[0-9a-f]{32}\z/)
   end
 
-  def private_file(path)
+  def private_file(path,identities)
     before = File.lstat(path)
     safe = ->(stat) {stat.file? && stat.uid==Process.uid && stat.nlink==1 && stat.mode&07777==0600}
     raise Invalid,'unsafe_capture_file' unless safe.call(before)
@@ -33,23 +33,31 @@ module A133Capture
       opened = file.stat
       raise Invalid,'unsafe_capture_file' unless safe.call(opened) &&
         before.dev==opened.dev && before.ino==opened.ino
+      identity = [opened.dev,opened.ino]
+      raise Invalid,'duplicate_capture_inode' if identities.key?(identity)
+      identities[identity] = true
       result = yield file,opened.size
       current = File.lstat(path)
+      after = file.stat
       raise Invalid,'capture_file_changed' unless [:dev,:ino,:size,:mtime,:ctime].all? do |field|
-        opened.public_send(field)==file.stat.public_send(field) &&
+        opened.public_send(field)==after.public_send(field) &&
           opened.public_send(field)==current.public_send(field)
       end
       result
     end
   end
 
-  def read_record(path)
-    text = private_file(path) do |file,size|
-      raise Invalid,'capture_manifest_too_large' if size>65536
-      text = file.read(65537) || ''.b
-      raise Invalid,'capture_manifest_too_large' if text.bytesize>65536
-      text
+  def private_files(paths,identities,opened=[],&block)
+    return yield opened if paths.empty?
+    private_file(paths.first,identities) do |file,size|
+      private_files(paths.drop(1),identities,opened+[[file,size]],&block)
     end
+  end
+
+  def read_record(file,size)
+    raise Invalid,'capture_manifest_too_large' if size>65536
+    text = file.read(65537) || ''.b
+    raise Invalid,'capture_manifest_too_large' if text.bytesize>65536
     JSON.parse(text,object_class:Object,allow_duplicate_key:false)
   end
 
@@ -87,44 +95,48 @@ module A133Capture
     directory = File.realpath(directory)
     path = File.join(directory,File.basename(path))
     Timeout.timeout(timeout) do
-      record = read_record(path)
-      validate_record!(record,serial,cid,File.basename(path))
-      backup_path = File.join(directory,record['backup']['file'])
-      # Retain the original inode across the full check and all critical copies.
-      private_file(backup_path) do |_file,_size|
-        receipt = A133Backup.verify_file(backup_path,sha256:record['uncompressed_sha256'],
-          format:record['backup']['format'],zstd:zstd,timeout:timeout)
-        record['partitions'].each do |part|
-          role = part['role']
-          size = A133Backup::INVENTORY.find { |entry| entry[:name]==role }.fetch(:sectors)*512
-          hash = private_file(File.join(directory,part['file'])) do |file,actual_size|
-            raise Invalid,'critical_copy_size_mismatch' unless actual_size==size
+      identities = {}
+      private_file(path,identities) do |manifest,manifest_size|
+        record = read_record(manifest,manifest_size)
+        validate_record!(record,serial,cid,File.basename(path))
+        backup_path = File.join(directory,record['backup']['file'])
+        paths = [backup_path] + record['partitions'].map { |part| File.join(directory,part['file']) }
+        # Keep every input open; check each inode/path again before returning.
+        private_files(paths,identities) do |opened|
+          receipt = A133Backup.verify_file(backup_path,sha256:record['uncompressed_sha256'],
+            format:record['backup']['format'],zstd:zstd,timeout:timeout)
+          record['partitions'].each_with_index do |part,index|
+            role = part['role']
+            size = A133Backup::INVENTORY.find { |entry| entry[:name]==role }.fetch(:sectors)*512
+            file,actual_size = opened.fetch(index+1)
+            raise Invalid,'critical_copy_size_mismatch' unless actual_size==size && file.stat.size==size
             digest = Digest::SHA256.new
             while (chunk=file.read(1048576))
               digest.update(chunk)
             end
-            digest.hexdigest
+            raise Invalid,'critical_copy_hash_mismatch' unless digest.hexdigest==receipt[:partition_sha256].fetch(role)
           end
-          raise Invalid,'critical_copy_hash_mismatch' unless hash==receipt[:partition_sha256].fetch(role)
+          bound = receipt.each_with_object({}) { |(key,value),out| out[key.to_s]=value }
+          bound.merge('serial'=>serial,'cid'=>cid,'critical_copies_verified'=>true,
+            'device_binding'=>'matches_trusted_capture_identifiers')
         end
-        bound = receipt.each_with_object({}) { |(key,value),out| out[key.to_s]=value }
-        bound.merge('serial'=>serial,'cid'=>cid,'critical_copies_verified'=>true,
-          'device_binding'=>'matches_trusted_capture_identifiers')
       end
     end
+  rescue Invalid => error
+    raise Invalid,error.message,cause:nil
   rescue A133Backup::Invalid => error
-    raise Invalid,error.message
+    raise Invalid,error.message,cause:nil
   rescue Timeout::Error
-    raise Invalid,'capture_read_timeout'
+    raise Invalid,'capture_read_timeout',cause:nil
   rescue JSON::ParserError => error
     reason = error.message.start_with?('duplicate key ') ? 'duplicate_capture_key' : 'invalid_capture_json'
-    raise Invalid,reason
+    raise Invalid,reason,cause:nil
   rescue EncodingError,ArgumentError
-    raise Invalid,'invalid_capture_json'
+    raise Invalid,'invalid_capture_json',cause:nil
   rescue SystemCallError,IOError
-    raise Invalid,'capture_file_unavailable'
+    raise Invalid,'capture_file_unavailable',cause:nil
   end
-  private_class_method :fields!,:identity!,:private_file,:read_record,:validate_record!
+  private_class_method :fields!,:identity!,:private_file,:private_files,:read_record,:validate_record!
 end
 
 if $PROGRAM_NAME==__FILE__
