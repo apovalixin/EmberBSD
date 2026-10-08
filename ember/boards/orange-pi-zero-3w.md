@@ -20,6 +20,7 @@ Board revision: not recorded in the original support table.
 | Bluetooth | Classic: inquiry Tested, pairing not tried; BLE: No; needs the vendor patch files |
 | Temperature sensor | Tested (five sensors) |
 | Fan control | No |
+| Full power-off | `shutdown -p now` stops the stock kit fan through the firmware power-off path; physically confirmed with `EMBER64 #4`. Plain `halt` keeps power applied. PWM speed control is not implemented. |
 | Watchdog | Tested: resets the board |
 | Power button | No |
 | I2C | Tested (power management chip, Type-C controller) |
@@ -38,6 +39,13 @@ Long-run stability has not been established. Application results from an
 AArch64 VM do not validate this board's camera, audio or GPU/NPU paths.
 
 ## Hardware notes
+
+Use `shutdown -p now` for an orderly shutdown followed by firmware power-off.
+The plain `halt` command stops the OS without requesting power removal, so
+the stock fan can keep spinning. On 2026-10-08, the user confirmed that the
+stock kit fan stopped after `shutdown -p now` on `EMBER64 #4` (`4125fa28057`).
+After the user powered the board on again, eight CPUs, microSD root and SSH
+returned. This verifies that shutdown scenario, not PWM fan speed control.
 
 The Zero 4's processor, power management chip, wireless module and Type-C data port
 on a smaller board without an Ethernet PHY; its tree is the Zero 4 one with the MAC
