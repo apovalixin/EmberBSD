@@ -422,6 +422,9 @@ on every board in the hardware catalog.
   now pass in the AArch64 VM: typed FBT/syscall tracing, standalone DWO
   and standard supplementary type conversion, including malformed-input
   rejection. These checks do not cover DWP packages or every DWARF consumer.
+  [Ports GDB 18.1](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/development-toolchain/gdb)
+  is installed in that VM and passes external-DWARF, live FP-register and
+  signal-unwinding checks. Its integration into release images remains pending.
   Full OS builds
   with GCC16 and general pkgsrc cross-package builds remain unvalidated.
   C11/C++20 threads, TLS and shared-library

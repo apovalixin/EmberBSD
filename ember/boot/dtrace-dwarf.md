@@ -29,7 +29,7 @@ The FBT module includes the repaired `kern_ctf.c` reader.
 | Live DTrace | Syscall and FBT entry/return probes, profile ticks and `args[0]->l_proc->p_pid` dereferences |
 
 The final live run reported `calls=101 returns=101 fbt=101 fbt_returns=101
-typed=101 ticks=21` and exited successfully. This is a bounded VM run, not
+typed=101 ticks=24` and exited successfully. This is a bounded VM run, not
 physical-board acceptance, a soak test or coverage of every DTrace provider.
 Loading a module or listing probes alone is insufficient evidence.
 
@@ -40,6 +40,14 @@ The supported external relationships are a standalone `.dwo` or a
 indexed `.dwp` packages, signature-referenced type units and general DWARF
 location/expression evaluation are outside this CTF acceptance.
 CTF is a type consumer; it does not establish every debugger's DWARF support.
+
+Separately, [Ports GDB 18.1](https://github.com/neonix20b/EmberBSD-Ports/tree/main/profiles/development-toolchain/gdb)
+passes all eight external-object cases and live DWARF32/64 debugging in
+the same VM. Its native backend repairs FP register ordering and signal
+unwinding; Unicode conversion and malformed supplementary metadata are
+also checked. It is the installed active debugger there. The base source
+import remains GDB 15.1, and release-image/pkgsrc integration of the current
+Ports debugger is separate work. Neither check establishes every DWARF form.
 
 ## Build and check the host readers
 
