@@ -38,6 +38,8 @@ __KERNEL_RCSID(0, "$NetBSD: acpi_tz.c,v 1.91 2022/05/22 11:27:35 andvar Exp $");
 #include <sys/kernel.h>
 #include <sys/module.h>
 #include <sys/systm.h>
+#include <sys/atomic.h>
+#include <sys/sysctl.h>
 #include <sys/kmem.h>
 #include <sys/cpu.h>
 
@@ -114,6 +116,8 @@ struct acpitz_softc {
 	envsys_data_t		 sc_temp_sensor;
 	envsys_data_t		 sc_fan_sensor;
 	int			 sc_active;
+	unsigned int		 sc_force_fan;
+	struct sysctllog	*sc_sysctllog;
 	int			 sc_flags;
 	int			 sc_zone_expire;
 	bool			 sc_first;
@@ -126,6 +130,9 @@ static int		acpitz_match(device_t, cfdata_t, void *);
 static void		acpitz_attach(device_t, device_t, void *);
 static int		acpitz_detach(device_t, int);
 static void		acpitz_get_status(void *);
+static void		acpitz_set_active(struct acpitz_softc *, int);
+static void		acpitz_init_sysctl(device_t);
+static int		acpitz_sysctl_force_fan(SYSCTLFN_PROTO);
 static void		acpitz_get_zone(void *, int);
 static void		acpitz_get_zone_quiet(void *);
 static char	       *acpitz_celcius_string(int);
@@ -220,6 +227,7 @@ acpitz_attach(device_t parent, device_t self, void *aux)
 	callout_setfunc(&sc->sc_callout, acpitz_tick, self);
 
 	acpitz_init_envsys(self);
+	acpitz_init_sysctl(self);
 
 	callout_schedule(&sc->sc_callout, sc->sc_zone.tzp * hz / 10);
 }
@@ -233,6 +241,7 @@ acpitz_detach(device_t self, int flags)
 	ACPI_STATUS rv;
 	int i;
 
+	sysctl_teardown(&sc->sc_sysctllog);
 	callout_halt(&sc->sc_callout, NULL);
 	callout_destroy(&sc->sc_callout);
 
@@ -296,6 +305,11 @@ acpitz_get_status(void *opaque)
 		acpitz_get_zone(dv, 0);
 	}
 
+	/* A manual maximum remains useful even if the sensor stops responding. */
+	if (atomic_load_relaxed(&sc->sc_force_fan) != 0 &&
+	    sc->sc_zone.al[0].Pointer != NULL)
+		acpitz_set_active(sc, 0);
+
 	if (acpitz_get_integer(dv, "_TMP", &tmp) != 0)
 		return;
 
@@ -350,6 +364,10 @@ acpitz_get_status(void *opaque)
 			active = i;
 	}
 
+	if (atomic_load_relaxed(&sc->sc_force_fan) != 0 &&
+	    sc->sc_zone.al[0].Pointer != NULL)
+		active = 0;
+
 	flags = sc->sc_flags & ~(ATZ_F_CRITICAL | ATZ_F_HOT | ATZ_F_PASSIVE);
 
 	if (sc->sc_zone.psv != ATZ_TMP_INVALID && tmp >= sc->sc_zone.psv)
@@ -380,20 +398,77 @@ acpitz_get_status(void *opaque)
 		}
 	}
 
-	/* Power on the fans. */
+	acpitz_set_active(sc, active);
+}
+
+static void
+acpitz_set_active(struct acpitz_softc *sc, int active)
+{
 	if (sc->sc_active != active) {
 
 		if (sc->sc_active != ATZ_ACTIVE_NONE)
 			acpitz_power_zone(sc, sc->sc_active, 0);
 
 		ACPI_DEBUG_PRINT((ACPI_DB_INFO, "%s: active cooling "
-			"level %d\n", device_xname(dv), active));
+			"level %d\n", acpi_name(sc->sc_node->ad_handle), active));
 
 		if (active != ATZ_ACTIVE_NONE)
 			acpitz_power_zone(sc, active, 1);
 
 		sc->sc_active = active;
 	}
+}
+
+/* Only expose a force-on control when the zone has maximum active cooling. */
+static void
+acpitz_init_sysctl(device_t dv)
+{
+	struct acpitz_softc *sc = device_private(dv);
+	const struct sysctlnode *node;
+	int error;
+
+	if (sc->sc_zone.al[0].Pointer == NULL)
+		return;
+
+	error = sysctl_createv(&sc->sc_sysctllog, 0, NULL, &node,
+	    0, CTLTYPE_NODE, device_xname(dv), NULL, NULL, 0, NULL, 0,
+	    CTL_HW, CTL_CREATE, CTL_EOL);
+	if (error == 0)
+		error = sysctl_createv(&sc->sc_sysctllog, 0, &node, NULL,
+		    CTLFLAG_READWRITE, CTLTYPE_INT, "force_fan",
+		    SYSCTL_DESCR("Keep maximum active cooling enabled"),
+		    acpitz_sysctl_force_fan, 0, (void *)dv, 0, CTL_CREATE, CTL_EOL);
+	if (error != 0) {
+		aprint_error_dev(dv, "could not create fan control: %d\n", error);
+		sysctl_teardown(&sc->sc_sysctllog);
+	}
+}
+
+static int
+acpitz_sysctl_force_fan(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node = *rnode;
+	device_t dv = rnode->sysctl_data;
+	struct acpitz_softc *sc = device_private(dv);
+	unsigned int previous;
+	int error, value;
+
+	previous = atomic_load_relaxed(&sc->sc_force_fan);
+	value = previous;
+	node.sysctl_data = &value;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (error != 0 || newp == NULL)
+		return error;
+	if (value != 0 && value != 1)
+		return EINVAL;
+
+	atomic_store_relaxed(&sc->sc_force_fan, (unsigned int)value);
+	if (ACPI_FAILURE(AcpiOsExecute(OSL_NOTIFY_HANDLER,
+	    acpitz_get_status, dv))) {
+		atomic_store_relaxed(&sc->sc_force_fan, previous);
+		return EIO;
+	}
+	return 0;
 }
 
 static char *
