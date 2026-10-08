@@ -210,6 +210,10 @@ bounded binary writes and complete host readback hashes for a future installer.
 Its executable is inspection-only; the API requires trusted backup provenance
 and an already installed/read-back protected recovery environment.
 File-backed tests do not establish physical USB or fleet acceptance.
+The [session coordinator](ys-m33-a133-install-session.md) adds private locked
+progress and fresh range verification on every repeat. It coordinates only
+the prepared recovery write stage; factory backup/recovery setup and accepted
+first boot remain integration work.
 
 The first closed-enclosure installation is an experimental hardware result,
 not a released fleet installer. Repeat the complete procedure without UART:

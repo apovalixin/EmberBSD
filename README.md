@@ -368,7 +368,10 @@ The [board catalog](ember/boards/README.md) defines validation terms and links
 to VM and research targets. YS-M33 cable-installation development includes
 [host-tested guarded USB range transfers](ember/boards/ys-m33-a133-usb-transfer.md)
 with full readback hashes; this is an API primitive, with physical acceptance
-and a released fleet installer still pending. To contribute another board, follow
+and a released fleet installer still pending. A [private session coordinator](ember/boards/ys-m33-a133-install-session.md)
+rechecks live ranges on repeat and keeps recovery protected after failed writes;
+its filesystem/resume contract is tested on a file-backed host fixture.
+To contribute another board, follow
 [adding a board](ember/boards/adding-a-board.md) and the
 [developer skill](https://github.com/neonix20b/Ember-Agent-Skills#add-your-board).
 Add a catalog row and a board page; keep detailed feature matrices on those pages.
