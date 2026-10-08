@@ -138,14 +138,19 @@ That defconfig is not YS-M33 validation. The generic
 [Allwinner installation recipe](https://docs.u-boot-project.org/en/latest/board/allwinner/sunxi.html)
 does not prove a replacement of this secure vendor chain.
 
-The proposed first own-boot experiment is a RAM-loaded second stage after
-retained vendor boot0/BL31/OP-TEE. Mainline ARM64 entry supports
-`CONFIG_LINUX_KERNEL_IMAGE_HEADER`; wrapper, board handoff and physical
-execution still require validation. Preserve DRAM initialization, MCU7502
-keepalive, reserved memory and framebuffer. First prove recovery and boot
-of the existing kernel without persistent boot-loader changes. Then evaluate
-persistent second-stage installation. Full boot0/TOC1 replacement requires
-a separately demonstrated authenticated loading/recovery path.
+U-Boot v2026.10 reached its UART prompt as a RAM-loaded second stage on the
+first sample after retained vendor boot0/BL31/OP-TEE. Position-independent
+ARM64 entry was required because the vendor loader placed the Image at
+0x40080000 despite its linked address. A SoC watchdog reset restored ordinary
+EmberBSD boot; boot and environment readbacks remained unchanged. See the
+[physical RAM-probe receipt](validation/2026-10-08-a133-uboot-ram.md).
+
+The probe has no storage, USB recovery, display or MCU support and did not
+boot NetBSD. It is not permanently installed. First validate kernel handoff,
+explicit reserved memory, framebuffer, MCU7502 and return to signed recovery
+in RAM. Then evaluate persistent second-stage installation. Full boot0/TOC1
+replacement requires a separately demonstrated authenticated loading/recovery
+path. A copied signature does not authenticate changed image contents.
 
 ## Fleet acceptance
 
