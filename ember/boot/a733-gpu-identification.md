@@ -10,25 +10,37 @@ has not yet been accepted.
 
 ## Physical result, 2026-10-08
 
-A 4 GiB Orange Pi Zero 3W booted the matched `EMBER64 #4` kernel, four
-modules and A733 DTBs from `4125fa28057fa1f9cdd19e825a03c458485aa3e6`.
+A 4 GiB Orange Pi Zero 3W booted the matched `EMBER64 #5` kernel, four
+modules and A733 DTBs from `f625fd9a0dea8be54146a08f7771714b8f4ade56`.
 The board revision was not recorded. The existing vendor boot0/U-Boot and
 boot script were preserved. Eight CPUs, microSD root and Wi-Fi/SSH returned.
+Installed hashes matched the bundle; the previous #4 boot files were backed
+up on the board and development host before installation.
 
-`sun60igpuid0` attached and reported `identification unavailable at
-clock/reset state: 16; firmware state left unchanged`. The query reached
-CCU readiness after observing the supply enabled and GPU_TOP statically ON.
-That build's `EBUSY` did not identify which clock, gate, reset or snapshot
-check failed.
-The driver therefore did not map or read GPU registers. This establishes
-the unavailable path on this firmware configuration, not the expected
-PBVNC value or a working accelerator.
+`sun60igpuid0` attached and reported `GPU module gated (error 16)`, with
+DCDC4 programmed to 800000 microvolts and GPU_TOP statically ON. Both CCU
+snapshots were identical (`changed 0x000`). The fixed-clock provider reported
+24 MHz twice; this is a device-tree value, not a crystal measurement. Selected
+raw values explain why a firmware-ready probe cannot access the GPU:
 
-Before installation, the five provider/consumer software contracts passed
-48,077 assertions on the board with fake hardware. The complete existing
-native kernel-source suite also passed with GCC 16.2 and Python 3.14.8.
-Neither suite substitutes for hardware identification. Native image SHA256:
-`ad5de33eca8c2f356cf73588fbee6a2fdbe92fe311cc239cd8dde5926717a366`;
+| Register | Value | Observation |
+|---|---|---|
+| GPU_CLK, `0xb20` | `0x00000000` | Module clock gate is clear |
+| GPU_BGR, `0xb24` | `0x00000000` | Bus gate is clear and reset is asserted |
+| PLL_GPU0, `0x0e0` | `0x41104500` | Raw dedicated GPU PLL state; it is not changed |
+
+The driver did not map or read GPU registers and made no clock/reset writes.
+The prior #4 result stopped with the same `EBUSY`, without identifying its
+cause. The new observation establishes the gated/reset state, not the actual
+PBVNC value or a working accelerator. The programmed regulator voltage is not
+a physical measurement. Active preparation of the GPU remains separate work.
+
+The new CCU/GPU software contracts pass 14,643 and 786 assertions on the
+board with fake hardware, and on the host with ASan/UBSan. The existing
+native kernel-source suite passed with GCC 16.2 and Python 3.14.8 before #4;
+all 14 source inputs are unchanged in #5. These results do not substitute
+for hardware identification. Native image SHA256:
+`26a4e43ec4a0132c345212b2aef11d6a975548bdf9093c473b971391adc778fa`;
 Zero 3W DTB SHA256:
 `9b37b1833a718733616900aaceb1263807c8dd80efcf2133702bb0ea9439bea3`.
 This was a short boot check, not a sustained run.
