@@ -426,8 +426,10 @@ on every board in the hardware catalog.
   supplies [Python 3.14.8](https://github.com/neonix20b/EmberBSD-Ports/blob/main/profiles/common-build-tools/python.md)
   with Mac cross packaging and installed AArch64 VM acceptance: C/C++ embedding,
   extension loading and 21 selected upstream suites, including TLS and SQLite.
-  It also prepares Meson 1.12.1 and matching LLVM/Clang/LLD 23.1.2
-  with upstream lit. Portability patches, generated-header declarations and
+  Meson 1.12.1 and Ninja 1.13.2 cross packages also pass installed C/C++
+  builds, Python embedding, incremental/error handling and install-RPATH checks
+  in that VM with explicit current GNU as/ld. The profile prepares matching
+  LLVM/Clang/LLD 23.1.2 with upstream lit. Portability patches, generated-header declarations and
   explicit interpreter/LLVM selection have source checks. Focused native
   macro/selection and GCC16 metadata checks pass; they do not establish an
   installed LLVM23 compiler. The remaining packages, ELF/JIT behavior and the
