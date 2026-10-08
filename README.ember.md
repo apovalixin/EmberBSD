@@ -30,16 +30,20 @@ The following accessory and protocol limits also apply:
 | AirPods | Connection confirmed; reliable audio quality and headset microphone operation have not been confirmed |
 | ELM327 | Testing with a physical adapter is still pending |
 | BLE | Not implemented in the added Bluetooth management tools |
+| CM5: WPA3-Personal | SAE group 19/H2E, required PMF, file transfer, reconnect, wrong-password rejection and WPA2 regression pass on CYW43455 7.45.265; [configuration and limits](ember/boot/bwfm-sae.md) |
 | CAN FD | Raw sockets, virtual canlo interfaces and canconfig mode control pass native rump checks; physical drivers and data-phase timing are not implemented ([guide](ember/can/README.md)) |
 
 The `bwfm` driver leaves roaming and WPA authentication to the host.
 It disables firmware WNM transitions as well as autonomous roaming:
 CYW43455 firmware 7.45.265 can otherwise select SAE after a band-steering
 request in a mixed WPA2/WPA3 network while the host still holds WPA2 keys.
-This does not add WPA3 or 802.11v support. An access point may disconnect
-a station, after which NetBSD scans and joins again. The on-demand
-`hw.bwfm0.report` diagnostic includes radio authentication and station
-counters to distinguish this failure from an SDIO transmit-window stall.
+This WNM mitigation remains in place. The separate
+[external-SAE implementation](ember/boot/bwfm-sae.md) adds WPA3-Personal
+with required PMF; it does not implement 802.11v roaming or 802.11r.
+An access point may disconnect a station, after which NetBSD scans and
+joins again. The on-demand `hw.bwfm0.report` diagnostic includes radio
+authentication, PMF and station counters to distinguish this failure
+from an SDIO transmit-window stall.
 
 ## Building
 

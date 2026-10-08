@@ -1,15 +1,64 @@
 # External SAE in bwfm
 
-This implementation connects upstream wpa_supplicant 2.11 SAE and its host
-four-way handshake to the CYW43455 external-authentication firmware interface.
-The OS repository owns the client, driver ABI and tests. Hardware acceptance
-is pending; compilation and a firmware capability are not a working WPA3 claim.
+EmberBSD connects upstream wpa_supplicant 2.11 SAE and its host four-way
+handshake to the CYW43455 external-authentication firmware interface. The OS
+repository owns the client, driver ABI and tests. On 2026-10-08 a physical
+[CM5 on Waveshare CM5-NANO-B](../boards/compute-module-5.md#hardware-check-2026-10-08)
+passed SAE group 19/H2E, required PMF, bidirectional file transfer, reconnects,
+wrong-password rejection, a WPA2 regression and startup after reboot.
 
-The initial station mode supports SAE, CCMP and required PMF with
-BIP-CMAC-128. It does not add fast transition, autonomous firmware roaming,
-802.11v policy, SAE password offload or multi-link operation. Existing WPA2
-connections keep their host handshake. Unsupported radios and old kernels
-do not advertise SAE through the BSD driver.
+The tested station mode uses CCMP and required PMF with BIP-CMAC-128. This
+is not Wi-Fi certification or validation on every bwfm radio. It does not add
+fast transition, autonomous firmware roaming, 802.11v policy, SAE password
+offload or multi-link operation. Other SAE groups/modes need separate checks.
+Existing WPA2 connections keep their host handshake. Unsupported radios,
+old kernels and clients built without CONFIG_SAE do not advertise SAE.
+
+## Configuration and verification
+
+Install the updated kernel, matching modules and base wpa_supplicant together.
+Preserve a working Ethernet path and a rollback copy before radio testing.
+An access point offering SAE and PMF is required. A transition-mode access
+point can be used, but the test client must permit only SAE:
+
+```conf
+ctrl_interface=/var/run/wpa_supplicant
+sae_pwe=2
+network={
+    ssid="YOUR-SSID"
+    key_mgmt=SAE
+    ieee80211w=2
+    pairwise=CCMP
+    group=CCMP
+    sae_password="YOUR-PASSWORD"
+}
+```
+
+Keep `/etc/wpa_supplicant.conf` owned by root with mode 0600. The password
+must be the original passphrase; a WPA2-derived PSK is insufficient. Keep
+private profiles and logs out of source control. Never enable supplicant
+key logging to collect public evidence.
+
+Use the normal NetBSD wpa_supplicant service with the BSD driver and `bwfm0`.
+After association, inspect:
+
+```sh
+wpa_cli -i bwfm0 status
+sysctl -w hw.bwfm0.report=1
+dmesg | tail -100
+```
+
+The accepted CM5 connection reports `wpa_state=COMPLETED`, `key_mgmt=SAE`,
+`pmf=1`, `mgmt_group_cipher=BIP`, `sae_group=19` and `sae_h2e=1`.
+On the tested firmware the driver report also shows `wsec=0x604`,
+`wpa_auth=0x40000` and `mfp=2`. Verify the firmware state after traffic-key
+installation: a successful SAE exchange alone does not prove PMF stayed on.
+Raw interface diagnostics may expose keys; redact private logs before sharing.
+
+If Ethernet and Wi-Fi share a subnet, an SSH connection to the Wi-Fi address
+alone does not establish the return path. Check the route to the test peer
+and verify it uses bwfm0 in both directions. Do not disable the management
+interface just to establish that route.
 
 ## Interface and security boundaries
 
@@ -25,6 +74,15 @@ authorize a new association. Passwords and PMKs remain in userspace.
 frames. The supplicant checks their sizes, peer and generation before passing
 them to its upstream SAE implementation. Firmware provides CCMP and PMF;
 the driver installs management keys at IGTK indexes 4 and 5.
+
+CYW43455 firmware 7.45.265 advertises `sae_ext`, not full SAE offload.
+Its external-auth request flags can be zero; the event type identifies the
+request. The driver accepts unsupported `sup_wpa=0` when firmware has no
+internal supplicant. Other security-setup failures abort the association.
+Changing PMF can require the radio down. Setting `wsec` clears PMF, so the
+driver sets and verifies PMF last, then preserves it while installing keys.
+Firmware commands are serialized through their response, and BCDC identifiers
+wrap to their 16-bit wire width. Disconnect also aborts the firmware join.
 
 ## Build and checks
 
@@ -42,17 +100,17 @@ cc -std=c99 -Wall -Wextra -Werror -fsanitize=address,undefined \
 /tmp/bwfm-sae-contract
 ```
 
+Its 106 assertions cover RSN ciphers/PMF, truncation, management suites,
+bounded PMKID counts, capability tokens and firmware request peer/SSID bounds.
 Compile `ember/tools/bwfm-sae-ioctl.c` for NetBSD and run it as root on the
-target interface with the supplicant stopped. It deliberately disables SAE
-and tests invalid lengths, versions, reserved fields, inactive status and
-unprivileged requests. Preserve Ethernet access during radio acceptance.
+target interface with the supplicant stopped. Its 13 live checks deliberately
+disable SAE and exercise lengths, versions, reserved fields, inactive status
+and unprivileged requests. Restore the service after this test.
 
-Acceptance requires an SAE-only client profile with `key_mgmt=SAE`,
-`ieee80211w=2`, `pairwise=CCMP`, `group=CCMP`, and the original password in
-`sae_password`. A WPA2-derived PSK is insufficient. Keep credentials in a
-root-only device configuration. Verify SAE/PMF status, traffic, reconnect,
-wrong-password rejection without WPA2 fallback, and a separate WPA2 regression.
-Never enable supplicant key logging to collect public evidence.
+Hardware acceptance requires actual bidirectional traffic, disconnect/reconnect,
+wrong-password rejection without WPA2 fallback, an independent WPA2 profile,
+and automatic startup after reboot. The board receipt records completed
+checks and limits; one board and one access point are not a compatibility matrix.
 
 ## Provenance
 

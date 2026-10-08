@@ -393,7 +393,17 @@ on every board in the hardware catalog.
 - **Raspberry Pi 5 and Compute Module 5**: UEFI firmware built from
   this tree, and drivers for the on-board Wi-Fi, Ethernet behind the
   RP1 chip, Bluetooth, the power button, the fan, the watchdog, I2C
-  and a WM8960 audio codec.
+  and a WM8960 audio codec. The board pages distinguish tested peripherals
+  from shared driver availability.
+- **WPA3-Personal on CM5:** upstream wpa_supplicant SAE now works through
+  the fork's `bwfm` external-auth interface, with required protected
+  management frames. A physical CM5 passed SAE group 19/H2E, bidirectional
+  file transfer, three reconnects, wrong-password rejection, a WPA2
+  regression and automatic reconnection after reboot. See the
+  [configuration guide](ember/boot/bwfm-sae.md) and
+  [hardware receipt](ember/boards/compute-module-5.md#hardware-check-2026-10-08).
+  Other boards, access-point combinations and long-run operation need
+  separate acceptance; this is not an 802.11r/802.11v roaming claim.
 - **Raspberry Pi Zero 2 W**: Wi-Fi on its BCM43436 chip.
 - **Headless base on Raspberry Pi 5:** the fork's kernel, matching board
   modules and reduced base userland are built and installed through the
@@ -523,7 +533,7 @@ listed revision; it does not imply full peripheral or long-run support.
 | Board | Architecture / SoC | Confirmed scope and main limits |
 | --- | --- | --- |
 | [Raspberry Pi 5 (C1)](ember/boards/raspberry-pi-5.md) | AArch64 / BCM2712 | microSD/UEFI boot, Ethernet, Wi-Fi, classic Bluetooth, cooling and WM8960 audio; USB and graphics not validated here |
-| [Compute Module 5 (D0)](ember/boards/compute-module-5.md) | AArch64 / BCM2712 | eMMC/UEFI boot, serial console and Wi-Fi; most peripherals not validated |
+| [Compute Module 5 (D0)](ember/boards/compute-module-5.md) | AArch64 / BCM2712 | eMMC/UEFI boot, four cores, gigabit Ethernet, WPA2/WPA3-Personal and temperature sensing; fan limitations, other peripherals unvalidated |
 | [Raspberry Pi Zero 2 W](ember/boards/raspberry-pi-zero-2-w.md) | AArch64 / BCM2710A1 | microSD boot, all cores, serial and 2.4 GHz Wi-Fi; large Wi-Fi transfers stall |
 | [Orange Pi Zero 4](ember/boards/orange-pi-zero-4.md) | AArch64 / Allwinner A733 | Eight cores, SDR104, Ethernet, Wi-Fi, classic Bluetooth, thermal/frequency control and USB 2.0 data; SuperSpeed unconfirmed |
 | [Orange Pi Zero 3W](ember/boards/orange-pi-zero-3w.md) | AArch64 / Allwinner A733 | Eight cores, SDR104, Wi-Fi, Bluetooth inquiry and thermal/frequency control; USB devices and Bluetooth pairing not tested |
@@ -535,31 +545,25 @@ to VM and research targets. To contribute another board, follow
 [developer skill](https://github.com/oxtech-ember/Ember-Agent-Skills#add-your-board).
 Add a catalog row and a board page; keep detailed feature matrices on those pages.
 
-## Wi-Fi work in progress
+## Wi-Fi status and remaining work
 
-See the board pages for published Wi-Fi support. The following work has not
-been integrated into the tree yet.
+[External SAE with required PMF](ember/boot/bwfm-sae.md) is integrated and
+tested on CM5 with CYW43455 firmware 7.45.265. The implementation also sends
+firmware disassociation on disconnect, serializes firmware commands and
+wraps the 16-bit command identifier. Three disconnect/reconnect cycles
+passed without command timeouts. No WPA3 throughput improvement is claimed.
 
-- **Roaming in `bwfm`** between access points and between bands. The
-  host, not the radio firmware, decides on a transition: the tree
-  already disables the firmware's own handling of 802.11v requests,
-  and `wpa_supplicant` takes it over. With WPA2-PSK this has been
-  validated on a Raspberry Pi 5 from a local build: the client moved
-  from 2.4 to 5 GHz at the access point's request, reconnecting in
-  0.20 s (4.22 s with the scan), and refused a transition it was
-  configured not to make. A seamless handover is not claimed.
-- **802.11r fast transition and WPA3** (SAE with protected management
-  frames) are being implemented on top of it. A network that offers
-  only WPA3 cannot be joined today. WPA3 is expected to remove several
-  workarounds in the driver; no throughput gain has been measured.
-- **Defects found on the way**, with fixes in preparation:
-  `wpa_cli disconnect` changes the state NetBSD keeps but sends no
-  disconnect command to the firmware; concurrent firmware commands
-  could receive each other's replies; the command transport fails
-  after 65,536 requests; a short reply is handled incorrectly.
+- **Host-managed 802.11v roaming in `bwfm`** remains a separate local change,
+  not integrated into this tree. With WPA2-PSK, a Raspberry Pi 5 local build
+  moved from 2.4 to 5 GHz at the access point's request, reconnecting in
+  0.20 s (4.22 s with the scan), and refused a prohibited transition.
+  The published driver disables autonomous firmware WNM transitions.
+  A seamless handover is not claimed.
+- **802.11r fast transition** is not implemented by the external-SAE work.
+- **Short firmware replies** still need a command-transport fix and regression.
 
-Changes to association and command handling in `bwfm` should be
-coordinated with this work until it lands.
+Changes to association and command handling should preserve the SAE and
+WPA2 checks and account for the separate roaming work.
 
 See [hardware support, build instructions, and limitations](README.ember.md)
 for validation details and source provenance. Changes in this fork should
