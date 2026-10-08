@@ -39,10 +39,13 @@ sh ember/tools/virtgpu-submit-contract.sh
 ```
 
 Configuration generation, focused GCC16 objects and software contracts are
-checked separately from guest execution. The first normal Mesa VirGL GLES
-draw remains pending: it must query real capsets, create resources/context,
-submit work, wait for completion and verify pixels with host GPU evidence.
-This option alone does not establish rendering, a native Wayland session,
-console recovery, physical A733 GPU support or sustained stability. The
+checked separately from guest execution. On 2026-10-08, the kernel built from
+`103bcbdc2144c5667398ce2de3d65f9759db36e9` negotiated VirGL and two capsets.
+The [installed Mesa26/libepoxy consumer](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/virgl-draw.md)
+passed four EGL 1.5/GLES 3.0 shader/pixel/cleanup lifecycles with renderer
+`virgl`; the paired host proved ANGLE Metal on Apple M3. Target and QEMU exited
+zero, with unchanged input filesystem and verified live library providers.
+This accepts that offscreen workload, not a native Wayland session, live guest
+3D reset, console recovery, physical GPU support or sustained stability. The
 [design's validation sequence](utm-virgl-design.md#validation-sequence) remains
 the acceptance boundary.

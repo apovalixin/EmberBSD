@@ -313,10 +313,11 @@ on every board in the hardware catalog.
   [wlroots 0.20.2nb4](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/wlroots-package.md)
   passes four GLES2/headless lifecycles both as root and after dropping
   privileges, checking 1024 pixels and buffer lifetime across a real KMS
-  framebuffer import. This accepts another common-stack consumer; visible
-  scanout, input and an accelerated Wayland session remain unverified.
-  This verifies the device-buffer path for Wayland; remaining consumer migration, a visible session and
-  guest accelerated rendering still require acceptance.
+  framebuffer import. Its [current DRM/input package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/drm-input.md)
+  also presents four llvmpipe frames at 1280x800 through an active libseat
+  session and enumerates two wscons devices. All 131 selected dependency
+  invocations pass. Input events, VT switching, application surfaces and a
+  complete accelerated Wayland session remain unverified.
   A Ports
   [host-side VirGL 1.3.0 adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/utm-virgl-host)
   preserves the upstream IOV-size correction and prevents resource publication
@@ -353,9 +354,14 @@ on every board in the hardware catalog.
   builds and passes an isolated 2D guest boot on ANGLE Metal, including libdrm
   and 32 GEM/PRIME lifetimes. A separate [live 2D backing check](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/utm-virgl-host/qemu/reset.md)
   passes three QMP resets and four Metal renderer initializations.
-  In-flight 3D reset/display qualification and guest Mesa
-  remain pending. Guest VirGL stays disabled; an accelerated EmberBSD session,
-  reliable console recovery and Vulkan Compute are not yet established.
+  A separate [EMBERVIRGL kernel](ember/boot/utm-virgl-optin.md) now passes
+  four [installed guest VirGL GLES lifecycles](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/virgl-draw.md)
+  with Mesa26, unchanged libepoxy and the common LLVM23 runtime. Shader
+  rejection, triangle pixels and cleanup pass on the paired ANGLE Metal
+  Apple M3 host. Ordinary EMBERGPU still requests no VirGL feature.
+  This accepts offscreen GPU rendering; a visible accelerated Wayland session,
+  in-flight guest reset, reliable console recovery and Vulkan Compute remain
+  unverified.
 - **Physical GPU and NPU porting targets:** CIX P1 is the first selected
   direction: Mali-G720 through Panthor/[Mesa PanVK](https://docs.mesa3d.org/drivers/panfrost.html),
   and Zhouyi v3/X2 through the [Compass driver/runtime sources](https://github.com/Arm-China/Compass_NPU_Driver).
