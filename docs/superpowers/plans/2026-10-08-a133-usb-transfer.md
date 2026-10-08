@@ -51,5 +51,19 @@ sha256:, backup:, protected_env:); CLI only --adb/--serial/--cid/--timeout inspe
 - [x] Run; expect missing Client. Implement exact gates and full-range verification.
 - [x] Add partial-write/readback corruption/mutation/symlink and inspection CLI cases.
 - [x] Run new contracts plus existing backup/recovery/env/bundle/preflight/firstboot guards.
-- [ ] Review independently; fix reproduced Important/Critical issues. Document
+- [x] Review independently; fix reproduced Important/Critical issues. Document
   file-backed versus physical limits, update draft PR/wiki and push; do not merge main.
+
+## Completion evidence — 2026-10-08
+
+- Channel `af78c0d47e73`, policy `099425b2f5e3`, fixes `9c281b5f1776`/`86b2b56c7998`.
+- Ruby 4.0.5 and system 2.6.10: channel13 and transfer41 passed.
+- Full scoped suite also passed backup29, recovery19, env, bundle35, ADB preflight
+  and firstboot guard. No target executable/kernel changed by this plan.
+- Independent Codex GPT-6 Astra review found four Important observations:
+  device-mapper aliases, EPERM cleanup, stored Android model and inherited rescue.
+  Each received a failing reproduction/regression and a fix; final review clear.
+- Private images/identities, physical USB writes, remote rollback, backup provenance,
+  fleet orchestration and firstboot release remain outside this API primitive.
+- Existing draft PR #1 and both wikis record these limits. Main not merged;
+  working reference unchanged, no audio/camera tests or device reboots.

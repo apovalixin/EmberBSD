@@ -115,3 +115,6 @@ recorded `a133` metadata. Cleanup also rejects failure when called from an
 outer rescue; body completion is tracked explicitly rather than inferred from $!.
 Private images/IDs and physical acceptance are outside
 these host receipts.
+The final independent review of `86b2b56c7998` had no open actionable findings.
+Its acceptance applies to this API primitive and host checks, with the caller
+responsibilities and physical limitations above.
