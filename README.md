@@ -343,6 +343,10 @@ on every board in the hardware catalog.
   reject incomplete output backing and preserve delayed errors and fence ownership.
   Native Metal checks and 226 causal software assertions pass; concurrent access
   and guest execution remain outside that validation.
+  Three [direct native resets](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/utm-virgl-host/host/native-reset.md)
+  with live 3D resources and unreported fences also pass, including old-object
+  removal and shader pixels after ID reuse. This does not prove interruption
+  of unfinished GPU work or guest 3D reset.
   The [full paired QEMU recipe](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/utm-virgl-host/qemu)
   builds and passes an isolated 2D guest boot on ANGLE Metal, including libdrm
   and 32 GEM/PRIME lifetimes. A separate [live 2D backing check](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/probes/utm-virgl-host/qemu/reset.md)
