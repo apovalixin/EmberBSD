@@ -167,6 +167,26 @@ module A133Usb
       error.write_attempted = attempted
       raise error
     end
+
+    def verify_installed(role:, bytes:, sha256:, backup:, protected_env:)
+      raise Invalid, 'invalid_write_role' unless ROLES.key?(role)
+      index, maximum = ROLES.fetch(role)
+      raise Invalid, 'invalid_write_size' unless bytes.is_a?(Integer) && bytes > 0 && bytes%512 == 0 &&
+        bytes <= maximum && (role == 'root' || bytes == maximum)
+      raise Invalid, 'invalid_image_sha256' unless sha?(sha256)
+      backup_valid!(backup)
+      protection_valid!(protected_env)
+      env = protected_env.dup.freeze
+      backup = Marshal.load(Marshal.dump(backup))
+      guard!(backup,env)
+      raise Invalid, 'usb_readback_mismatch' unless range_sha(index,bytes) == sha256
+      guard!(backup,env)
+      {status: 'range_readback_verified', role: role, verified_bytes: bytes, sha256: sha256,
+       writes_performed: 0, recovery_protection_verified: true, installation_ready: false}
+    rescue Invalid => error
+      error.write_attempted = false
+      raise
+    end
     private :query, :range, :range_sha, :backup_valid!, :sha?, :protection_valid!, :guard!, :unchanged!
   end
 end
