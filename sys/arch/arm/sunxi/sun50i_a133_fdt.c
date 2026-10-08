@@ -317,6 +317,106 @@ a133_sdio_cell(const void *fdt, const char *path, const char *name,
 	return a133_sdio_value(fdt, path, name, &cell, sizeof(cell));
 }
 
+/* USB1 is the fixed USB-A host; USB0 remains owned by the vendor USB-C path. */
+static int
+a133_usb1(void *fdt, uint32_t ccu)
+{
+	static const char *paths[] = {
+	    SOC "/ehci1-controller@0x05200000",
+	    SOC "/ohci1-controller@0x05200400"
+	};
+	static const char *legacy[] = {
+	    "allwinner,sunxi-ehci1", "allwinner,sunxi-ohci1"
+	};
+	const char *phy_path = SOC "/ember-usb1-phy";
+	const fdt32_t *p;
+	fdt32_t cells[8], gpio[7], cell;
+	uint32_t pio, vbus, phy;
+	int node, len, error, i;
+
+	/* Re-entry after our complete conversion is a no-op. */
+	if (fdt_path_offset(fdt, phy_path) >= 0)
+		return 0;
+	node = fdt_path_offset(fdt, PIO);
+	pio = node < 0 ? 0 : fdt_get_phandle(fdt, node);
+	node = fdt_path_offset(fdt, "/usb1-vbus");
+	vbus = node < 0 ? 0 : fdt_get_phandle(fdt, node);
+	if (pio == 0 || vbus == 0 ||
+	    !a133_audio_okay(fdt, "/usb1-vbus") ||
+	    fdt_node_check_compatible(fdt, node, "regulator-fixed") != 0 ||
+	    fdt_getprop(fdt, node, "enable-active-high", &len) == NULL || len != 0)
+		return 0;
+	for (i = 0; i < 2; i++) {
+		node = fdt_path_offset(fdt, paths[i]);
+		if (node < 0 || !a133_audio_okay(fdt, paths[i]) ||
+		    fdt_node_check_compatible(fdt, node, legacy[i]) != 0 ||
+		    !a133_sdio_cell(fdt, paths[i], "hci_ctrl_no", 1) ||
+		    !a133_sdio_cell(fdt, paths[i], "drvvbus-supply", vbus))
+			return 0;
+		p = fdt_getprop(fdt, node, "reg", &len);
+		if (p == NULL || len != 64 || fdt32_to_cpu(p[0]) != 0 ||
+		    fdt32_to_cpu(p[1]) != 0x05200000 || p[2] != 0 ||
+		    fdt32_to_cpu(p[3]) != 0xfff)
+			return 0;
+		cells[0] = 0; cells[1] = cpu_to_fdt32(33 + i);
+		cells[2] = cpu_to_fdt32(4);
+		if (!a133_sdio_value(fdt, paths[i], "interrupts", cells, 12))
+			return 0;
+	}
+	node = fdt_path_offset(fdt, "/misc_power_en");
+	if (node < 0 || !a133_sdio_cell(fdt, "/misc_power_en",
+	    "vcc_host_drv1_gpio_level", 1))
+		return 0;
+	p = fdt_getprop(fdt, node, "vcc_host_drv1_gpio", &len);
+	if (p == NULL || len != 28 || fdt32_to_cpu(p[0]) != pio ||
+	    fdt32_to_cpu(p[1]) != 5 || fdt32_to_cpu(p[2]) != 2 ||
+	    fdt32_to_cpu(p[3]) != 1 || fdt32_to_cpu(p[6]) != 1)
+		return 0;
+	memcpy(gpio, p, sizeof(gpio));
+	A133_SET("/usb1-vbus", "gpio", gpio, sizeof(gpio));
+	A133_CELL("/usb1-vbus", "startup-delay-us", 1000);
+	A133_SET("/usb1-vbus", "regulator-boot-on", NULL, 0);
+	node = a133_node(fdt, SOC, "ember-usb1-phy", &phy);
+	if (node < 0)
+		return node;
+	A133_STRING(phy_path, "compatible", "allwinner,sun50i-a100-usb-phy");
+	cells[0] = 0; cells[1] = cpu_to_fdt32(0x05100400);
+	cells[2] = 0; cells[3] = cpu_to_fdt32(0x100);
+	cells[4] = 0; cells[5] = cpu_to_fdt32(0x05200800);
+	cells[6] = 0; cells[7] = cpu_to_fdt32(0x100);
+	A133_SET(phy_path, "reg", cells, sizeof(cells));
+	A133_STRING(phy_path, "reg-names", "phy_ctrl\0pmu1");
+	cells[0] = cpu_to_fdt32(ccu); cells[1] = cpu_to_fdt32(A100_CLK_USB_PHY1);
+	A133_SET(phy_path, "clocks", cells, 8);
+	cells[1] = cpu_to_fdt32(A100_RST_USB_PHY1);
+	A133_SET(phy_path, "resets", cells, 8);
+	A133_CELL(phy_path, "#phy-cells", 1);
+	A133_CELL(phy_path, "usb1_vbus-supply", vbus);
+	A133_STRING(phy_path, "status", "okay");
+	for (i = 0; i < 2; i++) {
+		const char *path = paths[i];
+		if (i == 0)
+			A133_STRING(path, "compatible", "generic-ehci");
+		else
+			A133_STRING(path, "compatible", "generic-ohci");
+		cells[0] = 0; cells[1] = cpu_to_fdt32(0x05200000 + i * 0x400);
+		cells[2] = 0; cells[3] = cpu_to_fdt32(0x100);
+		A133_SET(path, "reg", cells, 16);
+		cells[0] = cells[2] = cells[4] = cpu_to_fdt32(ccu);
+		cells[1] = cpu_to_fdt32(A100_CLK_BUS_OHCI1);
+		cells[3] = cpu_to_fdt32(A100_CLK_USB_OHCI1);
+		cells[5] = cpu_to_fdt32(A100_CLK_BUS_EHCI1);
+		A133_SET(path, "clocks", cells, i == 0 ? 24 : 16);
+		cells[1] = cpu_to_fdt32(A100_RST_BUS_OHCI1);
+		cells[3] = cpu_to_fdt32(A100_RST_BUS_EHCI1);
+		A133_SET(path, "resets", cells, i == 0 ? 16 : 8);
+		cells[0] = cpu_to_fdt32(phy); cells[1] = cpu_to_fdt32(1);
+		A133_SET(path, "phys", cells, 8);
+		A133_STRING(path, "phy-names", "usb");
+	}
+	return 0;
+}
+
 static uint32_t
 a133_sdio_phandle(const void *fdt, const char *path)
 {
@@ -615,6 +715,9 @@ sun50i_a133_fdt_fixup(void *fdt)
 				    "interrupt-parent", gic);
 		}
 	}
+	error = a133_usb1(fdt, ccu);
+	if (error != 0)
+		return error;
 	error = a133_sdio(fdt, ccu);
 	if (error != 0)
 		return error;

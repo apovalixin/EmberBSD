@@ -1,3 +1,4 @@
+/* Origin: EmberBSD - add the A100/A133 USB PHY power-up sequence. */
 /* $NetBSD: sunxi_usbphy.c,v 1.18 2024/08/13 07:20:23 skrll Exp $ */
 
 /*-
@@ -83,6 +84,7 @@ enum sunxi_usbphy_type {
 	USBPHY_A20,
 	USBPHY_A31,
 	USBPHY_A64,
+	USBPHY_A100,
 	USBPHY_A83T,
 	USBPHY_D1,
 	USBPHY_H3,
@@ -100,6 +102,7 @@ static const struct device_compatible_entry compat_data[] = {
 	{ .compat = "allwinner,sun8i-v3s-usb-phy",	.value = USBPHY_H3 },
 	{ .compat = "allwinner,sun20i-d1-usb-phy",	.value = USBPHY_D1 },
 	{ .compat = "allwinner,sun50i-a64-usb-phy",	.value = USBPHY_A64 },
+	{ .compat = "allwinner,sun50i-a100-usb-phy",	.value = USBPHY_A100 },
 	{ .compat = "allwinner,sun50i-h6-usb-phy",	.value = USBPHY_H6 },
 	{ .compat = "allwinner,sun60i-a733-usb-phy",	.value = USBPHY_A733 },
 	DEVICE_COMPAT_EOL
@@ -159,6 +162,7 @@ sunxi_usbphy_write(struct sunxi_usbphy_softc *sc,
 		reg = PHYCTL_A10;
 		break;
 	case USBPHY_D1:
+	case USBPHY_A100:
 	case USBPHY_H3:
 	case USBPHY_H6:
 	case USBPHY_A64:
@@ -243,6 +247,7 @@ sunxi_usbphy_enable(device_t dev, void *priv, bool enable)
 		phy0_reroute = false;
 		break;
 	case USBPHY_A64:
+	case USBPHY_A100:
 	case USBPHY_D1:
 	case USBPHY_H3:
 	case USBPHY_H6:
@@ -282,6 +287,7 @@ sunxi_usbphy_enable(device_t dev, void *priv, bool enable)
 			PMU_WRITE(sc, phy->phy_index, PMU_UNK_H3, val);
 		}
 		break;
+	case USBPHY_A100:
 	case USBPHY_A733:
 		/* The boot loader leaves the PHY powered down. */
 		if (enable && phy->phy_bsh) {
