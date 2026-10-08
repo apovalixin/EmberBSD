@@ -160,6 +160,7 @@ It compares actual GCC/Clang CTF types for DWARF4/5 and DWARF32/64, including
 arrays, enums, bitfields and function pointers. It also checks more than
 256 string indices, exact-end relocation, malformed tables and ctfmerge.
 The separate [external DWARF and DTrace acceptance](dtrace-dwarf.md) covers
-standalone split objects, standard supplementary data, native CTF execution
-and live tracing. It also states the remaining CTF-reader limits; general
+native CTF execution and live tracing. The [external type-unit guide](ctf-external-types.md)
+extends conversion to GNU/standard split objects, DWP v2/v5, combined
+supplements and multiple primary CUs, with explicit ownership limits. General
 DWARF5 location-list evaluation is not established by type conversion.

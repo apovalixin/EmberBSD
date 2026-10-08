@@ -449,8 +449,9 @@ on every board in the hardware catalog.
   widths, shared CU/TU tables and string-offset promotion. Its existing
   C API/bitcode and ORC JIT consumers still pass.
   The OS-owned [development image](ember/image/README.md) installs the pinned
-  package closure offline and includes the corrected FFS primary-superblock
-  selector. Image acceptance records the installed tool versions and reboot tests.
+  GDB/LLVM package closure offline and includes CTF/libdwarf 2.2 and the
+  corrected FFS primary-superblock selector. The same installed GDB, DWP and
+  CTF matrices pass on first boot and after a normal AArch64 VM reboot.
   Full OS builds
   with GCC16 and general pkgsrc cross-package builds remain unvalidated.
   C11/C++20 threads, TLS and shared-library

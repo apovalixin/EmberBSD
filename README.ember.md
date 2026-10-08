@@ -64,8 +64,9 @@ receipt is separate from validation of a complete general release image.
 
 The [AArch64 development image](ember/image/README.md) combines verified
 NetBSD 11 base sets, an accepted EmberBSD kernel, the corrected static
-`fsck_ffs`, and the Ports GDB 18.1 package closure. Offline first-boot package
-installation and live split-DWARF debugging after reboot pass in QEMU/HVF.
+`fsck_ffs`, CTF/libdwarf 2.2, and the Ports GDB 18.1nb1/LLVM 23.1.2nb1
+package closure. All eighteen packages install offline. Installed GDB, DWP
+and CTF matrices pass on first boot and after a normal reboot in QEMU/HVF.
 This is a bounded development image, not a complete OS rebuilt with GCC16
 or a physical-board installation image.
 

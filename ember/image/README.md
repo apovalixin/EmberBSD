@@ -7,31 +7,50 @@ and the offline GDB/LLVM package closure from
 It creates a new 12 GiB qcow2 image. First boot installs the packages through
 native `pkg_add`; boot and installed-debugger acceptance remain separate steps.
 
-## Previous image acceptance
+## Accepted image
 
-On 2026-10-08, a fresh image passed first boot and a normal reboot under
-Apple Silicon QEMU/HVF, AArch64 `virt`, four CPUs and 4 GiB RAM. All eleven
-offline packages installed and passed `pkg_admin check`. Both boots passed
-live GCC16 DWARF5 split-DWARF32/64 checks: breakpoint, argument and local
-values, two stack frames and normal process exit. The second boot retained
-the installation receipt instead of reinstalling the packages. Shutdown
+On 2026-10-08, the current image passed first boot and a normal reboot under
+Apple Silicon QEMU/HVF, AArch64 `virt`, four CPUs and 4 GiB RAM. All eighteen
+offline packages installed, including GDB 18.1nb1 and LLVM 23.1.2nb1;
+`pkg_admin check` verified 11,374 files on each boot. The installed CTF
+converter, libdwarf 2.2 and both headers came from the same accepted build.
+
+Both boots passed the same installed-tool acceptance:
+
+- GDB: 32 format, 24 expression, 14 agent-compiler and 72 entry-state checks,
+  plus external/supplementary objects, Unicode, live FP registers and signals.
+- LLVM DWP: 104 creation/repackaging checks with live values from both CUs,
+  mixed DWARF32/64, type units, indexed shared tables and forced promotion.
+- CTF: 46 format, nine external and six linked multi-CU results; malformed
+  metadata and ambiguous ownership fail atomically. Indexed operand and
+  section-selection API regressions pass against the installed library.
+
+The second boot retained the installation receipt unchanged. Shutdown
 unmounted the filesystem cleanly; no FFS warning or kernel panic occurred.
+A read-only test ISO supplied fixtures, API contract executables and Binutils
+2.47 `greadelf`; it did not replace any tested package or system library.
+DTrace's separate live acceptance is recorded in [the tracing guide](../boot/dtrace-dwarf.md).
 
-The tested inputs were kernel revision
-`21cd2464c720159bec0a3ba352e4dee940a58b02`, fsck revision
-`56ed7398e95a9b6a73f2d99d2cac0705abb69fa3`, and Ports package revision
-`a40f855ee9c4f9ae70f0807f71421c41603ec87d`. The pristine qcow2 SHA256 is
-`ca0cbb9a4cc8d3324fa99c91b3d6eaa23411310ee5411869139995090376e7b4`.
+| Input | Source revision |
+| --- | --- |
+| Kernel | `21cd2464c720159bec0a3ba352e4dee940a58b02` |
+| Static fsck | `56ed7398e95a9b6a73f2d99d2cac0705abb69fa3` |
+| CTF tools and image builder | `d820108ef90f83a965b7b3a158f683df1e8e3c6f` |
+| Ports packages | `0b2ee59d74e6cb1e342a95516a36c8d4dd9a14fc` |
+
+The pristine 12 GiB virtual qcow2 occupies 1,240,924,160 bytes. Its SHA256 is
+`bbab1974454d8fde861317a29c5a758050493e62eca910804db5b6ddfa308fdd`.
 Acceptance ran on a disposable overlay; the pristine image still performs
-offline package installation on its own first boot. Binary images are not
-stored in Git. The builder's `inputs.txt` records input and script hashes.
+offline installation on its own first boot. The two-boot evidence archive
+SHA256 is `d06bf2f9ec5b196e8a2b314fe1a73a29d163f0252f56667ffba15463116b78e8`.
+Binary images are not stored in Git. `inputs.txt` records input/script hashes.
 
-The base remains the verified NetBSD 11 sets. This is not a complete GCC16
-userland rebuild, physical-board image or proof of every DWARF form. The
-[Ports matrix](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/development-toolchain/gdb/dwarf-variants.md)
-records the debugger's accepted cases; revision nb1 closes the earlier entry-value gaps.
-The console accepts the base set's root login without a password; SSH is
-disabled. Configure credentials and access for the deployment before use.
+The base remains the verified NetBSD 11 sets. This is a development VM image;
+a complete GCC16 userland rebuild and physical-board image have separate
+acceptance. The [Ports matrix](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/development-toolchain/gdb/dwarf-variants.md)
+and [CTF guide](../boot/ctf-external-types.md) describe the tested DWARF profile
+and its limits. The console accepts the base set's root login without a
+password; SSH is disabled. Configure access for the deployment before use.
 
 ## Required inputs
 
