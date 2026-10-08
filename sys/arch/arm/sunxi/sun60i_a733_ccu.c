@@ -672,34 +672,134 @@ sun60i_a733_gpu_pll_rate(uint32_t control, uint32_t pattern0,
 	return 0;
 }
 
+/* Evaluate a completed observation, keeping rates private until success. */
+static int
+sun60i_a733_gpu_evaluate(struct sun60i_a733_gpu_state *state)
+{
+	static const u_int periph_div[] = { 0, 1, 2, 3, 4, 6 };
+	const uint32_t running = ACCEL_PLL_ENABLE | ACCEL_PLL_LDO |
+	    ACCEL_PLL_LOCK_ENABLE | ACCEL_PLL_LOCK | ACCEL_PLL_OUTPUT;
+	const uint32_t *val = state->sample[0];
+	uint64_t reference;
+	u_int core, bus, sel, raw, divisor, ref_divisor;
+	int error;
+
+	state->reason = A733_GPU_SNAPSHOT_CHANGED;
+	if (state->changed != 0)
+		return EBUSY;
+	state->reason = A733_GPU_HOSC_CHANGED;
+	if (state->hosc_hz[0] != state->hosc_hz[1])
+		return EBUSY;
+	state->reason = A733_GPU_MODULE_GATED;
+	if ((val[A733_GPU_MODULE] & ACCEL_CLK_ENABLE) == 0)
+		return EBUSY;
+	state->reason = A733_GPU_UPDATE_PENDING;
+	if ((val[A733_GPU_MODULE] & GPU_CLK_UPDATE) != 0)
+		return EBUSY;
+	state->reason = A733_GPU_BUS_GATED;
+	if ((val[A733_GPU_BUS] & __BIT(0)) == 0)
+		return EBUSY;
+	state->reason = A733_GPU_RESET_ASSERTED;
+	if ((val[A733_GPU_BUS] & __BIT(16)) == 0)
+		return EBUSY;
+	state->reason = A733_GPU_MASTER_GATED;
+	if ((val[A733_GPU_MASTER] & __BIT(7)) == 0)
+		return EBUSY;
+	state->reason = A733_GPU_REF_FLAGS;
+	if ((val[A733_GPU_REF] & running) != running)
+		return EBUSY;
+	/* Verify PLL_REF's normalization instead of assuming a 1:1 clock. */
+	state->reason = A733_GPU_REF_RATE;
+	ref_divisor = (__SHIFTOUT(val[A733_GPU_REF], __BITS(22,16)) + 1) *
+	    (__SHIFTOUT(val[A733_GPU_REF], ACCEL_PLL_P) + 1);
+	reference = (uint64_t)state->hosc_hz[0] *
+	    (__SHIFTOUT(val[A733_GPU_REF], ACCEL_PLL_N) + 1);
+	if (reference != UINT64_C(24000000) * ref_divisor)
+		return EOPNOTSUPP;
+
+	state->reason = A733_GPU_CORE_PLL;
+	sel = __SHIFTOUT(val[A733_GPU_MODULE], ACCEL_CLK_SEL);
+	if (sel == 0) {
+		error = sun60i_a733_gpu_pll_rate(val[A733_GPU_PLL],
+		    val[A733_GPU_PAT0], val[A733_GPU_PAT1], ACCEL_PLL_M,
+		    ACCEL_PLL_OUTPUT, 1, &core);
+	} else if (sel < __arraycount(periph_div)) {
+		error = sun60i_a733_gpu_pll_rate(val[A733_GPU_PERIPH],
+		    val[A733_GPU_PERIPH_PAT0], val[A733_GPU_PERIPH_PAT1],
+		    sel == 1 ? __BITS(18,16) : ACCEL_PLL_M,
+		    sel == 1 ? __BIT(26) : ACCEL_PLL_OUTPUT,
+		    periph_div[sel], &core);
+	} else {
+		state->reason = A733_GPU_CORE_PARENT;
+		return EOPNOTSUPP;
+	}
+	if (error != 0)
+		return error;
+	state->reason = A733_GPU_CORE_DIVIDER;
+	raw = __SHIFTOUT(val[A733_GPU_MODULE], __BITS(3,0));
+	/* Only the five dividers described by the pinned Linux table. */
+	if (raw != 0 && raw != 8 && raw != 12 && raw != 14 && raw != 15)
+		return EOPNOTSUPP;
+	divisor = 16 / (16 - raw);
+	if (core % divisor != 0)
+		return EOPNOTSUPP;
+	core /= divisor;
+
+	state->reason = A733_GPU_AHB_PARENT;
+	switch (__SHIFTOUT(val[A733_GPU_AHB], __BITS(25,24))) {
+	case 0:
+		bus = 24000000;
+		break;
+	case 3:
+		state->reason = A733_GPU_AHB_PLL;
+		error = sun60i_a733_gpu_pll_rate(val[A733_GPU_PERIPH],
+		    val[A733_GPU_PERIPH_PAT0], val[A733_GPU_PERIPH_PAT1],
+		    ACCEL_PLL_M, ACCEL_PLL_OUTPUT, 2, &bus);
+		if (error != 0)
+			return error;
+		break;
+	default:
+		/* LOSC/IOSC readiness is outside this bounded observation. */
+		return EOPNOTSUPP;
+	}
+	state->reason = A733_GPU_AHB_DIVIDER;
+	divisor = __SHIFTOUT(val[A733_GPU_AHB], __BITS(4,0)) + 1;
+	if (bus % divisor != 0)
+		return EOPNOTSUPP;
+	bus /= divisor;
+	state->core_hz = core;
+	state->bus_hz = bus;
+	state->reason = A733_GPU_READY;
+	return 0;
+}
+
 /*
  * Observe only the path needed to read the GPU register interface. This does
  * not enable clocks, change reset state, or claim MBUS/DMA readiness. Equal
  * snapshots detect some concurrent changes, but do not reserve the hardware.
+ * Once acquisition starts, collect both complete samples even if they differ.
  */
 int
-sun60i_a733_ccu_gpu_ready(struct clk *gpu, u_int *core_rate, u_int *bus_rate)
+sun60i_a733_ccu_gpu_inspect(struct clk *gpu, struct sun60i_a733_gpu_state *result)
 {
-	enum { REF, PERIPH, PERIPH_PAT0, PERIPH_PAT1, GPU, GPU_PAT0, GPU_PAT1,
-	    MODULE, BUS, AHB, MASTER };
-	static const bus_size_t regs[] = {
-		PLL_REF_CTRL_REG, PLL_PERIPH0_CTRL_REG,
-		PLL_PERIPH0_CTRL_REG + 8, PLL_PERIPH0_CTRL_REG + 12,
-		PLL_GPU0_CTRL_REG, PLL_GPU0_CTRL_REG + 8,
-		PLL_GPU0_CTRL_REG + 12, GPU0_CLK_REG, GPU0_BGR_REG,
-		AHB_CFG_REG, AHB_MASTER_GATE_REG,
+	static const bus_size_t regs[A733_GPU_NREGS] = {
+		[A733_GPU_REF] = PLL_REF_CTRL_REG,
+		[A733_GPU_PERIPH] = PLL_PERIPH0_CTRL_REG,
+		[A733_GPU_PERIPH_PAT0] = PLL_PERIPH0_CTRL_REG + 8,
+		[A733_GPU_PERIPH_PAT1] = PLL_PERIPH0_CTRL_REG + 12,
+		[A733_GPU_PLL] = PLL_GPU0_CTRL_REG,
+		[A733_GPU_PAT0] = PLL_GPU0_CTRL_REG + 8,
+		[A733_GPU_PAT1] = PLL_GPU0_CTRL_REG + 12,
+		[A733_GPU_MODULE] = GPU0_CLK_REG,
+		[A733_GPU_BUS] = GPU0_BGR_REG,
+		[A733_GPU_AHB] = AHB_CFG_REG,
+		[A733_GPU_MASTER] = AHB_MASTER_GATE_REG,
 	};
-	static const u_int periph_div[] = { 0, 1, 2, 3, 4, 6 };
-	const uint32_t running = ACCEL_PLL_ENABLE | ACCEL_PLL_LDO |
-	    ACCEL_PLL_LOCK_ENABLE | ACCEL_PLL_LOCK | ACCEL_PLL_OUTPUT;
+	struct sun60i_a733_gpu_state state = { 0 };
 	struct sunxi_ccu_softc *sc;
 	struct clk *hosc;
-	uint32_t val[__arraycount(regs)];
-	uint64_t reference;
-	u_int core, bus, sel, raw, divisor, ref_divisor, hosc_rate;
-	int error;
 
-	if (core_rate == NULL || bus_rate == NULL || core_rate == bus_rate)
+	if (result == NULL)
 		return EINVAL;
 	if (gpu == NULL)
 		return ENXIO;
@@ -711,76 +811,39 @@ sun60i_a733_ccu_gpu_ready(struct clk *gpu, u_int *core_rate, u_int *bus_rate)
 	hosc = fdtbus_clock_get(sc->sc_phandle, "hosc");
 	if (hosc == NULL)
 		return ENXIO;
-	hosc_rate = clk_get_rate(hosc);
+	state.hosc_hz[0] = clk_get_rate(hosc);
 	/* The native A733 provider currently supports the 24 MHz crystal. */
-	if (hosc_rate != 24000000)
+	if (state.hosc_hz[0] != 24000000)
 		return EOPNOTSUPP;
-	for (u_int i = 0; i < __arraycount(regs); i++)
-		val[i] = CCU_READ(sc, regs[i]);
+	for (u_int sample = 0; sample < 2; sample++) {
+		for (u_int i = 0; i < __arraycount(regs); i++)
+			state.sample[sample][i] = CCU_READ(sc, regs[i]);
+	}
+	state.hosc_hz[1] = clk_get_rate(hosc);
 	for (u_int i = 0; i < __arraycount(regs); i++) {
-		if (val[i] != CCU_READ(sc, regs[i]))
-			return EBUSY;
+		if (state.sample[0][i] != state.sample[1][i])
+			state.changed |= __BIT(i);
 	}
-	if (hosc_rate != clk_get_rate(hosc))
-		return EBUSY;
-	if ((val[MODULE] & ACCEL_CLK_ENABLE) == 0 ||
-	    (val[MODULE] & GPU_CLK_UPDATE) != 0 ||
-	    (val[BUS] & (__BIT(0) | __BIT(16))) != (__BIT(0) | __BIT(16)) ||
-	    (val[MASTER] & __BIT(7)) == 0)
-		return EBUSY;
-	if ((val[REF] & running) != running)
-		return EBUSY;
-	/* Verify PLL_REF's normalization instead of assuming a 1:1 clock. */
-	ref_divisor = (__SHIFTOUT(val[REF], __BITS(22,16)) + 1) *
-	    (__SHIFTOUT(val[REF], ACCEL_PLL_P) + 1);
-	reference = (uint64_t)hosc_rate *
-	    (__SHIFTOUT(val[REF], ACCEL_PLL_N) + 1);
-	if (reference != UINT64_C(24000000) * ref_divisor)
-		return EOPNOTSUPP;
+	state.readiness_error = sun60i_a733_gpu_evaluate(&state);
+	*result = state;
+	return 0;
+}
 
-	sel = __SHIFTOUT(val[MODULE], ACCEL_CLK_SEL);
-	if (sel == 0) {
-		error = sun60i_a733_gpu_pll_rate(val[GPU], val[GPU_PAT0],
-		    val[GPU_PAT1], ACCEL_PLL_M, ACCEL_PLL_OUTPUT, 1, &core);
-	} else if (sel < __arraycount(periph_div)) {
-		error = sun60i_a733_gpu_pll_rate(val[PERIPH], val[PERIPH_PAT0],
-		    val[PERIPH_PAT1], sel == 1 ? __BITS(18,16) : ACCEL_PLL_M,
-		    sel == 1 ? __BIT(26) : ACCEL_PLL_OUTPUT,
-		    periph_div[sel], &core);
-	} else {
-		return EOPNOTSUPP;
-	}
+int
+sun60i_a733_ccu_gpu_ready(struct clk *gpu, u_int *core_rate, u_int *bus_rate)
+{
+	struct sun60i_a733_gpu_state state;
+	int error;
+
+	if (core_rate == NULL || bus_rate == NULL || core_rate == bus_rate)
+		return EINVAL;
+	error = sun60i_a733_ccu_gpu_inspect(gpu, &state);
 	if (error != 0)
 		return error;
-	raw = __SHIFTOUT(val[MODULE], __BITS(3,0));
-	/* Only the five dividers described by the pinned Linux table. */
-	if (raw != 0 && raw != 8 && raw != 12 && raw != 14 && raw != 15)
-		return EOPNOTSUPP;
-	divisor = 16 / (16 - raw);
-	if (core % divisor != 0)
-		return EOPNOTSUPP;
-	core /= divisor;
-
-	switch (__SHIFTOUT(val[AHB], __BITS(25,24))) {
-	case 0:
-		bus = 24000000;
-		break;
-	case 3:
-		error = sun60i_a733_gpu_pll_rate(val[PERIPH], val[PERIPH_PAT0],
-		    val[PERIPH_PAT1], ACCEL_PLL_M, ACCEL_PLL_OUTPUT, 2, &bus);
-		if (error != 0)
-			return error;
-		break;
-	default:
-		/* LOSC/IOSC readiness is outside this bounded observation. */
-		return EOPNOTSUPP;
-	}
-	divisor = __SHIFTOUT(val[AHB], __BITS(4,0)) + 1;
-	if (bus % divisor != 0)
-		return EOPNOTSUPP;
-	bus /= divisor;
-	*core_rate = core;
-	*bus_rate = bus;
+	if (state.readiness_error != 0)
+		return state.readiness_error;
+	*core_rate = state.core_hz;
+	*bus_rate = state.bus_hz;
 	return 0;
 }
 

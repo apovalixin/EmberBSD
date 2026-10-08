@@ -32,11 +32,26 @@ observed. Queries never alter timing registers or clear quarantine.
 
 `sun60i_a733_ccu_gpu_ready(gpu_clock, &core_hz, &bus_hz)` accepts the native
 A733 GPU module clock handle. Both results are published only on success.
-It checks the GPU module gate and update bit, bus gate, deasserted GPU reset,
-and GPU AHB master gate, then verifies two equal CCU register snapshots.
+It verifies two equal CCU register snapshots, then checks the GPU module gate
+and update bit, bus gate, deasserted GPU reset, and GPU AHB master gate.
 Missing handles or the oscillator provider return `ENXIO`; a foreign clock
 provider returns `EOPNOTSUPP`. Changing or inactive required hardware returns
 `EBUSY`. Invalid or aliased output pointers return `EINVAL`.
+
+`sun60i_a733_ccu_gpu_inspect(gpu_clock, &state)` separates observation from
+readiness. A nonzero return leaves `state` unchanged. Zero means a complete
+observation: `readiness_error` still determines whether the path is ready.
+The result includes two samples of eleven CCU registers, their changed-bit
+mask, two oscillator rates, and the first failed condition. Derived core and
+bus rates are valid only when `readiness_error` is zero; otherwise they are
+zero. The existing `gpu_ready` wrapper retains its errors and output rules.
+
+After handle/provider and 24 MHz oscillator validation, inspection always
+performs exactly 22 CCU reads and a second oscillator-rate query. It neither
+polls nor writes, including when the samples differ. Snapshot changes take
+priority, followed by oscillator changes, module gate/update, bus gate/reset,
+AHB master gate, PLL_REF, GPU parent/divider, and AHB parent/divider checks.
+The raw samples retain evidence of other failed conditions as well.
 
 The observation supports the current 24 MHz crystal and verifies PLL_REF's
 actual normalization. It decodes integer PLL_GPU0 and PLL_PERIPH0 input and
@@ -64,6 +79,8 @@ Run `regulator-state-contract.sh`, `a733-power-contract.sh`,
 `fdt-power-attach-contract.sh`, and `a733-accelerator-clock-contract.sh` from
 `ember/tools`. They execute the production bodies with fake I2C/MMIO and
 check success, failure propagation, state preservation, stable reads, and
-absence of writes during queries. Existing transition and attach tests remain
-controls. Passing these contracts and focused cross-compilation is separate
+absence of writes during queries. The CCU contract also checks each refusal
+reason, simultaneous failures, complete differing samples, unchanged outputs
+on acquisition errors, and the compatibility wrapper. Existing transition and
+attach tests remain controls. Passing these contracts and focused cross-compilation is separate
 from physical identification or accelerator workload acceptance.

@@ -58,7 +58,7 @@ static unsigned writes, barriers, checks, reads;
 static unsigned unstable_read, hosc_reads;
 static bus_size_t unstable_reg;
 static u_int hosc_rate = 24000000;
-static bool unstable_hosc;
+static bool unstable_hosc, unstable_all;
 static bool reject_write, missing_hosc;
 static struct sunxi_ccu_softc state;
 static struct clk hosc = { .name = "hosc" };
@@ -76,7 +76,8 @@ bus_space_read_4(bus_space_tag_t tag, bus_space_handle_t handle, bus_size_t off)
 {
 	assert(off < sizeof(registers) && off % 4 == 0);
 	reads++;
-	if (reads == unstable_read && off == unstable_reg)
+	if ((reads == unstable_read && off == unstable_reg) ||
+	    (unstable_all && reads > 11 && reads <= 22))
 		registers[off / 4] ^= __BIT(0);
 	return registers[off / 4];
 }
@@ -180,7 +181,7 @@ reset(void)
 	writes = barriers = reads = hosc_reads = 0;
 	unstable_read = 0;
 	unstable_reg = SIZE_MAX;
-	unstable_hosc = false;
+	unstable_hosc = unstable_all = false;
 	hosc_rate = 24000000;
 	reject_write = missing_hosc = false;
 	sun60i_a733_ccu_attach(NULL, &state, &args);
@@ -206,8 +207,10 @@ ready_fixture(void)
 static void
 expect_ready(int error, u_int core_expected, u_int bus_expected)
 {
+	struct sun60i_a733_gpu_state observation, saved_observation;
 	uint32_t saved[__arraycount(registers)];
 	u_int core = 111, bus = 222;
+	int inspect_error;
 
 	memcpy(saved, registers, sizeof(saved));
 	reads = hosc_reads = 0;
@@ -217,6 +220,163 @@ expect_ready(int error, u_int core_expected, u_int bus_expected)
 	CHECK(writes == 0 && barriers == 0 && reads <= 22);
 	if (unstable_read == 0)
 		CHECK(memcmp(saved, registers, sizeof(saved)) == 0);
+	/* Inspect the same inputs, independently of the compatibility wrapper. */
+	memcpy(registers, saved, sizeof(registers));
+	memset(&observation, 0xa5, sizeof(observation));
+	memcpy(&saved_observation, &observation, sizeof(saved_observation));
+	reads = hosc_reads = 0;
+	inspect_error = sun60i_a733_ccu_gpu_inspect(CLOCK(A733_CLK_GPU0),
+	    &observation);
+	if (reads == 0) {
+		CHECK(inspect_error == error);
+		CHECK(memcmp(&observation, &saved_observation,
+		    sizeof(observation)) == 0);
+	} else {
+		CHECK(inspect_error == 0 && observation.readiness_error == error);
+		CHECK(reads == 22 && hosc_reads == 2);
+		CHECK(observation.core_hz == (error == 0 ? core_expected : 0));
+		CHECK(observation.bus_hz == (error == 0 ? bus_expected : 0));
+		CHECK((observation.reason == A733_GPU_READY) == (error == 0));
+	}
+	CHECK(writes == 0 && barriers == 0);
+	if (unstable_read == 0)
+		CHECK(memcmp(saved, registers, sizeof(saved)) == 0);
+}
+
+static void
+expect_inspect(enum sun60i_a733_gpu_reason reason, int error)
+{
+	static const bus_size_t regs[] = { 0, 0xa0, 0xa8, 0xac, 0xe0,
+	    0xe8, 0xec, 0xb20, 0xb24, 0x500, 0x5c0 };
+	struct sun60i_a733_gpu_state observation;
+	uint32_t first[A733_GPU_NREGS], changed = 0;
+
+	for (u_int i = 0; i < __arraycount(regs); i++)
+		first[i] = REG(regs[i]);
+	reads = hosc_reads = 0;
+	CHECK(sun60i_a733_ccu_gpu_inspect(CLOCK(A733_CLK_GPU0),
+	    &observation) == 0);
+	CHECK(reads == 22 && hosc_reads == 2);
+	CHECK(writes == 0 && barriers == 0);
+	CHECK(observation.reason == reason);
+	CHECK(observation.readiness_error == error);
+	CHECK(observation.hosc_hz[0] == 24000000);
+	CHECK(observation.hosc_hz[1] == (unstable_hosc ? 0 : 24000000));
+	CHECK(error == 0 || (observation.core_hz == 0 && observation.bus_hz == 0));
+	for (u_int i = 0; i < __arraycount(regs); i++) {
+		CHECK(observation.sample[0][i] == first[i]);
+		CHECK(observation.sample[1][i] == REG(regs[i]));
+		if (first[i] != REG(regs[i]))
+			changed |= __BIT(i);
+	}
+	CHECK(observation.changed == changed);
+}
+
+static void
+test_gpu_inspect(void)
+{
+	static const bus_size_t regs[] = { 0, 0xa0, 0xa8, 0xac, 0xe0,
+	    0xe8, 0xec, 0xb20, 0xb24, 0x500, 0x5c0 };
+	static const struct {
+		bus_size_t reg;
+		uint32_t mask;
+		enum sun60i_a733_gpu_reason reason;
+	} busy[] = {
+		{ GPU0_CLK_REG, __BIT(31), A733_GPU_MODULE_GATED },
+		{ GPU0_CLK_REG, __BIT(27), A733_GPU_UPDATE_PENDING },
+		{ GPU0_BGR_REG, __BIT(0), A733_GPU_BUS_GATED },
+		{ GPU0_BGR_REG, __BIT(16), A733_GPU_RESET_ASSERTED },
+		{ AHB_MASTER_GATE_REG, __BIT(7), A733_GPU_MASTER_GATED },
+		{ PLL_REF_CTRL_REG, __BIT(31), A733_GPU_REF_FLAGS },
+		{ PLL_GPU0_CTRL_REG, __BIT(31), A733_GPU_CORE_PLL },
+		{ PLL_PERIPH0_CTRL_REG, __BIT(31), A733_GPU_AHB_PLL },
+	};
+	struct sun60i_a733_gpu_state result, saved;
+	u_int start = checks;
+
+	ready_fixture();
+	memset(&result, 0xa5, sizeof(result));
+	memcpy(&saved, &result, sizeof(saved));
+	CHECK(sun60i_a733_ccu_gpu_inspect(NULL, NULL) == EINVAL);
+	CHECK(sun60i_a733_ccu_gpu_inspect(CLOCK(A733_CLK_GPU0), NULL) == EINVAL);
+	CHECK(sun60i_a733_ccu_gpu_inspect(NULL, &result) == ENXIO);
+	CHECK(sun60i_a733_ccu_gpu_inspect(&hosc, &result) == EOPNOTSUPP);
+	CHECK(memcmp(&result, &saved, sizeof(result)) == 0);
+	CHECK(reads == 0 && hosc_reads == 0 && writes == 0);
+	expect_inspect(A733_GPU_READY, 0);
+	/* Multiple failed conditions retain the first cause in evaluation order. */
+	for (u_int i = 0; i < __arraycount(busy); i++)
+		REG(busy[i].reg) ^= busy[i].mask;
+	for (u_int i = 0; i < __arraycount(busy); i++) {
+		expect_inspect(busy[i].reason, EBUSY);
+		REG(busy[i].reg) ^= busy[i].mask;
+	}
+	expect_inspect(A733_GPU_READY, 0);
+	for (u_int i = 0; i < __arraycount(regs); i++) {
+		ready_fixture();
+		unstable_reg = regs[i];
+		unstable_read = 12 + i;
+		/* Snapshot instability takes priority over an already gated module. */
+		REG(GPU0_CLK_REG) &= ~__BIT(31);
+		unstable_hosc = true;
+		expect_inspect(A733_GPU_SNAPSHOT_CHANGED, EBUSY);
+	}
+	ready_fixture();
+	unstable_all = true;
+	expect_inspect(A733_GPU_SNAPSHOT_CHANGED, EBUSY);
+	ready_fixture();
+	REG(GPU0_CLK_REG) &= ~__BIT(31);
+	unstable_hosc = true;
+	expect_inspect(A733_GPU_HOSC_CHANGED, EBUSY);
+	for (u_int pll = 0; pll < 3; pll++) {
+		const bus_size_t reg = pll == 0 ? PLL_REF_CTRL_REG :
+		    pll == 1 ? PLL_GPU0_CTRL_REG : PLL_PERIPH0_CTRL_REG;
+		const enum sun60i_a733_gpu_reason reason = pll == 0 ?
+		    A733_GPU_REF_FLAGS : pll == 1 ? A733_GPU_CORE_PLL : A733_GPU_AHB_PLL;
+
+		for (u_int bit = 27; bit <= 31; bit++) {
+			ready_fixture();
+			REG(reg) &= ~__BIT(bit);
+			expect_inspect(reason, EBUSY);
+		}
+	}
+	ready_fixture();
+	REG(PLL_REF_CTRL_REG) |= ACCEL_PLL_P;
+	expect_inspect(A733_GPU_REF_RATE, EOPNOTSUPP);
+	ready_fixture();
+	REG(GPU0_CLK_REG) |= 6 << 24;
+	expect_inspect(A733_GPU_CORE_PARENT, EOPNOTSUPP);
+	ready_fixture();
+	REG(GPU0_CLK_REG) |= 3;
+	expect_inspect(A733_GPU_CORE_DIVIDER, EOPNOTSUPP);
+	ready_fixture();
+	REG(AHB_CFG_REG) = 1 << 24;
+	expect_inspect(A733_GPU_AHB_PARENT, EOPNOTSUPP);
+	ready_fixture();
+	REG(AHB_CFG_REG) |= 6;
+	expect_inspect(A733_GPU_AHB_DIVIDER, EOPNOTSUPP);
+	for (u_int sel = 0; sel < 6; sel++) {
+		const bus_size_t reg = sel == 0 ? PLL_GPU0_CTRL_REG : PLL_PERIPH0_CTRL_REG;
+
+		ready_fixture();
+		REG(GPU0_CLK_REG) |= sel << 24;
+		REG(reg + 8) = __BIT(31);
+		expect_inspect(A733_GPU_CORE_PLL, EOPNOTSUPP);
+		REG(reg + 8) = 0;
+		REG(reg + 12) = __BIT(27);
+		expect_inspect(A733_GPU_CORE_PLL, EOPNOTSUPP);
+		REG(reg + 12) = 0;
+		REG(reg) &= ~(sel == 1 ? __BIT(26) : __BIT(27));
+		expect_inspect(A733_GPU_CORE_PLL, EBUSY);
+	}
+	ready_fixture();
+	REG(PLL_PERIPH0_CTRL_REG + 8) = __BIT(31);
+	expect_inspect(A733_GPU_AHB_PLL, EOPNOTSUPP);
+	ready_fixture();
+	REG(PLL_GPU0_CTRL_REG) = (REG(PLL_GPU0_CTRL_REG) &
+	    ~(ACCEL_PLL_N | ACCEL_PLL_M)) | (255 << 8);
+	expect_inspect(A733_GPU_CORE_PLL, ERANGE);
+	printf("A733 GPU inspection: %u production checks passed\n", checks - start);
 }
 
 static void
@@ -349,7 +509,7 @@ test_gpu_ready(void)
 		unstable_reg = snapshots[i];
 		unstable_read = 12 + i;
 		expect_ready(EBUSY, 0, 0);
-		CHECK(reads == unstable_read);
+		CHECK(reads == 22);
 	}
 	ready_fixture();
 	REG(AHB_CFG_REG) = 0;
@@ -491,6 +651,7 @@ main(void)
 	}
 	CHECK(writes == 0 && barriers == 0);
 	test_gpu_ready();
+	test_gpu_inspect();
 	printf("A733 accelerator clocks: %u production checks passed\n", checks);
 	return 0;
 }

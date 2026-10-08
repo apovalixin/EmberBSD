@@ -107,8 +107,9 @@ static u_int voltage, core_hz, bus_hz;
 static uint64_t pbvnc;
 static struct fdtbus_regulator regulator;
 static struct clk clock_fixture;
+static struct sun60i_a733_gpu_state clock_observation;
 static unsigned int maps, peeks, unmaps, releases, clock_puts, checks;
-static char events[128], normal_output[256], error_output[256];
+static char events[128], normal_output[4096], error_output[256];
 static size_t nevents;
 
 static void
@@ -243,12 +244,16 @@ fdtbus_clock_get_index(int phandle, u_int index)
 	return &clock_fixture;
 }
 int
-sun60i_a733_ccu_gpu_ready(struct clk *clock, u_int *core, u_int *bus)
+sun60i_a733_ccu_gpu_inspect(struct clk *clock,
+    struct sun60i_a733_gpu_state *state)
 {
 	assert(clock->acquired);
 	record('Q');
-	*core = core_hz;
-	*bus = bus_hz;
+	if (ready_error == 0) {
+		*state = clock_observation;
+		state->core_hz = core_hz;
+		state->bus_hz = bus_hz;
+	}
 	return ready_error;
 }
 static int
@@ -298,10 +303,14 @@ static void
 aprint_normal_dev(device_t dev, const char *fmt, ...)
 {
 	va_list ap;
+	size_t len = strlen(normal_output);
+	int written;
 
 	va_start(ap, fmt);
-	vsnprintf(normal_output, sizeof(normal_output), fmt, ap);
+	written = vsnprintf(normal_output + len, sizeof(normal_output) - len,
+	    fmt, ap);
 	va_end(ap);
+	assert(written >= 0 && (size_t)written < sizeof(normal_output) - len);
 }
 static void
 aprint_error_dev(device_t dev, const char *fmt, ...)
@@ -350,6 +359,8 @@ reset(void)
 	voltage = 800000;
 	core_hz = 400000000;
 	bus_hz = 200000000;
+	memset(&clock_observation, 0, sizeof(clock_observation));
+	clock_observation.hosc_hz[0] = clock_observation.hosc_hz[1] = 24000000;
 	pbvnc = UINT64_C(0x00240038006800b7);
 	maps = peeks = unmaps = releases = clock_puts = 0;
 	nevents = 0;
@@ -367,6 +378,102 @@ unavailable(int error)
 	CHECK(maps == 0 && peeks == 0 && unmaps == 0);
 	CHECK(!sc.sc_have_id);
 	CHECK(!regulator.acquired && !clock_fixture.acquired);
+}
+
+static void
+test_clock_observation(void)
+{
+	static const struct {
+		enum sun60i_a733_gpu_reason reason;
+		int error;
+		const char *text;
+	} failures[] = {
+		{ A733_GPU_SNAPSHOT_CHANGED, EBUSY, "CCU snapshot changed" },
+		{ A733_GPU_HOSC_CHANGED, EBUSY, "oscillator rate changed" },
+		{ A733_GPU_MODULE_GATED, EBUSY, "GPU module gated" },
+		{ A733_GPU_UPDATE_PENDING, EBUSY, "GPU update pending" },
+		{ A733_GPU_BUS_GATED, EBUSY, "GPU bus gated" },
+		{ A733_GPU_RESET_ASSERTED, EBUSY, "GPU reset asserted" },
+		{ A733_GPU_MASTER_GATED, EBUSY, "GPU AHB master gated" },
+		{ A733_GPU_REF_FLAGS, EBUSY, "PLL_REF flags" },
+		{ A733_GPU_REF_RATE, EOPNOTSUPP, "PLL_REF rate" },
+		{ A733_GPU_CORE_PARENT, EOPNOTSUPP, "GPU parent unsupported" },
+		{ A733_GPU_CORE_PLL, EBUSY, "GPU parent PLL" },
+		{ A733_GPU_CORE_DIVIDER, EOPNOTSUPP, "GPU divider" },
+		{ A733_GPU_AHB_PARENT, EOPNOTSUPP, "AHB parent unsupported" },
+		{ A733_GPU_AHB_PLL, EBUSY, "AHB parent PLL" },
+		{ A733_GPU_AHB_DIVIDER, EOPNOTSUPP, "AHB divider" },
+	};
+	static const char * const registers[] = {
+		"PLL_REF[0x000]", "PLL_PERIPH0[0x0a0]",
+		"PLL_PERIPH0_PAT0[0x0a8]", "PLL_PERIPH0_PAT1[0x0ac]",
+		"PLL_GPU0[0x0e0]", "PLL_GPU0_PAT0[0x0e8]",
+		"PLL_GPU0_PAT1[0x0ec]", "GPU_CLK[0xb20]", "GPU_BGR[0xb24]",
+		"AHB[0x500]", "AHB_MASTER[0x5c0]",
+	};
+	char expected[128];
+
+	for (u_int i = 0; i < __arraycount(failures); i++) {
+		reset();
+		/* Readiness fails before the OPP check; report the actual query. */
+		voltage = 735000;
+		sc.sc_core_hz = 111;
+		sc.sc_bus_hz = 222;
+		clock_observation.reason = failures[i].reason;
+		clock_observation.readiness_error = failures[i].error;
+		for (u_int reg = 0; reg < A733_GPU_NREGS; reg++) {
+			clock_observation.sample[0][reg] = 0x10000000 + reg;
+			clock_observation.sample[1][reg] = 0x10000000 + reg;
+		}
+		CHECK(sun60i_gpu_finalize(&gpu_device) == 0);
+		CHECK(maps == 0 && peeks == 0 && unmaps == 0 && !sc.sc_have_id);
+		CHECK(releases == 1 && clock_puts == 1);
+		CHECK(!regulator.acquired && !clock_fixture.acquired);
+		CHECK(strcmp(events, "ASVPCQcs") == 0);
+		CHECK(sc.sc_core_hz == 111 && sc.sc_bus_hz == 222);
+		snprintf(expected, sizeof(expected), "CCU observation: %s (error %d)",
+		    failures[i].text, failures[i].error);
+		CHECK(strstr(normal_output, expected) != NULL);
+		CHECK(strstr(normal_output, "DCDC4 735000 uV, changed 0x000") != NULL);
+		CHECK(strstr(normal_output, "hosc 24000000 / 24000000 Hz") != NULL);
+		for (u_int reg = 0; reg < A733_GPU_NREGS; reg++) {
+			snprintf(expected, sizeof(expected), "%s 0x%08x\n",
+			    registers[reg], 0x10000000 + reg);
+			CHECK(strstr(normal_output, expected) != NULL);
+		}
+		CHECK(strstr(normal_output, " -> ") == NULL);
+		snprintf(expected, sizeof(expected), "clock/reset state: %d;",
+		    failures[i].error);
+		CHECK(strstr(error_output, expected) != NULL);
+		CHECK(sun60i_gpu_finalize(&gpu_device) == 0);
+		CHECK(strcmp(events, "ASVPCQcs") == 0);
+	}
+	reset();
+	clock_observation.reason = A733_GPU_SNAPSHOT_CHANGED;
+	clock_observation.readiness_error = EBUSY;
+	clock_observation.changed = (1U << A733_GPU_NREGS) - 1;
+	clock_observation.hosc_hz[1] = 19200000;
+	for (u_int reg = 0; reg < A733_GPU_NREGS; reg++) {
+		clock_observation.sample[0][reg] = 0xa5000000 + reg;
+		clock_observation.sample[1][reg] = 0x5a000000 + reg;
+	}
+	unavailable(EBUSY);
+	CHECK(strstr(normal_output, "changed 0x7ff") != NULL);
+	CHECK(strstr(normal_output, "hosc 24000000 / 19200000 Hz") != NULL);
+	for (u_int reg = 0; reg < A733_GPU_NREGS; reg++) {
+		snprintf(expected, sizeof(expected), "%s 0x%08x -> 0x%08x\n",
+		    registers[reg], 0xa5000000 + reg, 0x5a000000 + reg);
+		CHECK(strstr(normal_output, expected) != NULL);
+	}
+	/* An acquisition error must not expose a nonexistent snapshot. */
+	reset();
+	ready_error = ENXIO;
+	unavailable(ENXIO);
+	CHECK(normal_output[0] == '\0' && strcmp(events, "ASVPCQcs") == 0);
+	reset();
+	clock_observation.reason = A733_GPU_CORE_PLL;
+	clock_observation.readiness_error = ERANGE;
+	unavailable(ERANGE);
 }
 
 int
@@ -512,6 +619,7 @@ main(void)
 		CHECK(strstr(normal_output, "(expected A733 GPU)") == NULL);
 		CHECK(strstr(error_output, "PBVNC value") != NULL);
 	}
+	test_clock_observation();
 	printf("PASS: %u A733 GPU identification checks\n", checks);
 	return 0;
 }

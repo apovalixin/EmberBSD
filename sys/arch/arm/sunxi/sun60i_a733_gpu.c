@@ -72,9 +72,64 @@ static const struct device_compatible_entry pmic_compat[] = {
 	DEVICE_COMPAT_EOL
 };
 
+static void
+sun60i_gpu_clock_report(struct sun60i_gpu_softc *sc,
+    const struct sun60i_a733_gpu_state *state)
+{
+	static const char * const reasons[] = {
+		[A733_GPU_READY] = "ready",
+		[A733_GPU_SNAPSHOT_CHANGED] = "CCU snapshot changed",
+		[A733_GPU_HOSC_CHANGED] = "oscillator rate changed",
+		[A733_GPU_MODULE_GATED] = "GPU module gated",
+		[A733_GPU_UPDATE_PENDING] = "GPU update pending",
+		[A733_GPU_BUS_GATED] = "GPU bus gated",
+		[A733_GPU_RESET_ASSERTED] = "GPU reset asserted",
+		[A733_GPU_MASTER_GATED] = "GPU AHB master gated",
+		[A733_GPU_REF_FLAGS] = "PLL_REF flags",
+		[A733_GPU_REF_RATE] = "PLL_REF rate",
+		[A733_GPU_CORE_PARENT] = "GPU parent unsupported",
+		[A733_GPU_CORE_PLL] = "GPU parent PLL",
+		[A733_GPU_CORE_DIVIDER] = "GPU divider",
+		[A733_GPU_AHB_PARENT] = "AHB parent unsupported",
+		[A733_GPU_AHB_PLL] = "AHB parent PLL",
+		[A733_GPU_AHB_DIVIDER] = "AHB divider",
+	};
+	static const char * const names[A733_GPU_NREGS] = {
+		[A733_GPU_REF] = "PLL_REF[0x000]",
+		[A733_GPU_PERIPH] = "PLL_PERIPH0[0x0a0]",
+		[A733_GPU_PERIPH_PAT0] = "PLL_PERIPH0_PAT0[0x0a8]",
+		[A733_GPU_PERIPH_PAT1] = "PLL_PERIPH0_PAT1[0x0ac]",
+		[A733_GPU_PLL] = "PLL_GPU0[0x0e0]",
+		[A733_GPU_PAT0] = "PLL_GPU0_PAT0[0x0e8]",
+		[A733_GPU_PAT1] = "PLL_GPU0_PAT1[0x0ec]",
+		[A733_GPU_MODULE] = "GPU_CLK[0xb20]",
+		[A733_GPU_BUS] = "GPU_BGR[0xb24]",
+		[A733_GPU_AHB] = "AHB[0x500]",
+		[A733_GPU_MASTER] = "AHB_MASTER[0x5c0]",
+	};
+	const char *reason = "unknown";
+
+	if ((u_int)state->reason < __arraycount(reasons))
+		reason = reasons[state->reason];
+	aprint_normal_dev(sc->sc_dev, "CCU observation: %s (error %d), "
+	    "DCDC4 %u uV, changed 0x%03x\n", reason, state->readiness_error,
+	    sc->sc_uvol, state->changed);
+	aprint_normal_dev(sc->sc_dev, "hosc %u / %u Hz\n",
+	    state->hosc_hz[0], state->hosc_hz[1]);
+	for (u_int i = 0; i < __arraycount(names); i++) {
+		if (state->sample[0][i] == state->sample[1][i])
+			aprint_normal_dev(sc->sc_dev, "%s 0x%08x\n", names[i],
+			    state->sample[0][i]);
+		else
+			aprint_normal_dev(sc->sc_dev, "%s 0x%08x -> 0x%08x\n",
+			    names[i], state->sample[0][i], state->sample[1][i]);
+	}
+}
+
 static int
 sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
 {
+	struct sun60i_a733_gpu_state clocks_state;
 	struct fdtbus_regulator *supply = NULL;
 	struct clk *gpu = NULL;
 	const uint32_t *pd, *clocks;
@@ -151,9 +206,16 @@ sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
 		goto out;
 	}
 	sc->sc_stage = "clock/reset state";
-	error = sun60i_a733_ccu_gpu_ready(gpu, &sc->sc_core_hz, &sc->sc_bus_hz);
+	error = sun60i_a733_ccu_gpu_inspect(gpu, &clocks_state);
 	if (error != 0)
 		goto out;
+	error = clocks_state.readiness_error;
+	if (error != 0) {
+		sun60i_gpu_clock_report(sc, &clocks_state);
+		goto out;
+	}
+	sc->sc_core_hz = clocks_state.core_hz;
+	sc->sc_bus_hz = clocks_state.bus_hz;
 	/* These two BSP operating points use 800 mV across all listed bins. */
 	sc->sc_stage = "firmware operating point";
 	if (sc->sc_uvol != 800000 ||

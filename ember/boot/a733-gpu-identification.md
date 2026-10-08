@@ -18,7 +18,8 @@ boot script were preserved. Eight CPUs, microSD root and Wi-Fi/SSH returned.
 `sun60igpuid0` attached and reported `identification unavailable at
 clock/reset state: 16; firmware state left unchanged`. The query reached
 CCU readiness after observing the supply enabled and GPU_TOP statically ON.
-`EBUSY` does not identify which clock, gate, reset or snapshot check failed.
+That build's `EBUSY` did not identify which clock, gate, reset or snapshot
+check failed.
 The driver therefore did not map or read GPU registers. This establishes
 the unavailable path on this firmware configuration, not the expected
 PBVNC value or a working accelerator.
@@ -90,6 +91,14 @@ return `EOPNOTSUPP`; they are neither changed nor declared electrically unsafe.
 Supply/domain OFF, dynamic power mode, missing providers, unsupported clocks,
 or query errors prevent GPU mapping and reads.
 
+For a completed CCU observation that is not ready, the consumer reports the
+first failed condition, the queried DCDC4 setting in microvolts, both
+oscillator rates, and the eleven raw CCU registers. Differing registers show
+both samples. This uses one bounded provider inspection, without a second
+query, writes, or GPU MMIO. Acquisition errors do not print an unavailable
+snapshot. The reported supply setting is not a physical voltage measurement;
+the 800000-microvolt operating-point check follows CCU readiness.
+
 After all checks pass, `bus_space_peek_8` reads PBVNC. The driver prints the
 actual raw value and four 16-bit fields. Expected A733 identity is
 `36.56.104.183`, raw `0x00240038006800b7`. Every other value, including zero
@@ -128,5 +137,6 @@ It proves the order before MMIO, rejects malformed resources and provider
 errors, tests both allowed operating points and unexpected identities, and
 checks that every acquired handle and mapping is released. It reproduces the
 late `/soc` child queue hazard and checks finalizer completion, provider
-failure and repeated hook passes. These checks do not prove physical GPU
-identity or acceleration.
+failure and repeated hook passes. Clock diagnostics test both acquisition and
+readiness errors, actual queried voltage, raw samples, and rejection before
+GPU mapping. These checks do not prove physical GPU identity or acceleration.

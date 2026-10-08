@@ -29,6 +29,38 @@
 
 struct clk;
 
+enum sun60i_a733_gpu_reg {
+	A733_GPU_REF, A733_GPU_PERIPH, A733_GPU_PERIPH_PAT0,
+	A733_GPU_PERIPH_PAT1, A733_GPU_PLL, A733_GPU_PAT0, A733_GPU_PAT1,
+	A733_GPU_MODULE, A733_GPU_BUS, A733_GPU_AHB, A733_GPU_MASTER,
+	A733_GPU_NREGS
+};
+
+enum sun60i_a733_gpu_reason {
+	A733_GPU_READY, A733_GPU_SNAPSHOT_CHANGED, A733_GPU_HOSC_CHANGED,
+	A733_GPU_MODULE_GATED, A733_GPU_UPDATE_PENDING, A733_GPU_BUS_GATED,
+	A733_GPU_RESET_ASSERTED, A733_GPU_MASTER_GATED, A733_GPU_REF_FLAGS,
+	A733_GPU_REF_RATE, A733_GPU_CORE_PARENT, A733_GPU_CORE_PLL,
+	A733_GPU_CORE_DIVIDER, A733_GPU_AHB_PARENT, A733_GPU_AHB_PLL,
+	A733_GPU_AHB_DIVIDER
+};
+
+/*
+ * Inspection success means a complete observation, not GPU readiness.
+ * A nonzero API return leaves the caller's state unchanged.
+ */
+struct sun60i_a733_gpu_state {
+	uint32_t sample[2][A733_GPU_NREGS];
+	uint32_t changed;	/* One bit per register whose samples differ. */
+	u_int hosc_hz[2];
+	enum sun60i_a733_gpu_reason reason;
+	int readiness_error;
+	u_int core_hz, bus_hz;	/* Valid only when readiness_error is zero. */
+};
+
+int	sun60i_a733_ccu_gpu_inspect(struct clk *,
+	    struct sun60i_a733_gpu_state *);
+
 /* Read-only readiness observation, not a reservation against future writers. */
 int	sun60i_a733_ccu_gpu_ready(struct clk *, u_int *, u_int *);
 
