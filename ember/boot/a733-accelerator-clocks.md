@@ -83,7 +83,10 @@ This is source evidence, not a validated native sequence; the BSP does not
 sequence the new SRAM reset.
 
 The [experimental identification consumer](a733-gpu-identification.md#experimental-clock-preparation)
-attempts a bounded clock-only preparation. Its hardware acceptance is pending.
+attempts a bounded clock-only preparation. On physical Zero 3W, matched
+`EMBER64 #8` passed all four GPU-local write/readback checks, then timed out
+waiting for CORE ON/Q acceptance. Clock-only preparation was insufficient
+in that observed state; the failed PCSM or Q-Channel phase is not established.
 Broader power management still needs ownership of supplies and shared clocks,
 plus a protocol-safe release sequence. Identification precedes IRQ, MMU/DMA
 and workload work. Clock provider registration alone does not establish it.
@@ -131,7 +134,9 @@ Use `CLOCK_TEST_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer'`
 for the sanitizer run. No Python or board access is required.
 
 The contract and GCC 12.5/16 AArch64 kernel-object cross-builds have passed.
-The complete GCC16.2 kernel also boots on Zero 3W with both CCUs and PCK600
-attached; see the [hardware boundary](a733-power-domains.md). Accelerator
-clock/reset transitions have not been exercised on that board and do not establish GPU
-rendering or NPU inference support.
+The extended 15,188-check contract also passed natively on physical Zero 3W
+under kernel #7. It executes real CPU instructions with fake MMIO, not GPU
+clock hardware. The complete GCC16.2 #8 kernel subsequently booted with the
+separate experimental DTB; see the [physical result](a733-gpu-identification.md#physical-result-2026-10-08).
+That bounded clock/reset attempt did not reach GPU identification. Neither
+GPU rendering nor NPU inference is established.

@@ -4,7 +4,7 @@ EmberBSD supplies a native FDT power-domain provider for Allwinner A733.
 It is a prerequisite for device drivers, including GPU/NPU drivers; it does
 not expose an accelerator, submit commands or claim hardware acceleration.
 The owner is this OS repository. Provider attachment is verified on Zero
-3W; physical accelerator-domain transitions remain unverified.
+3W; successful physical accelerator-domain transitions remain unverified.
 
 ## Interface and limits
 
@@ -92,7 +92,7 @@ failure does not undo the selected pinctrl state or earlier successful
 domains in a multi-domain request. Supply/clock sequencing and shared
 resource ownership still need a separate consumer design. The later
 [GPU identification binding](a733-gpu-identification.md#fdt-power-opt-in)
-explicitly opts out of automatic power changes and currently observes only.
+explicitly opts out of automatic power changes; normal board DTBs observe only.
 
 Run `sh ember/tools/fdt-power-attach-contract.sh` for the production scan,
 pre/post-attach and power API regression. Use
@@ -141,7 +141,7 @@ All 80 reads succeeded with unchanged samples. The [physical receipt](a733-gpu-i
 records the remaining values and scope. Arm DEN0051E section 5.2.8 requires the requested static mode to
 be reached before changing PWCR.DEVREQEN. The pinned BSP's manual
 `PWCR=0; PWPR=8` GPU initialization is therefore not a justified recovery
-sequence for that mismatch. No active initialization is added here.
+sequence for that mismatch. The diagnostic does not alter power policy.
 
 ## Reproduce the software checks
 
@@ -165,11 +165,12 @@ each acquisition fault, unchanged error output, each changed field,
 recognized P/Q and unknown identities, quarantine and attachment behavior.
 These are software contracts, not physical MMIO tests.
 
-The expanded diagnostic passes on Apple Silicon macOS, including ASan/UBSan
-and eight rejecting mutation controls. Its PCK object and target contract
-cross-build with the corrected Ports GCC 16.2. The target contract also
-passes under physical kernel #6 with fake MMIO; the expanded physical
-register snapshot remains pending.
+The expanded diagnostic passes on Apple Silicon macOS, including ASan/UBSan.
+Its physical register snapshot was accepted in #7. The extended target
+contract passes on the real Zero 3W CPU under #7: 133 ownership/wait cases
+plus the existing matrices. These native tests use fake MMIO. The combined
+GPU preparation contracts reject eleven causal mutants. PCK objects and
+target contracts cross-build with the corrected Ports GCC 16.2.
 
 Earlier provider validation used separate `EMBER64` object directories to
 cross-build the driver, R-CCU, FDT power-domain code
@@ -179,16 +180,12 @@ Both Zero 3W and Zero 4 DTBs compiled and decoded with the provider present.
 The existing `/soc` unit-address warning remains; no new DT warning appeared.
 
 The complete GCC16.2 `EMBER64` kernel, four matching modules and both A733
-DTBs subsequently cross-built on macOS. On 2026-10-08 the matched Zero 3W
-bundle booted through vendor boot0/U-Boot. Its log identifies `sun60ipck0`
-and both A733 CCU providers; Wi-Fi/SSH and 37 local-socket checks passed.
-The booted ELF SHA256 is
-`b66cf8eae6199946810ea6e67d77b716aaa5b7b61357c096d8f6dff53f65cbbe`.
-This verifies provider attachment, not accelerator power transitions.
-The later GPU consumer currently enables only
-[read-only observation](a733-gpu-identification.md). Active supplies,
-device clocks/resets, identification, DMA/MMU, IRQs and command execution
-remain separate steps.
+DTBs cross-built on macOS. Matched #8 booted Zero 3W through vendor
+boot0/U-Boot, with `sun60ipck0`, both CCUs and Wi-Fi/SSH available.
+This verifies attachment, not successful accelerator power transitions.
+The normal GPU DT enables [read-only observation](a733-gpu-identification.md).
+The separate #8 clock/reset attempt below failed before identification.
+Active supply control, DMA/MMU, IRQs and command execution remain unverified.
 Use the [cross-build instructions](cross-build.md) from a clean commit,
 including matching modules and DTBs; do not mix these artifacts across builds.
 
@@ -208,6 +205,14 @@ sections 2.1.2/2.3 permit reset release from Q_STOPPED/Q_EXIT, but require
 Q_STOPPED before clock removal. This justifies failure retention, not a claim
 that clocks caused the pending CORE transition. The experiment never changes
 PWCR, supplies, PCK delays or power policy, and never requests CORE power-off.
+
+On physical Zero 3W, matched #8 passed local CCU preparation but the bounded
+wait returned `ETIMEDOUT` (60): CORE PWPR `0x8`, PWSR `0`, MISR `0`.
+Resources remained reserved until reboot; no GPU access or rollback followed.
+The next boot restored normal observe-only operation and ended the reservation.
+Clock-only preparation was insufficient in this state. The failing PCSM or
+Q-Channel phase remains unknown. Verified A733 firmware/I/O sequencing is
+required before further active changes; see the [physical result](a733-gpu-identification.md#physical-result-2026-10-08).
 
 ## Provenance
 
