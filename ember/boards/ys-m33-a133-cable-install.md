@@ -205,6 +205,12 @@ This does not test physical cable writes or power-loss recovery.
 
 ### Physical release acceptance
 
+The [guarded USB range-transfer API](ys-m33-a133-usb-transfer.md) now supplies
+bounded binary writes and complete host readback hashes for a future installer.
+Its executable is inspection-only; the API requires trusted backup provenance
+and an already installed/read-back protected recovery environment.
+File-backed tests do not establish physical USB or fleet acceptance.
+
 The first closed-enclosure installation is an experimental hardware result,
 not a released fleet installer. Repeat the complete procedure without UART:
 USB identification, per-device backup, unlock, recovery, boot/root writes

@@ -365,7 +365,10 @@ listed revision; it does not imply full peripheral or long-run support.
 | [YS-M33 tablet](ember/boards/ys-m33-a133.md) | AArch64 / Allwinner A133 | Experimental eMMC boot, Ethernet and upright awesomeWM on two samples; physical touch, audible audio(4) playback, intelligible captured speech and USB-A/Pixhawk6X tested on the first; [USB-only installation and recovery](ember/boards/ys-m33-a133-cable-install.md) on one unopened factory sample; [U-Boot 2026.10 second-stage RAM kernel handoff](ember/boards/validation/2026-10-08-a133-uboot-ram.md) on the first through its FFS root, followed by a prearmed 16-second watchdog return; permanent loader installation and direct recovery through it unverified; cold cycles, factory restoration, fleet and sustained use unverified; opt-in SDIO RAM diagnostic verifies register reads and function enable/ready/restore; Wi-Fi radio initialization/association unimplemented |
 
 The [board catalog](ember/boards/README.md) defines validation terms and links
-to VM and research targets. To contribute another board, follow
+to VM and research targets. YS-M33 cable-installation development includes
+[host-tested guarded USB range transfers](ember/boards/ys-m33-a133-usb-transfer.md)
+with full readback hashes; this is an API primitive, with physical acceptance
+and a released fleet installer still pending. To contribute another board, follow
 [adding a board](ember/boards/adding-a-board.md) and the
 [developer skill](https://github.com/neonix20b/Ember-Agent-Skills#add-your-board).
 Add a catalog row and a board page; keep detailed feature matrices on those pages.
