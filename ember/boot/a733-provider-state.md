@@ -91,8 +91,10 @@ PLL_REF normalization uses the hardware-classified 19.2/24/26 MHz DCXO value,
 never fixed-hosc. Exact integer arithmetic must prove a 24 MHz reference
 before any derived rate is published. For example, the physical #5 REF
 `0xf8675f00` describes N=96, M=104, P=1: 26 MHz normalizes to 24 MHz;
-24 MHz does not. The next hardware observation must establish the actual
-DCXO status. Fixed-hosc remains diagnostic only.
+24 MHz does not. The matched #6 boot on Zero 3W reports stable RTC status
+`0x183fb0f7` before and after CCU reads, classifying its DCXO as 26 MHz.
+This confirms the input classification for that snapshot, not an independent
+frequency measurement. Fixed-hosc remains diagnostic only.
 
 It decodes integer PLL_GPU0 and PLL_PERIPH0 input and
 output dividers, lock/enables, and the selected output gate. Both SDM enable

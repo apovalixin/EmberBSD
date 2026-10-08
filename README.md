@@ -291,7 +291,7 @@ on every board in the hardware catalog.
   Ports owns the [current Mesa 26.2.4 source adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/wayland-utm),
   with native DSO-lifetime/numeric regressions under GCC 16.2 and
   common-toolchain staging rules. A [common graphics source profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/common-graphics)
-  supplies canonical MesaLib 26.2.4nb1/libdrm 2.4.134nb1 packages with one
+  supplies canonical MesaLib 26.2.4nb2/libdrm 2.4.134nb1 packages with one
   shared LLVM 23.1.2 provider. The complete selected Mesa package cross-builds
   with GCC16 on macOS and is installed normally on Orange Pi Zero 3W (A733).
   [Installed-package acceptance](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/mesa-package.md)
@@ -301,8 +301,12 @@ on every board in the hardware catalog.
   skips and nine NIR cases remain disabled. The installed core-only libdrm
   passes hash, skip-list and exported-symbol checks; hardware enumeration
   skips because this board kernel has no DRM accelerator device.
-  The package includes X11/Wayland, EGL/GLES/GL and GBM, but consumer migration,
-  a visible session and guest accelerated rendering remain pending.
+  Revision nb2 corrects XCB pkg-config requirements with byte-identical Mesa
+  libraries. Its first migrated consumer, [libepoxy 1.5.10nb2](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/epoxy.md),
+  passes four real dispatch/pixel lifecycles and four pure upstream tests
+  against the installed providers. The package includes X11/Wayland,
+  EGL/GLES/GL and GBM; remaining consumer migration, a visible session and
+  guest accelerated rendering still require acceptance.
   A Ports
   [host-side VirGL 1.3.0 adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/utm-virgl-host)
   preserves the upstream IOV-size correction and prevents resource publication
@@ -360,7 +364,10 @@ on every board in the hardware catalog.
   [GPU identification consumer](ember/boot/a733-gpu-identification.md) now
   attaches on Zero 3W. A stable physical CCU snapshot shows the GPU module
   and bus clocks gated and reset asserted, with DCDC4 programmed to 800 mV.
-  The probe stops before GPU MMIO; the actual GPU identity remains unverified.
+  A subsequent matched boot classifies the physical DCXO as 26 MHz while
+  preserving the nominal DT clock. GPU_CORE's ON policy disagrees with its
+  status, so the strict reader refuses readiness. The observe-only probe
+  stops before GPU MMIO; the actual GPU identity remains unverified.
   Power sequencing, shared clock arbitration, DMA/MMU
   and command submission still require porting. These are
   porting targets, not available EmberBSD acceleration. Board bring-up,

@@ -8,24 +8,32 @@ allocate DMA, submit commands, expose a DRM device, or provide acceleration.
 The [driver](https://github.com/oxtech-ember/EmberBSD/blob/main/sys/arch/arm/sunxi/sun60i_a733_gpu.c)
 is owned by EmberBSD. Software contracts, the complete GCC16 kernel build
 and physical attachment on Zero 3W are verified. Physical GPU identification
-has not yet been accepted. The physical result below applies to #5; the new
-RTC/DCXO and GPU_CORE observations have passed software contracts and focused
-cross-compilation, but still require a matched kernel boot.
+has not yet been accepted. The read-only RTC/DCXO and GPU_CORE observations
+are verified in the matched #6 kernel below.
 
 ## Physical result, 2026-10-08
 
-A 4 GiB Orange Pi Zero 3W booted the matched `EMBER64 #5` kernel, four
-modules and A733 DTBs from `f625fd9a0dea8be54146a08f7771714b8f4ade56`.
-The board revision was not recorded. The existing vendor boot0/U-Boot and
-boot script were preserved. Eight CPUs, microSD root and Wi-Fi/SSH returned.
-Installed hashes matched the bundle; the previous #4 boot files were backed
-up on the board and development host before installation.
+A 4 GiB Orange Pi Zero 3W booted the matched `EMBER64 #6` kernel, four
+modules and A733 DTBs from `bd1581bffc1da287f793e8b9bad02cfadd7b593a`.
+The board revision was not recorded. Vendor boot0/U-Boot and the boot script
+were preserved. Eight CPUs, microSD root and Wi-Fi/SSH returned. Installed
+hashes matched the bundle; the previous #5 boot files were backed up on
+the board and development host before installation.
 
-`sun60igpuid0` attached and reported `GPU module gated (error 16)`, with
-DCDC4 programmed to 800000 microvolts and GPU_TOP statically ON. Both CCU
-snapshots were identical (`changed 0x000`). The fixed-clock provider reported
-24 MHz twice; this is a device-tree value, not a crystal measurement. Selected
-raw values explain why a firmware-ready probe cannot access the GPU:
+RTC status was stable at `0x183fb0f7`, classifying DCXO as 26 MHz. Both RTC
+queries bracketing the CCU snapshot agreed. The global fixed-hosc provider
+still reports its unchanged 24 MHz DT value. With the hardware-classified
+26 MHz input, PLL_REF `0xf8675f00` (N=96, M=104, P=1) normalizes exactly to
+24 MHz. This is register decoding, not an independent frequency measurement.
+
+The earlier PCK attachment observed GPU_CORE domain 6 twice: PWPR `0x8`,
+PMER `0x0`, PWSR `0x0`. The static-ON policy and status disagree, so its strict
+reader returns `EBUSY` instead of declaring the domain ready. This separate
+attach-time observation is not a guarantee for the later GPU consumer.
+
+`sun60igpuid0` reports `GPU module gated (error 16)`, with DCDC4 programmed to
+800000 microvolts and GPU_TOP statically ON. Both complete CCU snapshots
+match (`changed 0x000`), retaining the #5 values:
 
 | Register | Value | Observation |
 |---|---|---|
@@ -33,21 +41,21 @@ raw values explain why a firmware-ready probe cannot access the GPU:
 | GPU_BGR, `0xb24` | `0x00000000` | Bus gate is clear and reset is asserted |
 | PLL_GPU0, `0x0e0` | `0x41104500` | Raw dedicated GPU PLL state; it is not changed |
 
-The driver did not map or read GPU registers and made no clock/reset writes.
-The prior #4 result stopped with the same `EBUSY`, without identifying its
-cause. The new observation establishes the gated/reset state, not the actual
-PBVNC value or a working accelerator. The programmed regulator voltage is not
-a physical measurement. Active preparation of the GPU remains separate work.
+The explicit observe-only path did not map/read GPU registers or change
+power, clocks or reset. The actual PBVNC and active preparation remain
+unverified. Programmed regulator voltage is not a physical measurement.
+This was a short reboot/observation check, not a sustained run.
 
-The new CCU/GPU software contracts pass 14,643 and 786 assertions on the
-board with fake hardware, and on the host with ASan/UBSan. The existing
-native kernel-source suite passed with GCC 16.2 and Python 3.14.8 before #4;
-all 14 source inputs are unchanged in #5. These results do not substitute
-for hardware identification. Native image SHA256:
-`26a4e43ec4a0132c345212b2aef11d6a975548bdf9093c473b971391adc778fa`;
+RTC, CCU, PCK and GPU contracts pass 134, 14,997, 1,661 and 864 assertions
+with fake hardware on the host and under #5; PCK also passes 45 scenarios.
+Host ASan/UBSan and five rejecting mutation controls passed. The prior native
+kernel suite is reused because all 14 source inputs are unchanged. The #6
+build includes current CTF tools; its CTF and split-debug CRC checks pass.
+These software results do not substitute for physical GPU identification.
+Native image SHA256:
+`064a8b24242fba4d63b90cfc20b3c3e5eb82d8d68119bf40ba0e2bbec23637c7`;
 Zero 3W DTB SHA256:
-`9b37b1833a718733616900aaceb1263807c8dd80efcf2133702bb0ea9439bea3`.
-This was a short boot check, not a sustained run.
+`a2bd07430948db61140040a1a5c0d5872f5797a4719d7af6ff00b6c0d8d88113`.
 
 ## Local binding
 
