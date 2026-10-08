@@ -7,7 +7,7 @@ src=${1:-$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)}
     exit 1
 }
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/rtl8723ds-function.XXXXXXXX")
-trap 'rm -f "$tmp/test"; rmdir "$tmp"' EXIT HUP INT TERM
+trap 'rm -rf -- "$tmp"' EXIT HUP INT TERM
 ${CC:-cc} -std=c99 -Wall -Wextra -Werror ${CPPFLAGS:-} \
     -I"$src/sys/dev/sdmmc" "$src/ember/tools/rtl8723ds-function-test.c" \
     "$src/sys/dev/sdmmc/rtl8723ds_function.c" ${LDFLAGS:-} -o "$tmp/test"

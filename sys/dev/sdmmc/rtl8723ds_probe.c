@@ -208,7 +208,7 @@ rtl8723ds_probe_attach(device_t parent, device_t self, void *aux)
 	return;
 fail:
 	sc->sc_error = error;
-	aprint_error_dev(self, "%s read probe stopped: error %d\n", stage, error);
+	aprint_error_dev(self, "%s diagnostic stopped: error %d\n", stage, error);
 }
 
 static int
