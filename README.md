@@ -325,7 +325,11 @@ on every board in the hardware catalog.
   controls detect missing drawing and ligatures. Installed
   [libsfdo and session D-Bus](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/desktop-support.md)
   also pass upstream lookup/parser tests, real method replies, name ownership
-  and error/lifecycle checks in AArch64. labwc client surfaces and full SVG
+  and error/lifecycle checks in AArch64. The
+  [Rust 1.99 cross-std adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/rust-cross-std)
+  also passes target threads, TLS destructors, unwinding and C `dlopen`
+  consumers in AArch64 VM, preparing the current SVG path.
+  labwc client surfaces and full SVG
   remain unaccepted.
   A Ports
   [host-side VirGL 1.3.0 adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/utm-virgl-host)
