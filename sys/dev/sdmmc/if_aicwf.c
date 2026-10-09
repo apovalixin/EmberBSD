@@ -351,6 +351,7 @@ struct aicwf_task {
 	u_int			t_cipher;
 	u_int			t_keyix;
 	bool			t_group;
+	uint64_t		t_epoch;
 	u_int			t_keylen;
 	uint8_t			t_key[IEEE80211_KEYBUF_SIZE];
 };
@@ -366,6 +367,7 @@ struct aicwf_softc {
 	void			*sc_ih;
 
 	kmutex_t		sc_lock;
+	kmutex_t		sc_epoch_lock;	/* non-sleeping key callbacks */
 	kmutex_t		sc_bus_lock;	/* the SDIO layer has none */
 	size_t			sc_io_max;	/* bytes in one transfer */
 	kcondvar_t		sc_cv;
@@ -425,6 +427,10 @@ struct aicwf_softc {
 	uint64_t		sc_sae_epoch;	/* changes on every join/leave */
 	uint8_t			sc_sae_bssid[ETHER_ADDR_LEN];
 	uint8_t			sc_igtk[2];
+	/* Protected by sc_lock; valid only after a complete key confirmation. */
+	bool			sc_ptk_valid;
+	uint8_t			sc_ptk[16];
+	uint64_t		sc_pmf_rx_pn;
 	struct evcnt		sc_ev_sae_start;
 	struct evcnt		sc_ev_sae_rx;
 	struct evcnt		sc_ev_sae_tx;
@@ -1123,7 +1129,7 @@ aicwf_fw_init(struct aicwf_softc *sc)
 	if (le32dec(cfm) == 0x06090101 &&
 	    (le32dec(cfm + 20) & AICWF_FEATURE_MFP) != 0) {
 		sc->sc_sae_caps = IEEE80211_SAE_CAP_EXTERNAL |
-		    IEEE80211_SAE_CAP_PMF;
+		    IEEE80211_SAE_CAP_PMF | IEEE80211_SAE_CAP_SA_QUERY;
 		aprint_normal_dev(sc->sc_dev, "external SAE and firmware PMF available\n");
 	}
 
@@ -1345,8 +1351,13 @@ static void
 aicwf_sae_advance(struct aicwf_softc *sc)
 {
 	mutex_enter(&sc->sc_lock);
+	sc->sc_ptk_valid = false;
+	sc->sc_pmf_rx_pn = 0;
+	explicit_memset(sc->sc_ptk, 0, sizeof(sc->sc_ptk));
+	mutex_spin_enter(&sc->sc_epoch_lock);
 	if (++sc->sc_sae_epoch == 0)
 		sc->sc_sae_epoch++;
+	mutex_spin_exit(&sc->sc_epoch_lock);
 	mutex_exit(&sc->sc_lock);
 }
 
@@ -1408,14 +1419,16 @@ aicwf_sae_event(struct aicwf_softc *sc, bool start, const uint8_t *data,
 
 static int
 aicwf_sae_tx(struct aicwf_softc *sc, const uint8_t *frame, size_t len,
-    uint64_t epoch)
+    uint64_t epoch, bool query)
 {
 	uint8_t * const buf = sc->sc_txbuf;
 	uint8_t * const desc = buf + AICWF_HDR_LEN;
 	int error;
 
 	mutex_enter(&sc->sc_lock);
-	if (epoch != sc->sc_sae_epoch) {
+	if (epoch != sc->sc_sae_epoch ||
+	    (query && (!sc->sc_ptk_valid || !sc->sc_connected ||
+	    !sc->sc_sae_authenticated || sc->sc_ic.ic_state != IEEE80211_S_RUN))) {
 		mutex_exit(&sc->sc_lock);
 		return ESTALE;
 	}
@@ -1429,8 +1442,9 @@ aicwf_sae_tx(struct aicwf_softc *sc, const uint8_t *frame, size_t len,
 	desc[22] = AICWF_HWQ_VO;
 	desc[23] = AICWF_TID_NONE;
 	desc[24] = sc->sc_vif;
-	desc[25] = AICWF_STA_NONE;
-	le16enc(desc + 26, AICWF_TX_MGMT);
+	desc[25] = query ? sc->sc_ap : AICWF_STA_NONE;
+	/* Bit 7 asks firmware to protect robust management with the PTK. */
+	le16enc(desc + 26, AICWF_TX_MGMT | (query ? __BIT(7) : 0));
 	memcpy(desc + AICWF_TXDESC_LEN, frame, len);
 	error = aicwf_write(sc, AICWF_HDR_LEN + AICWF_TXDESC_LEN + len,
 	    AICWF_TX_RESERVE);
@@ -1533,7 +1547,15 @@ aicwf_sae_ioctl(struct aicwf_softc *sc, u_long cmd, struct ieee80211req *ireq)
 		    !aicwf_sae_frame_valid(req->data, req->len, req->bssid,
 		    ic->ic_myaddr, req->bssid))
 			break;
-		error = aicwf_sae_tx(sc, req->data, req->len, epoch);
+		error = aicwf_sae_tx(sc, req->data, req->len, epoch, false);
+		break;
+	case IEEE80211_SAE_TX_SA_QUERY:
+		if (!sc->sc_connected || !sc->sc_sae_authenticated ||
+		    ic->ic_state != IEEE80211_S_RUN ||
+		    !aicwf_pmf_query_valid(req->data, req->len, req->bssid,
+		    ic->ic_myaddr, req->bssid))
+			break;
+		error = aicwf_sae_tx(sc, req->data, req->len, epoch, true);
 		break;
 	case IEEE80211_SAE_SET_IGTK:
 	case IEEE80211_SAE_DELETE_IGTK:
@@ -1831,16 +1853,26 @@ static void
 aicwf_key_set_cb(struct aicwf_softc *sc, const struct aicwf_task *t)
 {
 	const u_int slot = t->t_group ? t->t_keyix : AICWF_KEY_SLOT_PAIRWISE;
-	uint8_t req[44], cfm[4];
+	uint8_t req[44], cfm[2] = { 0xff, 0xff };
+	bool duplicate;
 	int error;
 
-	if (t->t_cipher != IEEE80211_CIPHER_AES_CCM || slot >= AICWF_KEY_SLOTS ||
-	    t->t_keylen > 32) {
+	if (t->t_cipher != IEEE80211_CIPHER_AES_CCM ||
+	    slot >= AICWF_KEY_SLOTS || t->t_keylen != 16) {
 		device_printf(sc->sc_dev, "cipher %u is not supported\n",
 		    t->t_cipher);
 		return;
 	}
-
+	mutex_enter(&sc->sc_lock);
+	if (t->t_epoch != sc->sc_sae_epoch || !sc->sc_connected) {
+		mutex_exit(&sc->sc_lock);
+		return;
+	}
+	duplicate = !t->t_group && sc->sc_ptk_valid &&
+	    memcmp(sc->sc_ptk, t->t_key, sizeof(sc->sc_ptk)) == 0;
+	/* Never reset firmware TX PN by programming the same live PTK twice. */
+	if (!t->t_group && !duplicate)
+		sc->sc_ptk_valid = false;
 	memset(req, 0, sizeof(req));
 	req[0] = t->t_group ? t->t_keyix : 0;
 	req[1] = t->t_group ? AICWF_STA_NONE : sc->sc_ap;
@@ -1849,22 +1881,41 @@ aicwf_key_set_cb(struct aicwf_softc *sc, const struct aicwf_task *t)
 	req[40] = AICWF_CIPHER_CCMP;
 	req[41] = sc->sc_vif;
 	req[43] = !t->t_group;
-	error = aicwf_cmd(sc, AICWF_MM_KEY_ADD_REQ, req, sizeof(req),
-	    AICWF_MM_KEY_ADD_CFM, cfm, sizeof(cfm));
-	explicit_memset(req, 0, sizeof(req));
-	if (error != 0 || cfm[0] != 0) {
-		device_printf(sc->sc_dev, "key %u not set: %d, %u\n", slot,
-		    error, cfm[0]);
+	mutex_exit(&sc->sc_lock);
+
+	if (!duplicate) {
+		error = aicwf_cmd_reply(sc, AICWF_MM_KEY_ADD_REQ, req,
+		    sizeof(req), AICWF_MM_KEY_ADD_CFM, cfm, sizeof(cfm),
+		    true, t->t_epoch);
+		explicit_memset(req, 0, sizeof(req));
+		if (error != 0 || cfm[0] != 0 || cfm[1] == AICWF_HWKEY_NONE) {
+			device_printf(sc->sc_dev, "key %u not set: %d, %u\n",
+			    slot, error, cfm[0]);
+			return;
+		}
+	}
+	mutex_enter(&sc->sc_lock);
+	if (t->t_epoch != sc->sc_sae_epoch || !sc->sc_connected) {
+		mutex_exit(&sc->sc_lock);
+		explicit_memset(req, 0, sizeof(req));
 		return;
 	}
-	sc->sc_hwkey[slot] = cfm[1];
-
+	if (!duplicate) {
+		sc->sc_hwkey[slot] = cfm[1];
+		if (!t->t_group) {
+			memcpy(sc->sc_ptk, t->t_key, sizeof(sc->sc_ptk));
+			sc->sc_pmf_rx_pn = 0;
+			sc->sc_ptk_valid = true;
+		}
+	}
+	explicit_memset(req, 0, sizeof(req));
+	req[0] = sc->sc_ap;
+	req[1] = 1;
+	mutex_exit(&sc->sc_lock);
 	if (!t->t_group) {
 		/* The pairwise key is in: let all traffic through. */
-		req[0] = sc->sc_ap;
-		req[1] = 1;
-		(void)aicwf_cmd(sc, AICWF_ME_SET_CONTROL_PORT_REQ, req, 2,
-		    AICWF_ME_SET_CONTROL_PORT_CFM, NULL, 0);
+		(void)aicwf_cmd_reply(sc, AICWF_ME_SET_CONTROL_PORT_REQ, req, 2,
+		    AICWF_ME_SET_CONTROL_PORT_CFM, NULL, 0, true, t->t_epoch);
 	}
 }
 
@@ -1874,12 +1925,25 @@ aicwf_key_delete_cb(struct aicwf_softc *sc, const struct aicwf_task *t)
 	const u_int slot = t->t_group ? t->t_keyix : AICWF_KEY_SLOT_PAIRWISE;
 	uint8_t req[1];
 
-	if (slot >= AICWF_KEY_SLOTS || sc->sc_hwkey[slot] == AICWF_HWKEY_NONE)
+	if (slot >= AICWF_KEY_SLOTS)
 		return;
+	mutex_enter(&sc->sc_lock);
+	if (t->t_epoch != sc->sc_sae_epoch ||
+	    sc->sc_hwkey[slot] == AICWF_HWKEY_NONE ||
+	    (!t->t_group && sc->sc_ptk_valid &&
+	    memcmp(sc->sc_ptk, t->t_key, sizeof(sc->sc_ptk)) != 0)) {
+		mutex_exit(&sc->sc_lock);
+		return;
+	}
 	req[0] = sc->sc_hwkey[slot];
 	sc->sc_hwkey[slot] = AICWF_HWKEY_NONE;
-	(void)aicwf_cmd(sc, AICWF_MM_KEY_DEL_REQ, req, sizeof(req),
-	    AICWF_MM_KEY_DEL_CFM, NULL, 0);
+	if (!t->t_group) {
+		sc->sc_ptk_valid = false;
+		explicit_memset(sc->sc_ptk, 0, sizeof(sc->sc_ptk));
+	}
+	mutex_exit(&sc->sc_lock);
+	(void)aicwf_cmd_reply(sc, AICWF_MM_KEY_DEL_REQ, req, sizeof(req),
+	    AICWF_MM_KEY_DEL_CFM, NULL, 0, true, t->t_epoch);
 }
 
 static void
@@ -1936,6 +2000,10 @@ aicwf_key_task(struct ieee80211com *ic, const struct ieee80211_key *wk,
 		device_printf(sc->sc_dev, "no free tasks\n");
 		return 0;
 	}
+	/* net80211 may call DELETE while holding its IPL_NET node lock. */
+	mutex_spin_enter(&sc->sc_epoch_lock);
+	t->t_epoch = sc->sc_sae_epoch;
+	mutex_spin_exit(&sc->sc_epoch_lock);
 	t->t_cmd = cmd;
 	t->t_cipher = wk->wk_cipher->ic_cipher;
 	t->t_keyix = wk->wk_keyix;
@@ -2255,8 +2323,61 @@ aicwf_rx_ether(struct aicwf_softc *sc, const uint8_t *dst,
 	return m;
 }
 
+/* Keep peer/key/replay admission atomic with retirement and rekey. */
 static void
-aicwf_rx_data(struct aicwf_softc *sc, const uint8_t *pkt, size_t mpdu_len)
+aicwf_pmf_rx(struct aicwf_softc *sc, const uint8_t *frame, size_t len,
+    uint32_t status, uint32_t flags)
+{
+	struct ieee80211com * const ic = &sc->sc_ic;
+	struct ieee80211req_sae *req;
+	uint8_t query[28];
+	uint64_t pn;
+	uint16_t op;
+
+	req = kmem_zalloc(sizeof(*req), KM_NOSLEEP);
+	if (req == NULL)
+		return;
+	mutex_enter(&sc->sc_lock);
+	if (!sc->sc_sae_enabled || !sc->sc_connected || !sc->sc_ptk_valid ||
+	    !sc->sc_sae_authenticated || ic->ic_state != IEEE80211_S_RUN ||
+	    ((flags >> 8) & 0xff) != sc->sc_vif ||
+	    !IEEE80211_ADDR_EQ(ic->ic_bss->ni_bssid, sc->sc_sae_bssid))
+		goto drop;
+	if (aicwf_pmf_unprot_valid(frame, len, ic->ic_myaddr,
+	    sc->sc_sae_bssid)) {
+		op = IEEE80211_SAE_UNPROT_DISCONNECT;
+	} else if (aicwf_pmf_query_rx(frame, len, ic->ic_myaddr,
+	    sc->sc_sae_bssid, status, sc->sc_hwkey[AICWF_KEY_SLOT_PAIRWISE],
+	    sc->sc_pmf_rx_pn, query, &pn)) {
+		op = IEEE80211_SAE_RX_SA_QUERY;
+		sc->sc_pmf_rx_pn = pn;
+		frame = query;
+		len = sizeof(query);
+	} else {
+		goto drop;
+	}
+	IEEE80211_DPRINTF(ic, IEEE80211_MSG_STATE,
+	    "PMF event 0x%x action/reason %u\n", op,
+	    frame[op == IEEE80211_SAE_RX_SA_QUERY ? 25 : 24]);
+	req->version = IEEE80211_SAE_VERSION;
+	req->generation = sc->sc_sae_generation;
+	req->op = op;
+	req->len = len;
+	memcpy(req->bssid, sc->sc_sae_bssid, ETHER_ADDR_LEN);
+	memcpy(req->data, frame, len);
+	mutex_exit(&sc->sc_lock);
+	rt_ieee80211msg(ic->ic_ifp, RTM_IEEE80211_SAE, req,
+	    offsetof(struct ieee80211req_sae, data) + len);
+	kmem_free(req, sizeof(*req));
+	return;
+drop:
+	mutex_exit(&sc->sc_lock);
+	kmem_free(req, sizeof(*req));
+}
+
+static void
+aicwf_rx_data(
+struct aicwf_softc *sc, const uint8_t *pkt, size_t mpdu_len)
 {
 	struct ifnet * const ifp = &sc->sc_if;
 	const uint8_t * const wh = pkt + AICWF_RXHDR_LEN;
@@ -2285,6 +2406,11 @@ aicwf_rx_data(struct aicwf_softc *sc, const uint8_t *pkt, size_t mpdu_len)
 		const uint8_t vif = (flags >> 8) & 0xff;
 		if (vif == sc->sc_vif || vif == 0xff)
 			aicwf_sae_event(sc, false, wh, mpdu_len);
+		return;
+	}
+	if (mpdu_len >= 24 &&
+	    (wh[0] == 0xc0 || wh[0] == 0xa0 || wh[0] == 0xd0)) {
+		aicwf_pmf_rx(sc, wh, mpdu_len, status, flags);
 		return;
 	}
 	/* Beacons and data frames without a body come up too. */
@@ -2580,6 +2706,7 @@ aicwf_attach(device_t parent, device_t self, void *aux)
 	sc->sc_dev = self;
 	sc->sc_sf = sf;
 	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_NONE);
+	mutex_init(&sc->sc_epoch_lock, MUTEX_DEFAULT, IPL_NET);
 	mutex_init(&sc->sc_bus_lock, MUTEX_DEFAULT, IPL_NONE);
 	mutex_init(&sc->sc_reorder_lock, MUTEX_DEFAULT, IPL_SOFTNET);
 	callout_init(&sc->sc_reorder_ch, CALLOUT_MPSAFE);

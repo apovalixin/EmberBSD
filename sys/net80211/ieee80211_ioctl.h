@@ -519,13 +519,17 @@ struct ieee80211req {
 #define IEEE80211_SAE_VERSION		1
 #define IEEE80211_SAE_CAP_EXTERNAL	0x0001
 #define IEEE80211_SAE_CAP_PMF		0x0002
+#define IEEE80211_SAE_CAP_SA_QUERY	0x0004
 #define IEEE80211_SAE_CONFIGURE		1
 #define IEEE80211_SAE_AUTH_STATUS	2
 #define IEEE80211_SAE_TX_FRAME		3
 #define IEEE80211_SAE_SET_IGTK		4
 #define IEEE80211_SAE_DELETE_IGTK	5
+#define IEEE80211_SAE_TX_SA_QUERY	6
 #define IEEE80211_SAE_START		0x100
 #define IEEE80211_SAE_RX_FRAME		0x101
+#define IEEE80211_SAE_RX_SA_QUERY	0x102
+#define IEEE80211_SAE_UNPROT_DISCONNECT	0x103
 #define IEEE80211_SAE_DATA_MAX		1536
 /* SET: full structure, root only. GET: i_len=0, capabilities in i_val only. */
 struct ieee80211req_sae {
@@ -542,6 +546,10 @@ struct ieee80211req_sae {
  * TX_FRAME/RX_FRAME data: complete authentication frame, including MAC header.
  * START data: SSID bytes. IGTK data: little-endian index (4/5), six-byte IPN,
  * sixteen-byte BIP-CMAC-128 key. DELETE_IGTK contains only the index.
+ * SA_QUERY data: 28-byte header and category/action/transaction ID. TX asks
+ * firmware to protect the frame; RX passed firmware CCMP and host replay checks.
+ * UNPROT_DISCONNECT: 26-byte deauth/disassoc frame, reason 6/7; requests SA Query,
+ * never immediate disconnect. These operations require CAP_SA_QUERY.
  * Route events contain the fixed header followed by exactly len data bytes.
  */
 

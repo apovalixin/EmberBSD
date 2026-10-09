@@ -29,6 +29,7 @@ typedef unsigned long u_long;
 #define IEEE80211_SAE_TX_FRAME 2
 #define IEEE80211_SAE_SET_IGTK 3
 #define IEEE80211_SAE_DELETE_IGTK 4
+#define IEEE80211_SAE_TX_SA_QUERY 6
 #define AICWF_HWKEY_NONE 255
 #define AICWF_SM_EXTERNAL_AUTH_RSP 10
 #define AICWF_SM_EXTERNAL_AUTH_CFM 11
@@ -51,9 +52,11 @@ struct ieee80211_node {uint8_t ni_bssid[6];};
 struct ieee80211com {void *ic_ifp; int ic_opmode, ic_state; struct ieee80211_node *ic_bss; uint8_t ic_myaddr[6];};
 struct ieee80211req_sae {uint32_t generation; uint16_t version, op, len, reserved[2]; uint8_t bssid[6], data[1536];};
 struct ieee80211req {int i_len,i_val; void *i_data;};
-struct aicwf_softc {struct ieee80211com sc_ic; int sc_dev, sc_vif, sc_lock; uint16_t sc_sae_caps; bool sc_if_attached,sc_sae_enabled,sc_sae_pending,sc_sae_authenticated,sc_connecting,sc_connected; uint32_t sc_sae_generation; uint64_t sc_sae_epoch; uint8_t sc_sae_bssid[6],sc_igtk[2];};
+struct aicwf_softc {struct ieee80211com sc_ic; int sc_dev, sc_vif, sc_lock, sc_epoch_lock; uint16_t sc_sae_caps; bool sc_if_attached,sc_sae_enabled,sc_sae_pending,sc_sae_authenticated,sc_connecting,sc_connected; uint32_t sc_sae_generation; uint64_t sc_sae_epoch; bool sc_ptk_valid; uint64_t sc_pmf_rx_pn; uint8_t sc_ptk[16]; uint8_t sc_sae_bssid[6],sc_igtk[2];};
 static void mutex_enter(int *p) { assert(!*p); *p = 1; }
 static void mutex_exit(int *p) { assert(*p); *p = 0; }
+#define mutex_spin_enter mutex_enter
+#define mutex_spin_exit mutex_exit
 static int copyin(void *src,void *dst,size_t n) {memcpy(dst,src,n); return 0;}
 #ifndef __NetBSD__
 static uint16_t le16dec(const void *ptr) {const uint8_t *p=ptr; return p[0]+256*p[1];}
@@ -64,7 +67,7 @@ static void splx(int s) {(void)s;}
 static void aicwf_reorder_flush(struct aicwf_softc *sc,int i,bool b) {(void)sc;(void)i;(void)b;}
 static void ieee80211_new_state(struct ieee80211com *ic,int state,int arg) {ic->ic_state=state;(void)arg;}
 #include "if_aicwf_sae.h"
-static int aicwf_sae_tx(struct aicwf_softc *sc,const uint8_t *p,size_t n,uint64_t epoch) {(void)sc;(void)p;(void)n;(void)epoch;return 0;}
+static int aicwf_sae_tx(struct aicwf_softc *sc,const uint8_t *p,size_t n,uint64_t epoch,bool query) {(void)query;(void)sc;(void)p;(void)n;(void)epoch;return 0;}
 #ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
 #endif
