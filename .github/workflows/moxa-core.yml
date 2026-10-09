@@ -5,8 +5,17 @@ on:
     paths:
       - 'sys/dev/usb/umoxa_frame.*'
       - 'sys/dev/usb/ucom_transport_core.*'
+      - 'sys/dev/usb/ucom_transport_rx.*'
+      - 'sys/dev/usb/ucom.c'
+      - 'sys/dev/usb/ucomvar.h'
+      - 'sys/dev/usb/files.usb'
+      - 'sys/rump/dev/lib/libucom/**'
+      - 'tests/dev/usb/ucom_transport/**'
       - 'ember/tools/umoxa-frame-test.*'
       - 'ember/tools/ucom-transport-core-test.*'
+      - 'ember/tools/ucom-transport-rx-test.*'
+      - 'ember/tools/ucom-transport-rump-test.sh'
+      - 'ember/tools/ucom-transport-cross-check.sh'
       - 'ember/tools/moxa-core-cross-check.sh'
       - 'ember/boot/moxa-serial.md'
       - '.github/workflows/moxa-core.yml'
@@ -15,8 +24,17 @@ on:
     paths:
       - 'sys/dev/usb/umoxa_frame.*'
       - 'sys/dev/usb/ucom_transport_core.*'
+      - 'sys/dev/usb/ucom_transport_rx.*'
+      - 'sys/dev/usb/ucom.c'
+      - 'sys/dev/usb/ucomvar.h'
+      - 'sys/dev/usb/files.usb'
+      - 'sys/rump/dev/lib/libucom/**'
+      - 'tests/dev/usb/ucom_transport/**'
       - 'ember/tools/umoxa-frame-test.*'
       - 'ember/tools/ucom-transport-core-test.*'
+      - 'ember/tools/ucom-transport-rx-test.*'
+      - 'ember/tools/ucom-transport-rump-test.sh'
+      - 'ember/tools/ucom-transport-cross-check.sh'
       - 'ember/tools/moxa-core-cross-check.sh'
       - '.github/workflows/moxa-core.yml'
   workflow_dispatch:
@@ -35,11 +53,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - name: Framing and sequential state contracts
+      - name: Host framing, state and bounded RX contracts
         shell: sh
         run: |
           sh ember/tools/umoxa-frame-test.sh "$RUNNER_TEMP/moxa-frame"
           sh ember/tools/ucom-transport-core-test.sh "$RUNNER_TEMP/moxa-state"
+          sh ember/tools/ucom-transport-rx-test.sh "$RUNNER_TEMP/moxa-rx"
           cat "$RUNNER_TEMP/moxa-frame/compiler.txt"
           cat "$RUNNER_TEMP/moxa-frame/sources.sha256"
           cat "$RUNNER_TEMP/moxa-state/sources.sha256"
+          cat "$RUNNER_TEMP/moxa-rx/sources.sha256"
+          echo 'Host contracts only; kernel/native/USB acceptance is separate.'

@@ -483,10 +483,12 @@ on every board in the hardware catalog.
 
 ### Board support and system builds
 
-- **MOXA G2 driver preparation:** [framing and transport-state helpers](ember/boot/moxa-serial.md)
-  pass 16 host C contract groups, including malformed transfers and stale
-  completions. USB parent/ucom integration, firmware and physical serial
-  checks remain pending; these helpers prepare that work.
+- **MOXA G2 driver preparation:** [framing, state and bounded RX helpers](ember/boot/moxa-serial.md)
+  pass 22 host C contract groups. An opt-in `ucom` backend passes ten native
+  rump groups with test-only USB, including TTY exchange, close barriers,
+  stale completions, faults and concurrent control. All 17 existing serial
+  method-table owners cross-compile. A real MOXA USB parent, firmware and
+  physical serial checks remain pending.
 - **Allwinner A733** (Orange Pi Zero 4 and Zero 3W), a chip the base
   system has no support for: eight cores, the card at SDR104 speed,
   gigabit Ethernet, the AIC8800 Wi-Fi and Bluetooth module, processor

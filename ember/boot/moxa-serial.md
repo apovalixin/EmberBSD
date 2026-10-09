@@ -1,12 +1,12 @@
 <!-- Origin: EmberBSD MOXA serial-core development guide, 2026-10-09. -->
-# MOXA G2 framing and transport-state helpers
+# MOXA G2 preparation and external ucom transports
 
 EmberBSD provides preparatory C helpers for a shared four-port MOXA G2 USB
-transport. They let driver developers exercise framing and completion
-handling before attaching a device. The helpers are not yet connected to
-`ucom` or a USB parent; device attachment, firmware, termios, serial control
-and physical RS-485 validation remain pending. UPort 1150 and Ethernet
-NPort devices require separate implementations.
+transport, plus an opt-in `ucom` backend that connects external transports to
+the existing TTY lifecycle. They let developers exercise framing, completion,
+queueing and TTY faults before attaching a device. A real MOXA USB parent,
+firmware, hardware termios/control and physical RS-485 validation remain
+pending. UPort 1150 and Ethernet NPort require separate implementations.
 
 ## Source and validation
 
@@ -14,10 +14,13 @@ NPort devices require separate implementations.
   builds TX headers. Its host contract has eight named groups.
 - `sys/dev/usb/ucom_transport_core.{c,h}` models one port's open, close,
   detach, fault and TX completion state. Its contract has eight named groups.
+- `sys/dev/usb/ucom_transport_rx.{c,h}` provides a bounded per-port RX ring;
+  six groups pin FIFO/wrap, capacity, atomic overflow, hysteresis and isolation.
 - Host C99 builds use `-Wall -Wextra -Werror`; available ASan/UBSan builds
   run the same contracts. Host execution validates a sequential model.
-  Kernel locking, asynchronous callbacks, TTY queues and USB behaviour need
-  integration checks before a driver support claim.
+  The real `ucom`/TTY path has a separate ten-group native rump fixture.
+  Its USB stubs exercise no hardware. Physical USB behaviour and sustained
+  operation still need validation before a device support claim.
 
 Run from a clean source checkout, with an absolute, unused output directory
 outside the source tree for each command:
@@ -25,6 +28,7 @@ outside the source tree for each command:
 ```sh
 sh ember/tools/umoxa-frame-test.sh /absolute/new-frame-output
 sh ember/tools/ucom-transport-core-test.sh /absolute/new-state-output
+sh ember/tools/ucom-transport-rx-test.sh /absolute/new-rx-output
 ```
 
 Each runner saves its compiler version, binaries, build/run logs and source
@@ -35,14 +39,14 @@ runtime/test failure fails the command. These runners execute host binaries,
 so an AArch64 cross compiler is not a replacement for their host `CC`.
 
 After preparing an EMBER64 cross build with the fork's
-[wrapper](cross-build.md), compile both conditional kernel variants:
+[wrapper](cross-build.md), compile the three conditional kernel helpers:
 
 ```sh
 sh ember/tools/moxa-core-cross-check.sh /absolute/clean-source \
     /absolute/kernel-build /absolute/new-kernel-object-output
 ```
 
-The output's parent must already exist. This checks two AArch64 kernel
+The output's parent must already exist. This checks three AArch64 kernel
 objects using the generated `nbmake-evbarm` compiler and kernel headers;
 it does not link the helpers into a kernel or execute target code. Keep
 source revisions and header/toolchain provenance with the resulting receipt.
@@ -106,3 +110,88 @@ An epoch identifies host callbacks, not bytes still in a UART or device queue.
 The parent must establish purge/enable and USB completion barriers on reopen.
 The core leaves TTY output accounting to the bridge; it cannot infer whether
 an errored USB transfer already reached the physical line.
+
+## External ucom backend
+
+`ucom_methods.ucom_transport` is a trailing nullable pointer. NULL preserves
+the existing per-child USB pipe path. Stack `ucom_attach_args` is unchanged.
+Rebuild the kernel, all affected parent drivers and rump components from one
+pinned source tree; old module binaries are not compatible by assumption.
+No real MOXA parent or VID/PID binding is added by this backend.
+
+An external parent supplies `ucom_param` and all `uct_*` methods in
+`struct ucom_transport_methods` (`sys/dev/usb/ucomvar.h`). Legacy
+open/close/read/write/set methods must be NULL. get_status/ioctl remain
+available. Attach rejects an incomplete table, a payload buffer outside
+1..65535 or a nonzero packet header length. Framing belongs to the parent.
+
+| Parent method | Contract |
+| --- | --- |
+| uct_attach(arg, port, child) | Process context; publish child only on success; clean resources on error |
+| uct_start(arg, port, epoch) | Process context; stop will run even if start fails partway |
+| uct_stop(arg, port, epoch) | Quiescence barrier; no dispatch/callback/buffer use remains on return |
+| uct_submit(arg, port, epoch, cookie, bytes, length) | Nonblocking softint; borrow payload until done/stop; error accepts nothing |
+| uct_rx_flow(arg, port, epoch, paused) | Nonblocking softint; no synchronous child callback |
+| uct_set(arg, port, which, on) | Process context; return errno for DTR/RTS/break rejection |
+| uct_detach(arg, port) | Process context; release the child binding permanently |
+
+No `sc_lock` or TTY lock is held across parent methods. A process mutex
+serializes whole ioctls and param/set; never reenter these controls on the
+same port. Lock order is process control, `sc_lock`, then TTY. t_oproc and
+hwiflow only schedule work while holding the TTY lock. Submit, flow and fault
+notification carry references that close waits for before calling stop.
+Parents release their lock before `ucom_transport_input/done/fault`.
+
+Input copies the entire supplied block or returns errno. Capacity is 8192
+bytes per port, with pause/resume watermarks 6144/2048. These are software
+limits, not measured throughput. Overflow or failed TTY admission faults
+that port instead of silently dropping the remainder. A fault wakes blocked
+TTY I/O, subsequent operations return its errno, and poll reports error/hangup.
+On a revoked TTY vnode, read may report EOF; consumers must treat EOF as loss.
+
+Done uses payload bytes, excluding the parent's framing. Full success removes
+the pending payload exactly once; stale/duplicate done changes nothing.
+Partial/errored TX faults without replay. A TTY flush during pending TX keeps
+newly queued bytes intact when the old completion arrives. The parent
+relinquishes the borrowed buffer before invoking done. USB acceptance does
+not prove UART drain; real parent scheduling/drain semantics remain pending.
+
+Initial termios/set/start failure aborts open. Rejected parameters leave the
+TTY settings unchanged, and failed initial open restores its saved settings.
+Errors from two-part modem control are returned; successfully changed bits
+remain reflected in cached state. Hardware partial-control rollback belongs
+to the parent, which must expose uncertainty/fault instead of claiming success.
+
+## Native and kernel acceptance
+
+On a matching NetBSD 11 development runtime with compiler, rump libraries and
+the fork's clean source export (native make paths must have no whitespace):
+
+```sh
+sh ember/tools/ucom-transport-rump-test.sh /absolute/clean-source \
+    /absolute/new-native-output
+```
+
+The runner builds a private component containing real ucom/core/RX and a
+test-only parent, links to the runtime's TTY/VFS/rump libraries, and records
+those library hashes. Ten groups exercise actual device nodes, data exchange,
+stale completion/reopen, partial TX fault, RX pressure/overflow, flush,
+rejected/serialized controls, dispatch-close ordering, blocked read/poll
+faults and detach/failed attach. Three attach warnings are intentional
+invalid children. Raw rump syscall clients retry RUMP_ERESTART where ordinary
+kernel/libc syscall handling would restart. This is bounded native software
+acceptance, not a complete rebuilt OS, USB stack or physical-device test.
+
+The focused compatibility matrix uses the prepared kernel's actual compiler
+flags and generated headers. It cross-compiles ucom/core/RX plus all 17 legacy
+method-table owners and retains dependency/object hashes:
+
+```sh
+sh ember/tools/ucom-transport-cross-check.sh /absolute/clean-source \
+    /absolute/kernel-build /absolute/new-matrix-output
+```
+
+This matrix does not link a kernel; run the full kernel wrapper separately
+from that same pinned source for the configured link and matched modules.
+GitHub CI runs the 22 host groups on Linux/macOS; it does not run the native
+fixture or kernel build. Keep those separate receipts with a published change.

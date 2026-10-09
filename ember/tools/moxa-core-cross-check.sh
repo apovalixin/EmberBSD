@@ -21,13 +21,13 @@ target=$("$cc" -dumpmachine)
 case "$target" in aarch64*netbsd*) ;; *) echo 'AArch64 fork toolchain required' >&2; exit 1 ;; esac
 printf '%s\n' "$target" > "$out/target.txt"
 printf '%s\n' "$src" "$build" "$cc" > "$out/inputs.txt"
-for unit in umoxa_frame ucom_transport_core; do
+for unit in umoxa_frame ucom_transport_core ucom_transport_rx; do
     "$cc" -std=c99 -O2 -Wall -Wextra -Werror -ffreestanding -nostdinc \
         -D_KERNEL -I "$kobj" -I "$src/sys" -MD -MF "$out/$unit.d" \
         -c "$src/sys/dev/usb/$unit.c" -o "$out/$unit.o" \
         > "$out/$unit.log" 2>&1 || { cat "$out/$unit.log" >&2; exit 1; }
     echo "PASS _KERNEL $unit"
 done
-file "$out/umoxa_frame.o" "$out/ucom_transport_core.o" > "$out/objects.txt"
+file "$out/umoxa_frame.o" "$out/ucom_transport_core.o" "$out/ucom_transport_rx.o" > "$out/objects.txt"
 cat "$out/objects.txt"
-printf '2 AArch64 kernel objects compiled; no kernel link/native/device check\n' > "$out/scope.txt"
+printf '3 AArch64 kernel objects compiled; no kernel link/native/device check\n' > "$out/scope.txt"
