@@ -382,8 +382,10 @@ checks the full env tail and retained recovery; actual-dd fixture tests do not
 prove bootloader execution, power-loss recovery or physical cable return.
 A [guarded factory recovery entry](ember/boards/ys-m33-a133-recovery-entry.md)
 binds one-shot Android env writes and known-state restoration to fresh full-backup
-GPT/critical hashes; its host contract leaves reboot, unlock and physical round-trip
-acceptance to later integration.
+GPT/critical hashes. The [guarded factory USB reboot](ember/boards/ys-m33-a133-recovery-reboot.md)
+verifies the prepared source, submits one normal reboot and checks whole critical
+images/env on return through the selected USB identity. Its host contract leaves
+unlock, accepted trial boot and physical round-trip acceptance to later integration.
 A [private session coordinator](ember/boards/ys-m33-a133-install-session.md)
 rechecks live ranges on repeat and keeps recovery protected after failed writes;
 its filesystem/resume contract is tested on a file-backed host fixture.

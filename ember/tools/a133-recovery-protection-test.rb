@@ -141,7 +141,7 @@ Dir.mktmpdir('a133-protection-') do |dir|
     ['partial','usb_command_failed'],['sync_failed','usb_command_failed'],
     ['tail_corrupt','usb_environment_readback_mismatch'],['recovery_corrupt','usb_recovery_changed'],
     ['cid_drift','usb_backup_source_changed'],['late_mount','usb_target_mounted'],['stall','usb_timeout']
-  ].each { |mode,reason| reset.call('write_mode'=>mode); failed.call(reason,true,backup,mutable,original,{timeout:1}) }
+  ].each { |mode,reason| reset.call('write_mode'=>mode); failed.call(reason,true,backup,mutable,original,{timeout:3}) }
   reset.call
   b=Marshal.load(Marshal.dump(backup)); m=Marshal.load(Marshal.dump(mutable)); env=original.dup
   worker=Thread.new do

@@ -37,6 +37,6 @@ module RebootFixture
     File.binwrite(File.join(dir,'part2'),live || context[:original])
     [1,3,6].each { |index| File.open(File.join(dir,"part#{index}"),'wb') { |f| f.truncate(33554432) } }
     UsbFixture.state(dir,state)
-    %w[observed rebooted polls].each { |name| File.unlink(File.join(dir,name)) if File.exist?(File.join(dir,name)) }
+    %w[observed rebooted polls reboot-clock].each { |name| File.unlink(File.join(dir,name)) if File.exist?(File.join(dir,name)) }
   end
 end

@@ -40,6 +40,8 @@ Only locked1/green is supported. No root acquisition, unlock or alternate
 reboot target is inferred. Native argv is exactly -s SERIAL reboot, as used
 by the recorded factory procedure. All identity/options/policy bytes are
 copied before USB; a caller mutation cannot change later checks.
+Launcher paths must be valid, ASCII-compatible encoded strings without NUL;
+UTF-8 filenames containing non-ASCII characters remain supported.
 
 After preflight, mark reboot_attempted and submit once through the existing
 bounded binary Channel. Any failed command/diagnostic/launch stops; no automatic

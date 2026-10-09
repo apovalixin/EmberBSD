@@ -55,6 +55,9 @@
 - Create: ember/tools/a133-recovery-reboot.rb
 - Create: ember/tools/a133-recovery-reboot-test.rb
 - Create: ember/tools/a133-recovery-reboot-fixture.rb
+- Modify: ember/tools/a133-recovery-readback.rb (launcher argument admission)
+- Create: ember/tools/a133-recovery-readback-argument-test.rb
+- Modify: ember/tools/a133-recovery-protection-test.rb (fault-scenario subprocess budget)
 - Create: ember/boards/ys-m33-a133-recovery-reboot.md
 - Modify: README.md, ember/boards/ys-m33-a133-cable-install.md
 
@@ -62,12 +65,37 @@
 - Consumes: Policy and Readback from Task1, bounded Channel.
 - Produces: enter_recovery/return_android verifying prepared source and destination with one normal ADB reboot; possible-side-effect errors and installation_ready=false.
 
-- [ ] **Step 1: Write actual subprocess tests** for full Entry round trip, offline/source-state polling, unchanged critical/tail bytes, no raw writes, identity/GPT/transport/root/boot/env changes, timeouts, failed reboot/sync-like diagnostics, launcher before/after submission and caller mutation.
-- [ ] **Step 2: Run new reboot test.** Expected: FAIL with missing reboot API.
-- [ ] **Step 3: Implement fixed transitions and bounded wait**, document operational flags, caller journal/exclusive obligations and hardware gates.
-- [ ] **Step 4: Run all host A133 Ruby suites on both versions**, syntax/diff/local-link checks. Expected: all pass; no OS rebuild needed for host-only source.
-- [ ] **Step 5: Commit** `feat(a133): guard factory USB reboot transitions`.
+- [x] **Step 1: Write actual subprocess tests** for full Entry round trip, offline/source-state polling, unchanged critical/tail bytes, no raw writes, identity/GPT/transport/root/boot/env changes, timeouts, failed reboot/sync-like diagnostics, launcher before/after submission and caller mutation.
+- [x] **Step 2: Run new reboot test.** Expected: FAIL with missing reboot API.
+- [x] **Step 3: Implement fixed transitions and bounded wait**, document operational flags, caller journal/exclusive obligations and hardware gates.
+- [x] **Step 4: Run all host A133 Ruby suites on both versions**, syntax/diff/local-link checks. Expected: all pass; no OS rebuild needed for host-only source.
+- [x] **Step 5: Commit** `feat(a133): guard factory USB reboot transitions`.
 
 ## Completion
 
 One fresh independent GPT-6 Astra review of this whole range, one regression-first fix pass, no re-review. Carry all rulings/minors into plan/final. Update existing draft PR and Ember/ROOMY evidence, preserve review/product acceptance and remove only this plan's scratch workspace.
+
+## Execution evidence
+
+Task1 readback21/Entry65/holder regressions2 passed on both Ruby4.0.5 and
+system2.6.10. Task2 exercised26 adjacent host suites, launcher arguments7
+and45 native reboot cases on both. System ran all45 at1s fault budgets;
+Ruby4 completed the31-prefix cases, then its intended timed fault was blocked
+by a legitimate preflight timeout. All14 tail cases passed on both with3s
+subprocess budgets; no single Ruby4 all45 invocation at3s is claimed.
+Protection49 was repeated successfully on both at3s after the same test issue.
+Inventory waits retain1s: a focused probe measured wait1.001s versus
+operation26.613s. Syntax/diff and100 local public links passed. No hardware.
+
+Implementation rulings (costs):
+- Measure inventory bounds from the native reboot marker, excluding preflight;
+  no whole-operation deadline is supplied or proved.
+- Admit valid ASCII-compatible NUL-free launcher strings in the new APIs;
+  UTF16 paths require conversion, while non-ASCII UTF8 is tested.
+- Fault scenarios use3s command budgets, avoiding unrelated1s preflight refusal;
+  progress under1s/resource contention is not accepted, and Channel covers1s.
+- Resume unchanged successful31-prefix reboot cases with all14 tail cases
+  rather than repeat heavy successful reads; Ruby4 has no single all45-at3s
+  invocation or associated whole-run resource-pressure proof.
+
+Final independent review and publication remain pending.

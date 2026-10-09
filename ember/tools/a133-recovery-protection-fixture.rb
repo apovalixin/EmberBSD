@@ -92,7 +92,7 @@ else
     puts state.fetch('size',60620800)
     puts state.fetch('cid','0123456789abcdef0123456789abcdef')
     parts.each { |_,start,size| puts start; puts size }
-    puts '8192'; puts '8192'; exit
+    puts state.fetch('hardware_sectors',8192); puts state.fetch('hardware_sectors',8192); exit
   end
   if command.start_with?('for p in bootloader ')
     parts=JSON.parse(File.read(File.join(base,'layout.json')))

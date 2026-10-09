@@ -6,6 +6,8 @@ module A133Recovery
   class Readback
     def initialize(adb:,policy:,state:,root_method:,timeout:600)
       raise A133Usb::Invalid,'invalid_readback_policy' unless policy.is_a?(Policy)
+      raise A133Usb::Invalid,'invalid_usb_options' unless adb.is_a?(String) && !adb.empty? &&
+        adb.encoding.ascii_compatible? && adb.valid_encoding? && !adb.b.include?("\0")
       @policy=policy
       @state=state.is_a?(String) ? state.dup.freeze : state
       @source=A133UsbBackup::Source.new(adb:adb.is_a?(String) ? adb.dup.freeze : adb,

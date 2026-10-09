@@ -99,6 +99,13 @@ vendor parser and ordering, not a physical environment save or the second
 sample's recovery boot. The reference environment and installed boot hash
 were unchanged after returning to EmberBSD.
 
+The [guarded normal USB reboot API](ys-m33-a133-recovery-reboot.md) now checks
+the prepared factory source, submits one native reboot and freshly verifies
+the selected USB destination, complete critical images and env. Reboot may
+persist vendor env; any failure after submission retains possible-side-effect
+flags and is not automatically retried. Its actual-process host round trip is
+separate from real vendor/cable acceptance, unlock and accepted EmberBSD trial boot.
+
 ## Android backup and QEMU
 
 The [guarded recovery entry library](ys-m33-a133-recovery-entry.md) now exposes
