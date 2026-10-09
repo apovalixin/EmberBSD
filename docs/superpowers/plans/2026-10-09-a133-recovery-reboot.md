@@ -98,4 +98,35 @@ Implementation rulings (costs):
   rather than repeat heavy successful reads; Ruby4 has no single all45-at3s
   invocation or associated whole-run resource-pressure proof.
 
-Final independent review and publication remain pending.
+## Final review and fix evidence
+
+One fresh GPT-6 Astra read-only review of4e368c1b0e88..d53a20511a09 found
+one Important/P2: mutable expected could change the public verification mode
+during actual USB reads and alter the issued receipt afterward. Both live and
+post-return regressions failed on both runtimes, then passed after the
+implementer copied/froze expected before admission/USB. The one fix pass
+completed all29 suites on BOTH runtimes, including full defaultReboot45 at3s,
+expectation2 and argument7. Both matrix processes exited0; all29 result lines
+were read and checked. Syntax/diff/public100 links passed. No new Minor or
+re-review. The earlier split-run limitation is now superseded by full-run
+evidence; no general performance or sustained-load acceptance is implied.
+
+Reviewer scope rulings (costs):
+- Vendor saveenv/USB/root/MCU/cold boot/Android FS remain physical gates;
+  unsupported or incoherent factory behavior remains possible.
+- Boot0/boot1 contents stay outside this readback; only sizes are bound,
+  so content changes can remain undetected.
+- Other owners/atomic whole-eMMC snapshots remain caller exclusion duties;
+  transient raw changes can evade sampled guards.
+- Durable journal/global device lock remain coordinator duties;
+  omitted ownership/progress protection can make interruptions unsafe.
+- There is no overall operation deadline beyond command/inventory bounds;
+  total duration can exceed the inventory budget.
+- Initial31+14 evidence was accepted without whole-run stress proof;
+  full all45-at3s now passed both after the fix, closing that specific gap.
+- Historical BSP/main reconciliation/unlock/trial/release remain draft;
+  this host proof cannot authorize fleet release or merging the whole branch.
+
+Existing draft PR and both wikis will publish this host evidence without
+hardware acceptance. No physical writes/reboots, audio/camera or private
+full-archive rehash occurred.

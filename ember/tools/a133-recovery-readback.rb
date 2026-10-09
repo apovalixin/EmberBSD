@@ -53,6 +53,7 @@ module A133Recovery
       {sha:digest.hexdigest,prefix:prefix,tail_sha:tail.hexdigest}
     end
     def verify(expected:)
+      expected=expected.dup.freeze if expected.is_a?(String)
       raise A133Usb::Invalid,'invalid_environment_expectation' unless
         expected=='original' || (expected=='armed' && @state=='device') || (expected=='consumed' && @state=='recovery')
       guard!

@@ -69,7 +69,10 @@ devices unmounted and available holder directories for every expected partition.
 
 `A133Recovery::Readback.new(adb:, policy:, state:, root_method:, timeout: 600)`
 also exposes `.verify(expected:)`: `original` in either supported state,
-`armed` only in device, `consumed` only in recovery. Its receipt contains
+`armed` only in device, `consumed` only in recovery.
+The expected mode is copied and frozen before admission/USB; later caller
+mutation cannot change the verified state or the receipt's expected mode.
+Its receipt contains
 `environment_state_verified`, state/expected/env_sha256/hardware_bytes,
 `writes_performed: 0` and `installation_ready: false`. Readback errors are
 redacted `A133Usb::Invalid` with `write_attempted: false`.
