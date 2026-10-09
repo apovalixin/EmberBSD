@@ -368,8 +368,9 @@ on every board in the hardware catalog.
   cross-builds on macOS with SVG, icons, translations and man pages.
   All 62 installed files/links and 80 target ELF files pass inspection.
   Ports' separate [labwc session check](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/labwc-session.md)
-  passes two VirGL/ANGLE Metal sessions on Apple M4: four EGL frames each,
-  screencopy pixels, actual virtual USB input and clean restart. Sustained
+  passes two VirGL/ANGLE Metal sessions on Apple M4: 64 captured EGL frames each,
+  actual virtual USB input, client-requested window/maximize/restore/fullscreen
+  transitions and clean restart. Sustained
   desktop use, VT switching and physical-board GPU acceleration remain unaccepted.
   A Ports
   [host-side VirGL 1.3.0 adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/utm-virgl-host)
