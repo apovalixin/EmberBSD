@@ -1,6 +1,6 @@
 # A133 Mutable Backup Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Retain verified per-device UDISK/metadata files through a read-only recovery acquisition.
 
@@ -39,11 +39,11 @@
 - Consumes: A133Backup::INVENTORY physical partition sizes.
 - Produces: A133Mutable.verify(path, serial:, cid:, timeout:3600), returning a private string-keyed receipt with mutable_copies_verified, serial, cid, partition_sha256 and observation; filesystem_consistency remains unestablished.
 
-- [ ] **Step 1: Write real-file tests** for fresh whole-byte hash verification, trusted identity mismatch, wrong schema/fields/roles/bytes/hash, duplicate keys, unsafe mode/path, inode aliases, late mutation and redacted CLI/no write flag.
-- [ ] **Step 2: Run `ruby ember/tools/a133-mutable-check-test.rb`.** Expected: FAIL with missing mutable checker.
-- [ ] **Step 3: Implement the strict verifier** with retained descriptors, privacy/identity/lifetime guards and bounded errors.
-- [ ] **Step 4: Run `ruby ember/tools/a133-mutable-check-test.rb` and `/usr/bin/ruby ember/tools/a133-mutable-check-test.rb`.** Expected: all cases pass, no private CLI output.
-- [ ] **Step 5: Commit** `feat(a133): verify retained mutable partition copies`.
+- [x] **Step 1: Write real-file tests** for fresh whole-byte hash verification, trusted identity mismatch, wrong schema/fields/roles/bytes/hash, duplicate keys, unsafe mode/path, inode aliases, late mutation and redacted CLI/no write flag.
+- [x] **Step 2: Run `ruby ember/tools/a133-mutable-check-test.rb`.** Expected: FAIL with missing mutable checker.
+- [x] **Step 3: Implement the strict verifier** with retained descriptors, privacy/identity/lifetime guards and bounded errors.
+- [x] **Step 4: Run `ruby ember/tools/a133-mutable-check-test.rb` and `/usr/bin/ruby ember/tools/a133-mutable-check-test.rb`.** Expected: all cases pass, no private CLI output.
+- [x] **Step 5: Commit** `feat(a133): verify retained mutable partition copies`.
 
 ### Task 2: Read-only recovery acquisition and public instructions
 
