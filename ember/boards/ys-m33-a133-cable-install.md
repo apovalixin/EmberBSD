@@ -106,6 +106,12 @@ persist vendor env; any failure after submission retains possible-side-effect
 flags and is not automatically retried. Its actual-process host round trip is
 separate from real vendor/cable acceptance, unlock and accepted EmberBSD trial boot.
 
+The [copied-env unlock preparer](ys-m33-a133-unlock-env.md) now encodes the
+observed vendor unlock/reset/recovery sequence without device access. It
+preserves the per-device normal scripts and requires exact byte restoration
+after removing its seven reserved variables. This prepares a private file,
+not an unlock operation; guarded execution and physical acceptance remain open.
+
 ## Android backup and QEMU
 
 The [guarded recovery entry library](ys-m33-a133-recovery-entry.md) now exposes

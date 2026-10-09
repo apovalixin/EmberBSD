@@ -386,6 +386,9 @@ GPT/critical hashes. The [guarded factory USB reboot](ember/boards/ys-m33-a133-r
 verifies the prepared source, submits one normal reboot and checks whole critical
 images/env on return through the selected USB identity. Its host contract leaves
 unlock, accepted trial boot and physical round-trip acceptance to later integration.
+A [copied-env unlock preparer](ember/boards/ys-m33-a133-unlock-env.md) encodes
+the observed vendor unlock/reset/recovery hook with exact env reversibility.
+Its copied-file contract does not execute unlock or accept a physical transition.
 A [private session coordinator](ember/boards/ys-m33-a133-install-session.md)
 rechecks live ranges on repeat and keeps recovery protected after failed writes;
 its filesystem/resume contract is tested on a file-backed host fixture.
