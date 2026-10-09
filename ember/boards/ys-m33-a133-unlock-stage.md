@@ -51,12 +51,18 @@ Use one operator-owned0700 directory per tablet/context. State and lock are
 covers the invocation. Context pins identity and backup/GPT/critical/env/mutable
 hashes; another context cannot reuse the journal. This is directory exclusion,
 not a global tablet lease. Another host/directory must not operate concurrently.
+Open directory/lock descriptors bind the scope to their inodes. Operations
+recheck current path identity, owner and private modes; moving/replacing the
+directory or lock stops the old Store before further device submission.
 
 Snapshots have exact schema, duplicate-key checks and canonical checksum,
 bounded to65536 bytes. Exclusive random temporary files are fsynced, renamed
 atomically and followed by directory fsync. A checksum detects accidental
 corruption, not a malicious local owner. Unknown crash leftovers are retained.
 Host power-loss durability and physical vendor effects require separate tests.
+After successful rename the visible snapshot becomes the Store's current
+intent even if directory fsync fails. Failure reporting must not overwrite
+that intent with earlier false flags; the operation still stops on the failure.
 
 Possible-write intent precedes each prefix submission. Possible-reboot intent
 precedes native reboot and remains true even when the command might not have
@@ -86,7 +92,9 @@ Data preservation, full Android restore and permanent own loader remain open.
 ```sh
 ruby ember/tools/a133-unlock-stage.rb /private/existing-unlock-session
 ruby ember/tools/a133-unlock-journal-test.rb
+ruby ember/tools/a133-unlock-journal-regression-test.rb
 ruby ember/tools/a133-unlock-stage-test.rb
+ruby ember/tools/a133-unlock-stage-persistence-test.rb
 ruby ember/tools/a133-unlock-stage-cli-test.rb
 ruby ember/tools/a133-unlock-stage-admission-test.rb
 ```

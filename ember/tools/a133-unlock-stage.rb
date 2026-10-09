@@ -179,7 +179,7 @@ module A133Unlock
             # Preserve the original failure and conservative prior intent.
           end
           report=@latest || store.report
-          if reason=='unlock_journal_io_failed'
+          if reason.start_with?('unlock_journal_')
             report=report.merge(effects_unknown:true,possible_write:true,possible_reboot:true)
           end
           raise Invalid.new(reason,report.merge(status:'unlock_stage_stopped')),cause:nil

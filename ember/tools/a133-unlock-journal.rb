@@ -26,6 +26,9 @@ module A133Unlock
     def self.secure!(stat)
       raise Invalid,'unlock_journal_file_unsafe',cause:nil unless stat.file? && stat.uid==Process.uid && stat.mode&07777==0600 && stat.nlink==1
     end
+    def self.directory_secure!(stat)
+      raise Invalid,'unlock_journal_directory_unsafe',cause:nil unless stat.directory? && stat.uid==Process.uid && stat.mode&07777==0700
+    end
     def self.open(directory,context)
       raise Invalid,'unlock_journal_directory_unsafe',cause:nil unless directory.is_a?(String) && !directory.empty? &&
         directory.encoding.ascii_compatible? && directory.valid_encoding? && !directory.b.include?("\0")
@@ -39,30 +42,35 @@ module A133Unlock
         raise Invalid,'unlock_journal_missing',cause:nil unless context
         Dir.mkdir(path,0700)
       end
-      stat=File.lstat(path)
-      raise Invalid,'unlock_journal_directory_unsafe',cause:nil unless stat.directory? && stat.uid==Process.uid && stat.mode&07777==0700
+      directory_secure!(File.lstat(path))
       lock=File.join(path,'.lock')
       exists=File.exist?(lock) || File.symlink?(lock)
       secure!(File.lstat(lock)) if exists
       raise Invalid,'unlock_journal_missing',cause:nil unless context || exists
       flags=File::RDWR|File::NOFOLLOW|File::NONBLOCK
       flags|=File::CREAT if context
-      File.open(lock,flags,0600) do |file|
-        secure!(file.stat)
-        file.close_on_exec=true
-        raise Invalid,'unlock_journal_busy',cause:nil unless file.flock(File::LOCK_EX|File::LOCK_NB)
-        new(path).__send__(:locked,context) { |store| yield store }
+      File.open(path,File::RDONLY|File::NOFOLLOW) do |directory_file|
+        directory_secure!(directory_file.stat)
+        directory_file.close_on_exec=true
+        File.open(lock,flags,0600) do |file|
+          secure!(file.stat)
+          file.close_on_exec=true
+          raise Invalid,'unlock_journal_busy',cause:nil unless file.flock(File::LOCK_EX|File::LOCK_NB)
+          new(path,directory_file,file).__send__(:locked,context) { |store| yield store }
+        end
       end
     rescue SystemCallError,IOError
       raise Invalid,'unlock_journal_io_failed',cause:nil
     end
-    def initialize(directory)
+    def initialize(directory,directory_file,lock_file)
       @directory=directory
       @path=File.join(directory,'state.json')
+      @directory_file,@lock_file=directory_file,lock_file
     end
     def locked(context)
       @pid,@thread=Process.pid,Thread.current
       begin
+        lock!
         if File.exist?(@path) || File.symlink?(@path)
           @data=read
           raise Invalid,'unlock_journal_context_changed',cause:nil if context && @data['context']!=context
@@ -78,6 +86,14 @@ module A133Unlock
     end
     def lock!
       raise Invalid,'unlock_journal_not_locked',cause:nil unless @pid==Process.pid && @thread==Thread.current
+      [[@directory,@directory_file,:directory_secure!],
+        [File.join(@directory,'.lock'),@lock_file,:secure!]].each do |path,file,check|
+        current=File.lstat(path)
+        held=file.stat
+        self.class.public_send(check,current)
+        self.class.public_send(check,held)
+        raise Invalid,'unlock_journal_scope_changed',cause:nil unless current.dev==held.dev && current.ino==held.ino
+      end
     end
     def valid!(data)
       valid=self.class.exact?(data,%w[schema context phase revision possible_write possible_reboot hardware_bytes reason checksum]) &&
@@ -126,9 +142,12 @@ module A133Unlock
           owned=file.stat
           file.write(text); file.flush; file.fsync
         end
+        lock!
         File.rename(temp,@path)
-        File.open(@directory,File::RDONLY) { |file| file.fsync }
+        # Rename already made this intent visible; a later fsync failure must
+        # not let failed-result handling publish the previous, weaker flags.
         @data=data
+        @directory_file.fsync
       ensure
         if owned
           begin
