@@ -86,8 +86,9 @@ passed checker24/acquisition28/diff check. It identified one Important gap:
 nonleader recovery threads were missing from mount inventory. Two regressions
 reproduced accepted hidden/unreadable thread inventories on both Rubies before
 the fix. The source now reads each process's task/TID mountinfo, failing closed.
-After the fix, thread2 and all named suites passed again on both Rubies;
-channel13/transfer43/session25/syntax/diff/link checks also passed.
+After the fix, checker24/acquisition28/thread2/fullbackup26/lifetime5/
+capture37/hardware18/regression6 passed again on both Rubies;
+channel13/transfer43/session25 passed on Ruby4, with syntax/diff/link checks.
 Fix verification belongs to the implementer; no second review or physical Linux
 namespace reproduction is claimed. No Critical/Minor findings were returned.
 
