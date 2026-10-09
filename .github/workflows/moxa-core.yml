@@ -7,6 +7,7 @@ on:
       - 'sys/dev/usb/ucom_transport_core.*'
       - 'ember/tools/umoxa-frame-test.*'
       - 'ember/tools/ucom-transport-core-test.*'
+      - 'ember/tools/moxa-core-cross-check.sh'
       - 'ember/boot/moxa-serial.md'
       - '.github/workflows/moxa-core.yml'
   push:
@@ -16,6 +17,7 @@ on:
       - 'sys/dev/usb/ucom_transport_core.*'
       - 'ember/tools/umoxa-frame-test.*'
       - 'ember/tools/ucom-transport-core-test.*'
+      - 'ember/tools/moxa-core-cross-check.sh'
       - '.github/workflows/moxa-core.yml'
   workflow_dispatch:
 permissions:

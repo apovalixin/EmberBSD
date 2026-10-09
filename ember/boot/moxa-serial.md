@@ -34,6 +34,19 @@ Sanitizer compiler/linker unavailability is recorded as a skip; sanitizer
 runtime/test failure fails the command. These runners execute host binaries,
 so an AArch64 cross compiler is not a replacement for their host `CC`.
 
+After preparing an EMBER64 cross build with the fork's
+[wrapper](cross-build.md), compile both conditional kernel variants:
+
+```sh
+sh ember/tools/moxa-core-cross-check.sh /absolute/clean-source \
+    /absolute/kernel-build /absolute/new-kernel-object-output
+```
+
+The output's parent must already exist. This checks two AArch64 kernel
+objects using the generated `nbmake-evbarm` compiler and kernel headers;
+it does not link the helpers into a kernel or execute target code. Keep
+source revisions and header/toolchain provenance with the resulting receipt.
+
 ## Framing contract
 
 RX data records use a four-byte header: big-endian 16-bit port followed by

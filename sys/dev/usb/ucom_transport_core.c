@@ -5,6 +5,7 @@
 #ifdef _KERNEL
 #include <sys/types.h>
 #include <sys/errno.h>
+#include <sys/null.h>
 #else
 #include <errno.h>
 #endif
