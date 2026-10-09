@@ -11,6 +11,12 @@ ember/, kernel changes go directly into sys/. C follows NetBSD KNF.
 Keep upstream licences and identifiers. Our own source diffs start with
 exactly one Origin: line; imported changes name the upstream revision.
 
+The build target is EmberBSD. Retained NetBSD ABI names and compiler triplets
+are compatibility interfaces, not permission to replace fork components with
+upstream base sets. Record source revisions and artifact hashes for kernels,
+libc, headers and sysroots. A partially repaired or mixed sysroot is not an
+accepted current EmberBSD base release. Preserve upstream attribution.
+
 A build exports a clean commit; do not fix sources only inside the build
 guest. Prefer cross-compilation on the development host. The default kernel
 wrapper

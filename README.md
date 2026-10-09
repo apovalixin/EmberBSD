@@ -332,9 +332,12 @@ on every board in the hardware catalog.
   The matching [Rust build-host package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/rust.md)
   and cargo-c pass normal macOS installation and a native Rust/C ABI consumer
   after a Ports correction to Mach-O dependency metadata. Its
-  [packaged NetBSD std](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/rust-target-std.md)
+  [packaged EmberBSD target std](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/rust-target-std.md)
   installs into the same host compiler and passes target TLS/C consumers and
   an offline Cargo target with macOS proc macros in the AArch64 VM.
+  The [GI 1.86.0 package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/introspection.md)
+  also cross-builds with real GType queries and three unchanged upstream
+  hash/search cases passing on EmberBSD/CM5.
   labwc client surfaces and full SVG
   remain unaccepted.
   A Ports
@@ -503,6 +506,10 @@ on every board in the hardware catalog.
   shared/static libc is installed on physical Orange Pi Zero 3W; the installed
   shared library passes all 850 checks. Full compiler-suite acceptance remains
   separate.
+  The same accepted static archive also passes 850 freshly cross-compiled
+  checks on CM5. Ports now rejects divergent shared libc aliases in its
+  [cross sysroot](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/cross/sysroot.md);
+  a complete current base userland/header release remains unaccepted.
 - **AArch64 binary128 comparisons:** [libc exception-policy fixes](ember/tools/aarch64-binary128.md)
   preserve NaN comparison results while raising the required INVALID exception.
   Native raw-ABI, FP-mode and trap checks pass with GCC 12.5 and GCC 16.2

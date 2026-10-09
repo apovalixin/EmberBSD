@@ -12,6 +12,12 @@ The kernel and common sources are based on the verified NetBSD 11.0
 are already applied to the source tree. Copies in `ember/patches` document
 their provenance and support future porting; do not apply them again.
 
+Build and deploy from pinned EmberBSD sources. The retained NetBSD ABI names,
+triplets and upstream identifiers do not select an upstream NetBSD build.
+Record the origin of base libraries and headers in cross sysroots; see the
+[Ports provenance requirements](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/cross/sysroot.md).
+Component acceptance does not establish a complete current base release.
+
 ## Hardware support and validation
 
 The [board catalog](ember/boards/README.md) is the maintained hardware index.
