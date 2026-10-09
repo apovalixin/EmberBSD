@@ -26,7 +26,16 @@ checks=0
   abort 'FAIL: original restoration' unless A133Env.patch(candidate,
     {'boot_normal'=>'run ${hook};run boot_android','ember_recovery_once'=>''})==original
   client=A133Usb::Client.new(adb:'adb',serial:'TEST_SERIAL',cid:'0'*32)
-  client.protection_valid!(candidate)
+  backup={'status'=>'backup_integrity_verified','cid'=>'0'*32,'bytes'=>31037849600,
+    'gpt_headers_crc'=>true,'gpt_arrays_crc'=>true,'partition_layout_verified'=>true,
+    'uncompressed_sha256'=>'a'*64,'partition_sha256'=>%w[bootloader env boot recovery].to_h { |role| [role,'b'*64] }}
+  begin
+    client.write_verified(role:'boot',path:File.join(__dir__,'absent-test-image'),bytes:33554432,
+      sha256:'f'*64,backup:backup,protected_env:candidate)
+    abort 'FAIL: absent image accepted'
+  rescue A133Usb::Invalid => error
+    abort 'FAIL: protection incompatible with image writer' unless error.message=='image_unavailable'
+  end
   checks+=1
 end
 %w[hook ember_restore_normal ember_recovery_once].each do |name|
