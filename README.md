@@ -456,11 +456,11 @@ on every board in the hardware catalog.
   This validates the ACPI polling/DMA success path; hardware IRQ/fault handling
   remains unverified. A [native BCM2712 V3D observer](ember/boot/bcm2712-v3d.md)
   validates firmware clock/reset state before fault-aware identification;
-  74 actual-source cases pass on host and CM5 CPU with fake hardware.
-  On physical CM5, the diagnostic kernel boots but rejects the measured-clock
-  reply's unexpected ID before GPU access; state/rate and PM status are recorded.
-  The current observer follows Linux's state/rate prerequisites without that
-  optional measurement; its next hardware gate is stable idle SMS state.
+  186 actual-source cases pass on host and CM5 CPU with fake hardware.
+  On physical CM5, the matched diagnostic kernel validates state/rate and PM
+  and reads idle SMS state. Its earlier whole-word-zero gate rejected mode
+  fields; the current observer checks state, unchanged modes and two stable
+  snapshots before HUB access. No firmware or SMS write is added.
   Physical V3D identification and acceleration remain unverified.
 
 ### Board support and system builds

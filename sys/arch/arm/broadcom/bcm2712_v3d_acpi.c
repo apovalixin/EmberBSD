@@ -31,6 +31,9 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define BCMV3D_NREG	3
 #define BCMV3D_RESET_N	__BIT(6)
 #define BCMV3D_SMS_TEE	0x400
+#define BCMV3D_SMS_STATE_MASK	0x0f
+#define BCMV3D_SMS_OLD_MODE_MASK	0x30
+#define BCMV3D_SMS_NEW_MODE_MASK	0xc0
 #define BCMV3D_HUB_IDENT1	0x0c
 #define BCMV3D_HUB_IDENT3	0x14
 #define BCMV3D_MMU_DEBUG	0x1238
@@ -174,6 +177,23 @@ pm:
 	return 0;
 }
 
+static bool
+bcmv3d_sms_idle(uint32_t value)
+{
+	const uint32_t allowed = BCMV3D_SMS_STATE_MASK |
+	    BCMV3D_SMS_OLD_MODE_MASK | BCMV3D_SMS_NEW_MODE_MASK;
+	uint32_t old_mode = (value & BCMV3D_SMS_OLD_MODE_MASK) >> 4;
+	uint32_t new_mode = (value & BCMV3D_SMS_NEW_MODE_MASK) >> 6;
+
+	/*
+	 * Linux checks STATE for IDLE, not the whole register. Mode values
+	 * are opaque here: require no transition and no other status bits.
+	 * This permits observation only, not ownership or initialization.
+	 */
+	return (value & BCMV3D_SMS_STATE_MASK) == 0 &&
+	    (value & ~allowed) == 0 && old_mode == new_mode;
+}
+
 static int
 bcmv3d_observe(struct bcmv3d_softc *sc)
 {
@@ -194,9 +214,9 @@ bcmv3d_observe(struct bcmv3d_softc *sc)
 	mapped[BCMV3D_SMS] = true;
 	sc->sc_stage = "SMS readiness";
 	/*
-	 * Strictly require the whole REE/TEE word to be idle, including no
-	 * lock, mode transition, interrupt or power-off indication. Peek
-	 * catches bus faults; it cannot time out a stalled hardware bus.
+	 * Require idle REE/TEE fields and identical complete snapshots before
+	 * reading IDs. Peek catches bus faults; it cannot time out a stalled
+	 * hardware bus. No SMS command is issued to make an unready GPU ready.
 	 */
 	for (i = 0; i < 2; i++) {
 		error = bus_space_peek_4(sc->sc_bst, handles[BCMV3D_SMS],
@@ -206,7 +226,8 @@ bcmv3d_observe(struct bcmv3d_softc *sc)
 	}
 	aprint_normal_dev(sc->sc_dev, "SMS REE=%#x TEE=%#x\n",
 	    sc->sc_sms[0], sc->sc_sms[1]);
-	if (sc->sc_sms[0] != 0 || sc->sc_sms[1] != 0) {
+	if (!bcmv3d_sms_idle(sc->sc_sms[0]) ||
+	    !bcmv3d_sms_idle(sc->sc_sms[1])) {
 		error = EBUSY;
 		goto out;
 	}

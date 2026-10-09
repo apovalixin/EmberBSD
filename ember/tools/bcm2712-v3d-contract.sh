@@ -38,7 +38,8 @@ if [ "${V3D_SKIP_MUTANTS:-0}" = 1 ]; then
     exit 0
 fi
 cp "$work/driver.h" "$work/driver-good.h"
-for mutation in clock-state clock-rate pm-reset echoed-id sms-state cleanup; do
+for mutation in clock-state clock-rate pm-reset echoed-id sms-state \
+    sms-flags sms-modes sms-stable cleanup; do
     awk -v mutation="$mutation" '
         mutation == "clock-state" {
             changed += sub(/sc->sc_clock_state.value != 1/, "false")
@@ -53,7 +54,16 @@ for mutation in clock-state clock-rate pm-reset echoed-id sms-state cleanup; do
             changed += sub(/le32toh\(request\[5\]\) != VCPROP_CLK_V3D/, "false")
         }
         mutation == "sms-state" {
-            changed += sub(/sc->sc_sms\[0\] != 0 \|\| sc->sc_sms\[1\] != 0/, "false")
+            changed += sub(/\(value & BCMV3D_SMS_STATE_MASK\) == 0/, "true")
+        }
+        mutation == "sms-flags" {
+            changed += sub(/\(value & ~allowed\) == 0/, "(& || true)")
+        }
+        mutation == "sms-modes" {
+            changed += sub(/old_mode == new_mode/, "(old_mode == new_mode || true)")
+        }
+        mutation == "sms-stable" {
+            changed += sub(/sms\[i\] != sc->sc_sms\[i\]/, "false")
         }
         mutation == "cleanup" {
             changed += sub(/if \(mapped\[i\]\)/, "if (!mapped[i])")

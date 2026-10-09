@@ -276,6 +276,7 @@ reset(void)
 	sc.sc_bst = 1;
 	requests = maps = unmaps = reads = gpu_reads = 0;
 	fail_map = fail_read = malformed_word = malformed_call = 0;
+	malformed_value = 0;
 	cleanups = registration_error = fail_eval = fail_parse = pm_fault = 0;
 	mailbox_error = 0;
 	mailbox_error_call = 1;
@@ -444,6 +445,44 @@ main(void)
 	assert(strstr(output, "clock5 rate=0 Hz\n") != NULL);
 	reset(); pm_value = 0; denied();
 	assert(sc.sc_pm_valid && strstr(output, "PM_GRAFX2712=0\n") != NULL);
+	/* All sixteen old/new mode pairs, independently in both SMS banks. */
+	for (unsigned int bank = 0; bank < 2; bank++)
+		for (unsigned int old = 0; old < 4; old++)
+			for (unsigned int new = 0; new < 4; new++) {
+				reset();
+				sms_words[bank] = sms_words[bank + 2] =
+				    (old << 4) | (new << 6);
+				if (old == new) {
+					assert(bcmv3d_observe(&sc) == 0);
+					assert(maps == 3 && unmaps == 3 && gpu_reads == 8);
+				} else {
+					assert(bcmv3d_observe(&sc) == EBUSY);
+					assert(maps == 1 && unmaps == 1 && gpu_reads == 2);
+				}
+			}
+	/* Every bit outside the mode fields independently denies HUB access. */
+	for (unsigned int bank = 0; bank < 2; bank++)
+		for (unsigned int bit = 0; bit < 32; bit++) {
+			if (bit >= 4 && bit <= 7)
+				continue;
+			reset();
+			sms_words[bank] = sms_words[bank + 2] = __BIT(bit);
+			assert(bcmv3d_observe(&sc) == EBUSY);
+			assert(maps == 1 && unmaps == 1 && gpu_reads == 2);
+		}
+	/* Even individually idle mode values must not change between reads. */
+	for (unsigned int bank = 0; bank < 2; bank++)
+		for (unsigned int before = 0; before < 4; before++)
+			for (unsigned int after = 0; after < 4; after++) {
+				if (before == after)
+					continue;
+				reset();
+				sms_words[bank] = (before << 4) | (before << 6);
+				sms_words[bank + 2] = (after << 4) | (after << 6);
+				assert(bcmv3d_observe(&sc) == EBUSY);
+				assert(maps == 1 && unmaps == 1);
+				assert(gpu_reads == 3 + bank);
+			}
 	for (unsigned int i = 0; i < 4; i++) {
 		reset(); sms_words[i] = 0x0d;
 		assert(bcmv3d_observe(&sc) == EBUSY);
@@ -504,9 +543,11 @@ main(void)
 	assert(gpu_reads == 8 && sc.sc_ident1 == 0x117);
 	assert(strstr(output, "measured") == NULL);
 	assert(finalizer(&dev) == 0 && requests == 2 && maps == 3);
-	reset(); pm_value = 0x1040;
+	reset(); pm_value = 0x1040; rate = 500000000;
+	sms_words[1] = sms_words[3] = 0x50;
 	assert(bcmv3d_observe(&sc) == 0 && requests == 2);
 	assert(maps == 3 && unmaps == 3 && gpu_reads == 8);
+	assert(sc.sc_sms[0] == 0 && sc.sc_sms[1] == 0x50);
 	reset(); mailbox_error = ETIMEDOUT;
 	assert(bcmv3d_finalize(&dev) == 0);
 	assert(bcmv3d_finalize(&dev) == 0 && requests == 1);
