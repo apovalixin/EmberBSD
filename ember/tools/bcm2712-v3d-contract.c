@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -32,7 +33,7 @@
 #define CFATTACH_DECL_NEW(n, s, m, a, d, r)
 #define aprint_naive(...) ((void)0)
 #define aprint_normal(...) ((void)0)
-#define aprint_normal_dev(...) ((void)0)
+#define aprint_normal_dev(d, ...) contract_print(__VA_ARGS__)
 #define aprint_error_dev(...) ((void)0)
 
 typedef uint64_t bus_addr_t;
@@ -76,6 +77,9 @@ static unsigned int fail_eval, fail_parse, pm_fault;
 static uint32_t malformed_value, clock_state, rate, measured, pm_value;
 static uint32_t sms_words[4], ident1;
 static int mailbox_error;
+static unsigned int mailbox_error_call;
+static char output[4096];
+static size_t output_used;
 static bool active[3];
 static ACPI_INTEGER sta, cca;
 static struct acpi_mem resources[3];
@@ -94,6 +98,7 @@ static struct acpi_mem *acpi_res_mem(struct acpi_resources *, unsigned int);
 static void acpi_resource_cleanup(struct acpi_resources *);
 static int acpi_match_hid(ACPI_DEVICE_INFO *, const char * const *);
 static int config_finalize_register(device_t, int (*)(device_t));
+static void contract_print(const char *, ...);
 
 #include "pm-accessor.h"
 #include "driver.h"
@@ -104,6 +109,20 @@ static struct bcm2835pmwdog_softc pm = { 1, 100 };
 static ACPI_DEVICE_INFO info = { ACPI_VALID_HID, { "BCM2712" }, "BCM2850" };
 static struct acpi_node node = { ACPI_TYPE_DEVICE, &node, &info };
 static struct acpi_attach_args aa = { &node, 1 };
+
+static void
+contract_print(const char *format, ...)
+{
+	va_list ap;
+	int len;
+
+	va_start(ap, format);
+	len = vsnprintf(output + output_used, sizeof(output) - output_used,
+	    format, ap);
+	va_end(ap);
+	assert(len >= 0 && (size_t)len < sizeof(output) - output_used);
+	output_used += (size_t)len;
+}
 
 static int
 bcmmbox_request(uint8_t chan, void *buf, size_t len, uint32_t *response)
@@ -118,7 +137,12 @@ bcmmbox_request(uint8_t chan, void *buf, size_t len, uint32_t *response)
 	assert(le32toh(words[5]) == 5 && words[6] == 0 && words[7] == 0);
 	assert(tag == VCPROPTAG_GET_CLOCKSTATE || tag == VCPROPTAG_GET_CLOCKRATE ||
 	    tag == VCPROPTAG_GET_CLOCK_MEASURED);
-	if (mailbox_error != 0)
+	/* A successful result must be reported before the next request. */
+	if (requests > 1)
+		assert(strstr(output, "clock5 state=") != NULL);
+	if (requests > 2)
+		assert(strstr(output, "clock5 rate=") != NULL);
+	if (mailbox_error != 0 && requests == mailbox_error_call)
 		return mailbox_error;
 	value = tag == VCPROPTAG_GET_CLOCKSTATE ? clock_state :
 	    tag == VCPROPTAG_GET_CLOCKRATE ? rate : measured;
@@ -255,6 +279,9 @@ reset(void)
 	fail_map = fail_read = malformed_word = malformed_call = 0;
 	cleanups = registration_error = fail_eval = fail_parse = pm_fault = 0;
 	mailbox_error = 0;
+	mailbox_error_call = 1;
+	output_used = 0;
+	output[0] = '\0';
 	clock_state = 1;
 	rate = measured = 800000000;
 	pm_value = BCMV3D_RESET_N;
@@ -272,20 +299,33 @@ reset(void)
 	cases++;
 }
 
-static void
+static int
 denied(void)
 {
-	assert(bcmv3d_observe(&sc) != 0);
+	int error = bcmv3d_observe(&sc);
+
+	assert(error != 0);
 	assert(maps == 0 && gpu_reads == 0 && unmaps == 0);
+	return error;
 }
 
 int
 main(void)
 {
-	uint32_t value;
+	struct bcmv3d_clock_result value;
+	struct bcmv3d_clock_result *clocks[] = { &sc.sc_clock_state,
+	    &sc.sc_clock_rate, &sc.sc_clock_measured };
+	static const uint32_t tags[] = { VCPROPTAG_GET_CLOCKSTATE,
+	    VCPROPTAG_GET_CLOCKRATE, VCPROPTAG_GET_CLOCK_MEASURED };
+	static const char * const stages[] = { "firmware V3D clock state",
+	    "firmware V3D clock rate", "firmware V3D measured clock" };
+	static const char * const names[] = { "state", "rate", "measured" };
+	static const int transport_errors[] = { ETIMEDOUT, EIO, ENXIO };
 	static const unsigned int words[] = { 0, 1, 2, 3, 4, 5, 7 };
 	static const uint32_t bad[] = { 31, 0x80000001, 0x12345, 12,
 	    0x80000004, 4, 1 };
+	uint32_t reply[8];
+	char expected[160];
 
 	reset();
 	assert(bcmv3d_addresses[0] == UINT64_C(0x1002000000));
@@ -310,21 +350,94 @@ main(void)
 			malformed_call = call;
 			malformed_word = words[i];
 			malformed_value = bad[i];
-			denied();
-			assert(requests == call && reads == 0);
+			assert(denied() == EIO);
+			assert(requests == call && reads == 1);
+			assert(sc.sc_pm_valid && sc.sc_pm_error == 0);
+			assert(strcmp(sc.sc_stage, stages[call - 1]) == 0);
+			for (unsigned int j = 0; j < 3; j++) {
+				assert(clocks[j]->status == (j < call - 1 ?
+				    BCMV3D_CLOCK_VALID : j == call - 1 ?
+				    BCMV3D_CLOCK_RESPONSE_ERROR :
+				    BCMV3D_CLOCK_NOT_QUERIED));
+				assert(clocks[j]->error == (j == call - 1 ? EIO : 0));
+			}
+			reply[0] = 32;
+			reply[1] = VCPROP_REQ_SUCCESS;
+			reply[2] = tags[call - 1];
+			reply[3] = 8;
+			reply[4] = VCPROPTAG_RESPONSE | 8;
+			reply[5] = 5;
+			reply[6] = call == 1 ? clock_state : rate;
+			reply[7] = 0;
+			reply[words[i]] = bad[i];
+			snprintf(expected, sizeof(expected),
+			    "clock5 %s: rejected reply %08x %08x %08x %08x "
+			    "%08x %08x %08x %08x\n", names[call - 1],
+			    reply[0], reply[1], reply[2], reply[3],
+			    reply[4], reply[5], reply[6], reply[7]);
+			assert(strstr(output, expected) != NULL);
+			assert(strstr(output, "PM_GRAFX2712=0x40\n") != NULL);
+			assert(strstr(output, "transport error") == NULL);
 		}
 	reset();
-	assert(bcmv3d_clock(0x38002, &value) == EINVAL && requests == 0);
-	reset(); mailbox_error = ETIMEDOUT; denied();
-	reset(); mailbox_error = ENXIO; denied();
+	assert(bcmv3d_clock(&sc, 0x38002, &value) == EINVAL && requests == 0);
+	assert(value.status == BCMV3D_CLOCK_INVALID_TAG && value.error == EINVAL);
+	for (unsigned int call = 1; call <= 3; call++)
+		for (unsigned int i = 0; i < 3; i++) {
+			reset();
+			mailbox_error = transport_errors[i];
+			mailbox_error_call = call;
+			assert(denied() == mailbox_error);
+			assert(requests == call && reads == 1 && sc.sc_pm_valid);
+			assert(strcmp(sc.sc_stage, stages[call - 1]) == 0);
+			for (unsigned int j = 0; j < 3; j++) {
+				assert(clocks[j]->status == (j < call - 1 ?
+				    BCMV3D_CLOCK_VALID : j == call - 1 ?
+				    BCMV3D_CLOCK_TRANSPORT_ERROR :
+				    BCMV3D_CLOCK_NOT_QUERIED));
+				assert(clocks[j]->error ==
+				    (j == call - 1 ? mailbox_error : 0));
+			}
+			snprintf(expected, sizeof(expected),
+			    "clock5 %s: transport error %d\n",
+			    names[call - 1], mailbox_error);
+			assert(strstr(output, expected) != NULL);
+			assert(strstr(output, "rejected reply") == NULL);
+		}
+	/* An ignored tag and an extended reply both leave the GPU gate shut. */
+	for (unsigned int i = 0; i < 2; i++) {
+		reset(); malformed_call = 3; malformed_word = 4;
+		malformed_value = i == 0 ? 0 : VCPROPTAG_RESPONSE | 12;
+		assert(denied() == EIO && requests == 3 && reads == 1);
+		assert(sc.sc_clock_state.value == 1 && sc.sc_clock_rate.value == rate);
+		assert(sc.sc_clock_measured.status == BCMV3D_CLOCK_RESPONSE_ERROR);
+		assert(strstr(output, "clock5 measured=") == NULL);
+	}
+	/* Independent PM failure must not hide the earlier firmware error. */
+	reset(); malformed_call = 3; malformed_word = 4; pm_fault = 1;
+	assert(denied() == EIO && strcmp(sc.sc_stage, stages[2]) == 0);
+	assert(!sc.sc_pm_valid && sc.sc_pm_error == EFAULT && reads == 1);
+	assert(strstr(output, "PM_GRAFX2712: error") != NULL);
+	assert(strstr(output, "PM_GRAFX2712=") == NULL);
+	reset(); mailbox_error = ETIMEDOUT; bcmpmwdog_v3d_sc = NULL;
+	assert(denied() == ETIMEDOUT && strcmp(sc.sc_stage, stages[0]) == 0);
+	assert(!sc.sc_pm_valid && sc.sc_pm_error == ENXIO && requests == 1);
 	reset(); bcmpmwdog_v3d_sc = NULL; denied(); assert(reads == 0);
-	reset(); pm_fault = 1; denied();
+	assert(!sc.sc_pm_valid && sc.sc_pm_error == ENXIO);
+	assert(strcmp(sc.sc_stage, "BCM2712 PM owner") == 0);
+	reset(); pm_fault = 1; assert(denied() == EFAULT);
+	assert(!sc.sc_pm_valid && sc.sc_pm_error == EFAULT);
 	reset(); clock_state = 0; denied();
 	reset(); clock_state = 3; denied();
 	reset(); clock_state = 0x101; denied();
 	reset(); rate = 0; denied();
+	assert(sc.sc_clock_rate.status == BCMV3D_CLOCK_VALID);
+	assert(strstr(output, "clock5 rate=0 Hz\n") != NULL);
 	reset(); measured = 0; denied();
+	assert(sc.sc_clock_measured.status == BCMV3D_CLOCK_VALID);
+	assert(strstr(output, "clock5 measured=0 Hz\n") != NULL);
 	reset(); pm_value = 0; denied();
+	assert(sc.sc_pm_valid && strstr(output, "PM_GRAFX2712=0\n") != NULL);
 	for (unsigned int i = 0; i < 4; i++) {
 		reset(); sms_words[i] = 0x0d;
 		assert(bcmv3d_observe(&sc) == EBUSY);

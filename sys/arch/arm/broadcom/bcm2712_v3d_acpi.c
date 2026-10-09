@@ -43,11 +43,29 @@ static const bus_size_t bcmv3d_lengths[BCMV3D_NREG] = {
 	0x4000, 0x6000, 0x700
 };
 
+enum bcmv3d_clock_status {
+	BCMV3D_CLOCK_NOT_QUERIED,
+	BCMV3D_CLOCK_VALID,
+	BCMV3D_CLOCK_TRANSPORT_ERROR,
+	BCMV3D_CLOCK_RESPONSE_ERROR,
+	BCMV3D_CLOCK_INVALID_TAG
+};
+
+struct bcmv3d_clock_result {
+	enum bcmv3d_clock_status status;
+	int error;
+	uint32_t value;
+};
+
 struct bcmv3d_softc {
 	device_t sc_dev;
 	bus_space_tag_t sc_bst;
 	const char *sc_stage;
-	uint32_t sc_clock_state, sc_clock_rate, sc_clock_measured, sc_pm;
+	struct bcmv3d_clock_result sc_clock_state, sc_clock_rate;
+	struct bcmv3d_clock_result sc_clock_measured;
+	uint32_t sc_pm;
+	int sc_pm_error;
+	bool sc_pm_valid;
 	uint32_t sc_sms[2], sc_ident1, sc_ident3, sc_core_ident0, sc_mmu;
 	bool sc_observed;
 };
@@ -61,31 +79,63 @@ CFATTACH_DECL_NEW(bcmv3d_acpi, sizeof(struct bcmv3d_softc),
 
 /* A single property tag has eight payload bytes and a four-byte terminator. */
 static int
-bcmv3d_clock(uint32_t tag, uint32_t *value)
+bcmv3d_clock(struct bcmv3d_softc *sc, uint32_t tag,
+    struct bcmv3d_clock_result *result)
 {
 	uint32_t request[8] __aligned(16) = {
 		htole32(32), 0, htole32(tag), htole32(8), 0,
 		htole32(VCPROP_CLK_V3D), 0, 0
 	};
 	uint32_t response;
+	const char *name;
 	int error;
 
 	/* No caller can use this helper to send a firmware write request. */
-	if (tag != VCPROPTAG_GET_CLOCKSTATE &&
-	    tag != VCPROPTAG_GET_CLOCKRATE &&
-	    tag != VCPROPTAG_GET_CLOCK_MEASURED)
+	result->status = BCMV3D_CLOCK_INVALID_TAG;
+	result->error = EINVAL;
+	result->value = 0;
+	if (tag == VCPROPTAG_GET_CLOCKSTATE)
+		name = "state";
+	else if (tag == VCPROPTAG_GET_CLOCKRATE)
+		name = "rate";
+	else if (tag == VCPROPTAG_GET_CLOCK_MEASURED)
+		name = "measured";
+	else
 		return EINVAL;
 	error = bcmmbox_request(BCMMBOX_CHANARM2VC, request,
 	    sizeof(request), &response);
-	if (error != 0)
+	if (error != 0) {
+		result->status = BCMV3D_CLOCK_TRANSPORT_ERROR;
+		result->error = error;
+		aprint_normal_dev(sc->sc_dev, "clock5 %s: transport error %d\n",
+		    name, error);
 		return error;
+	}
 	if (le32toh(request[0]) != sizeof(request) ||
 	    le32toh(request[1]) != VCPROP_REQ_SUCCESS ||
 	    le32toh(request[2]) != tag || le32toh(request[3]) != 8 ||
 	    le32toh(request[4]) != (VCPROPTAG_RESPONSE | 8) ||
-	    le32toh(request[5]) != VCPROP_CLK_V3D || request[7] != 0)
+	    le32toh(request[5]) != VCPROP_CLK_V3D || request[7] != 0) {
+		result->status = BCMV3D_CLOCK_RESPONSE_ERROR;
+		result->error = EIO;
+		/* Only a completed transport supplies firmware response words. */
+		aprint_normal_dev(sc->sc_dev,
+		    "clock5 %s: rejected reply %08x %08x %08x %08x "
+		    "%08x %08x %08x %08x\n", name,
+		    le32toh(request[0]), le32toh(request[1]),
+		    le32toh(request[2]), le32toh(request[3]),
+		    le32toh(request[4]), le32toh(request[5]),
+		    le32toh(request[6]), le32toh(request[7]));
 		return EIO;
-	*value = le32toh(request[6]);
+	}
+	result->status = BCMV3D_CLOCK_VALID;
+	result->error = 0;
+	result->value = le32toh(request[6]);
+	if (tag == VCPROPTAG_GET_CLOCKSTATE)
+		aprint_normal_dev(sc->sc_dev, "clock5 state=%#x\n", result->value);
+	else
+		aprint_normal_dev(sc->sc_dev, "clock5 %s=%u Hz\n",
+		    name, result->value);
 	return 0;
 }
 
@@ -95,30 +145,36 @@ bcmv3d_prerequisites(struct bcmv3d_softc *sc)
 	int error;
 
 	sc->sc_stage = "firmware V3D clock state";
-	error = bcmv3d_clock(VCPROPTAG_GET_CLOCKSTATE, &sc->sc_clock_state);
+	error = bcmv3d_clock(sc, VCPROPTAG_GET_CLOCKSTATE, &sc->sc_clock_state);
 	if (error != 0)
-		return error;
+		goto pm;
 	sc->sc_stage = "firmware V3D clock rate";
-	error = bcmv3d_clock(VCPROPTAG_GET_CLOCKRATE, &sc->sc_clock_rate);
+	error = bcmv3d_clock(sc, VCPROPTAG_GET_CLOCKRATE, &sc->sc_clock_rate);
 	if (error != 0)
-		return error;
+		goto pm;
 	sc->sc_stage = "firmware V3D measured clock";
-	error = bcmv3d_clock(VCPROPTAG_GET_CLOCK_MEASURED,
+	error = bcmv3d_clock(sc, VCPROPTAG_GET_CLOCK_MEASURED,
 	    &sc->sc_clock_measured);
+pm:
+	/* PM is independent; retain the first clock failure and its stage. */
+	if (error == 0)
+		sc->sc_stage = "BCM2712 PM owner";
+	sc->sc_pm_error = bcmpmwdog_v3d_status(&sc->sc_pm);
+	sc->sc_pm_valid = sc->sc_pm_error == 0;
+	if (sc->sc_pm_valid)
+		aprint_normal_dev(sc->sc_dev, "PM_GRAFX2712=%#x\n", sc->sc_pm);
+	else
+		aprint_normal_dev(sc->sc_dev, "PM_GRAFX2712: error %d\n",
+		    sc->sc_pm_error);
 	if (error != 0)
 		return error;
-	sc->sc_stage = "BCM2712 PM owner";
-	error = bcmpmwdog_v3d_status(&sc->sc_pm);
-	if (error != 0)
-		return error;
-	aprint_normal_dev(sc->sc_dev,
-	    "clock5 state=%#x rate=%u measured=%u Hz PM_GRAFX2712=%#x\n",
-	    sc->sc_clock_state, sc->sc_clock_rate, sc->sc_clock_measured,
-	    sc->sc_pm);
+	if (sc->sc_pm_error != 0)
+		return sc->sc_pm_error;
 	sc->sc_stage = "firmware clock/reset readiness";
 	/* State bit 1 means nonexistent; unknown bits are not accepted. */
-	if (sc->sc_clock_state != 1 || sc->sc_clock_rate == 0 ||
-	    sc->sc_clock_measured == 0 || (sc->sc_pm & BCMV3D_RESET_N) == 0)
+	if (sc->sc_clock_state.value != 1 || sc->sc_clock_rate.value == 0 ||
+	    sc->sc_clock_measured.value == 0 ||
+	    (sc->sc_pm & BCMV3D_RESET_N) == 0)
 		return EBUSY;
 	return 0;
 }

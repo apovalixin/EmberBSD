@@ -41,7 +41,7 @@ cp "$work/driver.h" "$work/driver-good.h"
 for mutation in clock-state echoed-id sms-state cleanup; do
     awk -v mutation="$mutation" '
         mutation == "clock-state" {
-            changed += sub(/sc->sc_clock_state != 1/, "false")
+            changed += sub(/sc->sc_clock_state.value != 1/, "false")
         }
         mutation == "echoed-id" {
             changed += sub(/le32toh\(request\[5\]\) != VCPROP_CLK_V3D/, "false")
