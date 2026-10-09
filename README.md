@@ -356,8 +356,9 @@ on every board in the hardware catalog.
   The [GI 1.86.0 package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/introspection.md)
   also cross-builds with real GType queries and three unchanged upstream
   hash/search cases passing on EmberBSD/CM5.
-  labwc client surfaces and full SVG
-  remain unaccepted.
+  Matching GLib 2.90.1 metadata now supplies seven cross-built GIR/typelib
+  pairs, with loading and introspection/libffi invocation verified on CM5.
+  labwc client surfaces and full SVG remain unaccepted.
   A Ports
   [host-side VirGL 1.3.0 adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/utm-virgl-host)
   preserves the upstream IOV-size correction and prevents resource publication
