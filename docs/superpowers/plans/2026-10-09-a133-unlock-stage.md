@@ -28,23 +28,49 @@
 **Files:** create ember/tools/a133-unlock-journal.rb and a133-unlock-journal-test.rb.
 **Interfaces:** `Journal.open(directory,context){|store|...}`; Store snapshot, record(phase,write:,reboot:,hardware_bytes:,reason:), report; nil context is inspection-only.
 
-- [ ] Write real-file tests for durable monotonic intent, context/duplicate/checksum/mode/symlink/hardlink refusals, locking, escaped Store and injected publication failure.
-- [ ] Run new journal test on both Rubies. Expected: missing implementation FAIL.
-- [ ] Implement the schema/lock/publication contract in the spec.
-- [ ] Run journal tests on both Rubies. Expected: all pass.
-- [ ] Commit `feat(a133): persist private unlock stage intent`.
+- [x] Write real-file tests for durable monotonic intent, context/duplicate/checksum/mode/symlink/hardlink refusals, locking, escaped Store and injected publication failure.
+- [x] Run new journal test on both Rubies. Expected: missing implementation FAIL.
+- [x] Implement the schema/lock/publication contract in the spec.
+- [x] Run journal tests on both Rubies. Expected: all pass.
+- [x] Commit `feat(a133): persist private unlock stage intent`.
 
 ### Task 2: Guarded transition and instructions
 
-**Files:** create a133-unlock-stage.rb, a133-unlock-stage-test.rb, a133-unlock-stage-fixture.rb and ember/boards/ys-m33-a133-unlock-stage.md; update README/cable/unlock-env instructions.
+**Files:** create a133-unlock-stage.rb, a133-unlock-stage-test.rb, a133-unlock-stage-cli-test.rb, a133-unlock-stage-admission-test.rb, a133-unlock-stage-fixture.rb and ember/boards/ys-m33-a133-unlock-stage.md; update README/cable/unlock-env instructions.
 **Interfaces:** Stage.run signature from spec consumes Journal plus offline unlock encoder, Recovery Policy and Source/Channel; produces unlocked_recovery_verified or redacted Stage::Invalid report, installation_ready=false.
 
-- [ ] Write actual-I/O tests for happy/restored repeat, prefix/write/reboot order and marker inspection, command failure/resume without duplicate reboot, unknown fresh states, evidence/identity/critical/tail/usage drift and journal refusal before USB.
-- [ ] Run new stage test on both Rubies. Expected: missing stage FAIL.
-- [ ] Implement fixed transitions, live rechecks and inspection-only CLI.
-- [ ] Run all new suites and adjacent unlock44/cleanup3/codec/Recovery19/Protect14/Channel contracts on both; syntax/diff/local links. Expected: all pass.
-- [ ] Commit `feat(a133): guard journaled vendor unlock recovery`.
+- [x] Write actual-I/O tests for happy/restored repeat, prefix/write/reboot order and marker inspection, command failure/resume without duplicate reboot, unknown fresh states, evidence/identity/critical/tail/usage drift and journal refusal before USB.
+- [x] Run new stage test on both Rubies. Expected: missing stage FAIL.
+- [x] Implement fixed transitions, live rechecks and inspection-only CLI.
+- [x] Run all new suites and adjacent unlock44/cleanup3/codec/Recovery19/Protect14/Channel contracts on both; syntax/diff/local links. Expected: all pass.
+- [x] Commit `feat(a133): guard journaled vendor unlock recovery`.
 
 ## Completion
 
 One fresh independent GPT-6 Astra review; one regression-first fix pass, no re-review. Carry all rulings/minors into plan/final, update existing draft PR and both wikis, then remove only this plan scratch. No physical acceptance claim.
+
+## Execution rulings
+
+1. Keep the CLI late-close regression separate from transport tests. Inspection
+   emits one final JSON only after lock release. Cost: host regressions do not
+   establish filesystem power-loss durability.
+2. Admission before journal load reports unknown/possible prior effects, rather
+   than claiming a previous session had none. Cost: even a fresh invalid call
+   can require journal inspection; this does not assert command submission.
+3. Review the entire current plan range from `a86ef4d8555e`, including Journal
+   and Stage. Cost: the whole historical BSP/main reconciliation and fleet
+   release remain outside this review; the existing PR stays draft.
+4. The task-done checkpoint uses syntax checks after the already completed
+   ten-suite matrices on both runtimes. Cost: that checkpoint alone is weaker;
+   completion depends on the separately read full outputs and exit codes. Do
+   not repeat successful costly suites without a code change or new concern.
+
+## Verification before final review
+
+On macOS, Ruby 4.0.5 and system Ruby 2.6.10 each passed the ten required suites:
+Journal18, Stage23, CLI2, Admission2, Unlock44, Cleanup3, env codec, Recovery19,
+Protect14 and Channel13. Both full commands exited0. Syntax14, diff whitespace
+and63 changed-page local links passed. Initial Journal/Stage tests were RED
+on both runtimes before implementation; CLI late-close and admission prior
+effects were separately RED then GREEN. No tablet operation, OS rebuild or
+private full-archive reread belongs to this stage.

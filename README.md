@@ -389,6 +389,10 @@ unlock, accepted trial boot and physical round-trip acceptance to later integrat
 A [copied-env unlock preparer](ember/boards/ys-m33-a133-unlock-env.md) encodes
 the observed vendor unlock/reset/recovery hook with exact env reversibility.
 Its copied-file contract does not execute unlock or accept a physical transition.
+The [journaled unlock stage](ember/boards/ys-m33-a133-unlock-stage.md) records
+possible effects before guarded prefix writes/reboot, verifies unlocked USB
+recovery and restores known env. Its host resume contract never replays a
+recorded reboot; physical vendor/data-preservation acceptance remains separate.
 A [private session coordinator](ember/boards/ys-m33-a133-install-session.md)
 rechecks live ranges on repeat and keeps recovery protected after failed writes;
 its filesystem/resume contract is tested on a file-backed host fixture.

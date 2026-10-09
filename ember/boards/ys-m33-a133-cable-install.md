@@ -111,6 +111,10 @@ observed vendor unlock/reset/recovery sequence without device access. It
 preserves the per-device normal scripts and requires exact byte restoration
 after removing its seven reserved variables. This prepares a private file,
 not an unlock operation; guarded execution and physical acceptance remain open.
+The [journaled unlock API](ys-m33-a133-unlock-stage.md) now composes guarded
+prefix writes, one recorded native reboot, unlocked recovery readback and
+original env restoration. Copied-file resume tests remain separate from the
+required physical locked round trip and factory data-preservation acceptance.
 
 ## Android backup and QEMU
 

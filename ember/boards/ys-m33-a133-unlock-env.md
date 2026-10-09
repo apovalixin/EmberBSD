@@ -77,9 +77,11 @@ round trip and recoverable protected state. Unknown live env must not be
 overwritten. Preparation does not supply those receipts or test vendor command
 availability, secure-storage behavior, factory resets or data preservation.
 
-The complete unlock stage still needs guarded prefix writing, durable progress
-before possible side effects, USB return with freshly verified unlocked
-recovery and a known-state env restore. The locked-only Readback/Reboot API
+The separate [journaled stage](ys-m33-a133-unlock-stage.md) now provides
+guarded prefix writing, durable intent before possible effects, USB return
+with unlocked-state verification and a known-state env restore on host fixtures.
+Physical integration and the caller's locked round-trip acceptance remain
+prerequisites. The locked-only Readback/Reboot API
 does not accept this candidate or the resulting orange/unlocked state. Do not
 substitute it into those APIs or count this file as unlock acceptance.
 Accepted EmberBSD trial boot and complete Android restoration remain separate.
