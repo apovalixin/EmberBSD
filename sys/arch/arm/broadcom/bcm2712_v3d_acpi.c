@@ -62,7 +62,6 @@ struct bcmv3d_softc {
 	bus_space_tag_t sc_bst;
 	const char *sc_stage;
 	struct bcmv3d_clock_result sc_clock_state, sc_clock_rate;
-	struct bcmv3d_clock_result sc_clock_measured;
 	uint32_t sc_pm;
 	int sc_pm_error;
 	bool sc_pm_valid;
@@ -98,8 +97,6 @@ bcmv3d_clock(struct bcmv3d_softc *sc, uint32_t tag,
 		name = "state";
 	else if (tag == VCPROPTAG_GET_CLOCKRATE)
 		name = "rate";
-	else if (tag == VCPROPTAG_GET_CLOCK_MEASURED)
-		name = "measured";
 	else
 		return EINVAL;
 	error = bcmmbox_request(BCMMBOX_CHANARM2VC, request,
@@ -144,17 +141,16 @@ bcmv3d_prerequisites(struct bcmv3d_softc *sc)
 {
 	int error;
 
+	/*
+	 * Linux firmware-clock operations use state and configured rate.
+	 * Its V3D probe does not require the measured-clock property.
+	 */
 	sc->sc_stage = "firmware V3D clock state";
 	error = bcmv3d_clock(sc, VCPROPTAG_GET_CLOCKSTATE, &sc->sc_clock_state);
 	if (error != 0)
 		goto pm;
 	sc->sc_stage = "firmware V3D clock rate";
 	error = bcmv3d_clock(sc, VCPROPTAG_GET_CLOCKRATE, &sc->sc_clock_rate);
-	if (error != 0)
-		goto pm;
-	sc->sc_stage = "firmware V3D measured clock";
-	error = bcmv3d_clock(sc, VCPROPTAG_GET_CLOCK_MEASURED,
-	    &sc->sc_clock_measured);
 pm:
 	/* PM is independent; retain the first clock failure and its stage. */
 	if (error == 0)
@@ -173,7 +169,6 @@ pm:
 	sc->sc_stage = "firmware clock/reset readiness";
 	/* State bit 1 means nonexistent; unknown bits are not accepted. */
 	if (sc->sc_clock_state.value != 1 || sc->sc_clock_rate.value == 0 ||
-	    sc->sc_clock_measured.value == 0 ||
 	    (sc->sc_pm & BCMV3D_RESET_N) == 0)
 		return EBUSY;
 	return 0;

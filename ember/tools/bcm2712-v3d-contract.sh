@@ -38,10 +38,16 @@ if [ "${V3D_SKIP_MUTANTS:-0}" = 1 ]; then
     exit 0
 fi
 cp "$work/driver.h" "$work/driver-good.h"
-for mutation in clock-state echoed-id sms-state cleanup; do
+for mutation in clock-state clock-rate pm-reset echoed-id sms-state cleanup; do
     awk -v mutation="$mutation" '
         mutation == "clock-state" {
             changed += sub(/sc->sc_clock_state.value != 1/, "false")
+        }
+        mutation == "clock-rate" {
+            changed += sub(/sc->sc_clock_rate.value == 0/, "false")
+        }
+        mutation == "pm-reset" {
+            changed += sub(/\(sc->sc_pm & BCMV3D_RESET_N\) == 0/, "false")
         }
         mutation == "echoed-id" {
             changed += sub(/le32toh\(request\[5\]\) != VCPROP_CLK_V3D/, "false")

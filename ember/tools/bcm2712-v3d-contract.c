@@ -74,7 +74,7 @@ static unsigned int cases, requests, maps, unmaps, reads, gpu_reads;
 static unsigned int fail_map, fail_read, malformed_word, malformed_call;
 static unsigned int resource_count, cleanups, registration_error;
 static unsigned int fail_eval, fail_parse, pm_fault;
-static uint32_t malformed_value, clock_state, rate, measured, pm_value;
+static uint32_t malformed_value, clock_state, rate, pm_value;
 static uint32_t sms_words[4], ident1;
 static int mailbox_error;
 static unsigned int mailbox_error_call;
@@ -135,17 +135,16 @@ bcmmbox_request(uint8_t chan, void *buf, size_t len, uint32_t *response)
 	assert(le32toh(words[0]) == 32 && words[1] == 0);
 	assert(le32toh(words[3]) == 8 && words[4] == 0);
 	assert(le32toh(words[5]) == 5 && words[6] == 0 && words[7] == 0);
-	assert(tag == VCPROPTAG_GET_CLOCKSTATE || tag == VCPROPTAG_GET_CLOCKRATE ||
-	    tag == VCPROPTAG_GET_CLOCK_MEASURED);
+	assert(tag == VCPROPTAG_GET_CLOCKSTATE || tag == VCPROPTAG_GET_CLOCKRATE);
+	assert(requests <= 2);
+	assert(tag == (requests == 1 ? VCPROPTAG_GET_CLOCKSTATE :
+	    VCPROPTAG_GET_CLOCKRATE));
 	/* A successful result must be reported before the next request. */
 	if (requests > 1)
 		assert(strstr(output, "clock5 state=") != NULL);
-	if (requests > 2)
-		assert(strstr(output, "clock5 rate=") != NULL);
 	if (mailbox_error != 0 && requests == mailbox_error_call)
 		return mailbox_error;
-	value = tag == VCPROPTAG_GET_CLOCKSTATE ? clock_state :
-	    tag == VCPROPTAG_GET_CLOCKRATE ? rate : measured;
+	value = tag == VCPROPTAG_GET_CLOCKSTATE ? clock_state : rate;
 	words[1] = htole32(VCPROP_REQ_SUCCESS);
 	words[4] = htole32(VCPROPTAG_RESPONSE | 8);
 	words[6] = htole32(value);
@@ -161,7 +160,7 @@ bus_space_map(bus_space_tag_t tag, bus_addr_t addr, bus_size_t len,
 {
 	unsigned int i;
 
-	assert(requests == 3 && clock_state == 1 && rate != 0 && measured != 0);
+	assert(requests == 2 && clock_state == 1 && rate != 0);
 	assert((pm_value & BCMV3D_RESET_N) != 0);
 	maps++;
 	if (maps == fail_map)
@@ -283,7 +282,7 @@ reset(void)
 	output_used = 0;
 	output[0] = '\0';
 	clock_state = 1;
-	rate = measured = 800000000;
+	rate = 800000000;
 	pm_value = BCMV3D_RESET_N;
 	memset(sms_words, 0, sizeof(sms_words));
 	ident1 = 0x117;
@@ -314,12 +313,12 @@ main(void)
 {
 	struct bcmv3d_clock_result value;
 	struct bcmv3d_clock_result *clocks[] = { &sc.sc_clock_state,
-	    &sc.sc_clock_rate, &sc.sc_clock_measured };
+	    &sc.sc_clock_rate };
 	static const uint32_t tags[] = { VCPROPTAG_GET_CLOCKSTATE,
-	    VCPROPTAG_GET_CLOCKRATE, VCPROPTAG_GET_CLOCK_MEASURED };
+	    VCPROPTAG_GET_CLOCKRATE };
 	static const char * const stages[] = { "firmware V3D clock state",
-	    "firmware V3D clock rate", "firmware V3D measured clock" };
-	static const char * const names[] = { "state", "rate", "measured" };
+	    "firmware V3D clock rate" };
+	static const char * const names[] = { "state", "rate" };
 	static const int transport_errors[] = { ETIMEDOUT, EIO, ENXIO };
 	static const unsigned int words[] = { 0, 1, 2, 3, 4, 5, 7 };
 	static const uint32_t bad[] = { 31, 0x80000001, 0x12345, 12,
@@ -344,7 +343,7 @@ main(void)
 	assert(!bcmv3d_match(NULL, NULL, &aa));
 	info.Valid = ACPI_VALID_HID;
 
-	for (unsigned int call = 1; call <= 3; call++)
+	for (unsigned int call = 1; call <= 2; call++)
 		for (unsigned int i = 0; i < sizeof(words) / sizeof(words[0]); i++) {
 			reset();
 			malformed_call = call;
@@ -354,7 +353,7 @@ main(void)
 			assert(requests == call && reads == 1);
 			assert(sc.sc_pm_valid && sc.sc_pm_error == 0);
 			assert(strcmp(sc.sc_stage, stages[call - 1]) == 0);
-			for (unsigned int j = 0; j < 3; j++) {
+			for (unsigned int j = 0; j < 2; j++) {
 				assert(clocks[j]->status == (j < call - 1 ?
 				    BCMV3D_CLOCK_VALID : j == call - 1 ?
 				    BCMV3D_CLOCK_RESPONSE_ERROR :
@@ -382,7 +381,17 @@ main(void)
 	reset();
 	assert(bcmv3d_clock(&sc, 0x38002, &value) == EINVAL && requests == 0);
 	assert(value.status == BCMV3D_CLOCK_INVALID_TAG && value.error == EINVAL);
-	for (unsigned int call = 1; call <= 3; call++)
+	reset();
+	assert(bcmv3d_clock(&sc, VCPROPTAG_GET_CLOCK_MEASURED, &value) == EINVAL);
+	assert(value.status == BCMV3D_CLOCK_INVALID_TAG && requests == 0);
+	/* Clock ID zero is not accepted for either required property. */
+	for (unsigned int call = 1; call <= 2; call++) {
+		reset(); malformed_call = call; malformed_word = 5;
+		malformed_value = 0;
+		assert(denied() == EIO && requests == call && reads == 1);
+		assert(clocks[call - 1]->status == BCMV3D_CLOCK_RESPONSE_ERROR);
+	}
+	for (unsigned int call = 1; call <= 2; call++)
 		for (unsigned int i = 0; i < 3; i++) {
 			reset();
 			mailbox_error = transport_errors[i];
@@ -390,7 +399,7 @@ main(void)
 			assert(denied() == mailbox_error);
 			assert(requests == call && reads == 1 && sc.sc_pm_valid);
 			assert(strcmp(sc.sc_stage, stages[call - 1]) == 0);
-			for (unsigned int j = 0; j < 3; j++) {
+			for (unsigned int j = 0; j < 2; j++) {
 				assert(clocks[j]->status == (j < call - 1 ?
 				    BCMV3D_CLOCK_VALID : j == call - 1 ?
 				    BCMV3D_CLOCK_TRANSPORT_ERROR :
@@ -406,16 +415,16 @@ main(void)
 		}
 	/* An ignored tag and an extended reply both leave the GPU gate shut. */
 	for (unsigned int i = 0; i < 2; i++) {
-		reset(); malformed_call = 3; malformed_word = 4;
+		reset(); malformed_call = 2; malformed_word = 4;
 		malformed_value = i == 0 ? 0 : VCPROPTAG_RESPONSE | 12;
-		assert(denied() == EIO && requests == 3 && reads == 1);
-		assert(sc.sc_clock_state.value == 1 && sc.sc_clock_rate.value == rate);
-		assert(sc.sc_clock_measured.status == BCMV3D_CLOCK_RESPONSE_ERROR);
-		assert(strstr(output, "clock5 measured=") == NULL);
+		assert(denied() == EIO && requests == 2 && reads == 1);
+		assert(sc.sc_clock_state.value == 1);
+		assert(sc.sc_clock_rate.status == BCMV3D_CLOCK_RESPONSE_ERROR);
+		assert(strstr(output, "clock5 rate=") == NULL);
 	}
 	/* Independent PM failure must not hide the earlier firmware error. */
-	reset(); malformed_call = 3; malformed_word = 4; pm_fault = 1;
-	assert(denied() == EIO && strcmp(sc.sc_stage, stages[2]) == 0);
+	reset(); malformed_call = 2; malformed_word = 4; pm_fault = 1;
+	assert(denied() == EIO && strcmp(sc.sc_stage, stages[1]) == 0);
 	assert(!sc.sc_pm_valid && sc.sc_pm_error == EFAULT && reads == 1);
 	assert(strstr(output, "PM_GRAFX2712: error") != NULL);
 	assert(strstr(output, "PM_GRAFX2712=") == NULL);
@@ -433,9 +442,6 @@ main(void)
 	reset(); rate = 0; denied();
 	assert(sc.sc_clock_rate.status == BCMV3D_CLOCK_VALID);
 	assert(strstr(output, "clock5 rate=0 Hz\n") != NULL);
-	reset(); measured = 0; denied();
-	assert(sc.sc_clock_measured.status == BCMV3D_CLOCK_VALID);
-	assert(strstr(output, "clock5 measured=0 Hz\n") != NULL);
 	reset(); pm_value = 0; denied();
 	assert(sc.sc_pm_valid && strstr(output, "PM_GRAFX2712=0\n") != NULL);
 	for (unsigned int i = 0; i < 4; i++) {
@@ -494,9 +500,13 @@ main(void)
 	assert(finalizer != NULL && cleanups == 1);
 	assert(requests == 0 && reads == 0 && maps == 0);
 	assert(finalizer(&dev) == 0);
-	assert(sc.sc_observed && requests == 3 && maps == 3 && unmaps == 3);
+	assert(sc.sc_observed && requests == 2 && maps == 3 && unmaps == 3);
 	assert(gpu_reads == 8 && sc.sc_ident1 == 0x117);
-	assert(finalizer(&dev) == 0 && requests == 3 && maps == 3);
+	assert(strstr(output, "measured") == NULL);
+	assert(finalizer(&dev) == 0 && requests == 2 && maps == 3);
+	reset(); pm_value = 0x1040;
+	assert(bcmv3d_observe(&sc) == 0 && requests == 2);
+	assert(maps == 3 && unmaps == 3 && gpu_reads == 8);
 	reset(); mailbox_error = ETIMEDOUT;
 	assert(bcmv3d_finalize(&dev) == 0);
 	assert(bcmv3d_finalize(&dev) == 0 && requests == 1);
