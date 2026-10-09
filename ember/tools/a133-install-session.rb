@@ -32,6 +32,11 @@ module A133Install
   def digest(value)
     Digest::SHA256.hexdigest(JSON.generate(canonical(value)))
   end
+  def bundle_digest(receipt)
+    copy=JSON.parse(JSON.generate(receipt))
+    copy['artifacts'].sort_by! { |row| row['role'] }
+    digest(copy)
+  end
   def context_valid!(context)
     valid=exact?(context,%w[schema board serial cid source_commit backup_sha256 recovery_sha256 protected_env_sha256 artifacts]) &&
       context['schema'].is_a?(Integer) && context['schema']==1 && context['board']=='ys-m33-a133' &&
@@ -72,25 +77,30 @@ module A133Install
       raise Invalid,'session_missing' if !context && !File.exist?(lock)
       flags=File::RDWR|File::NOFOLLOW|File::NONBLOCK
       flags|=File::CREAT if context
-      File.open(lock,flags,0600) do |file|
-        secure_file!(file.stat)
-        file.close_on_exec=true
-        raise Invalid,'session_busy' unless file.flock(File::LOCK_EX|File::LOCK_NB)
-        store=new(path)
-        store.__send__(:locked,context) { |value| yield value }
+      File.open(path,File::RDONLY|File::NOFOLLOW) do |directory_file|
+        directory_file.close_on_exec=true
+        File.open(lock,flags,0600) do |file|
+          secure_file!(file.stat)
+          file.close_on_exec=true
+          raise Invalid,'session_busy' unless file.flock(File::LOCK_EX|File::LOCK_NB)
+          store=new(path,directory_file,file)
+          store.__send__(:locked,context) { |value| yield value }
+        end
       end
     rescue SystemCallError,IOError
       raise Invalid,'session_io_failed'
     end
 
-    def initialize(directory)
+    def initialize(directory,directory_file,lock_file)
       @directory=directory
       @path=File.join(directory,'state.json')
+      @directory_file,@lock_file=directory_file,lock_file
     end
     def locked(context)
       @owner_pid=Process.pid
       @owner_thread=Thread.current
       begin
+        assert_locked!
         load_or_create(context)
         yield self
       ensure
@@ -100,6 +110,16 @@ module A133Install
     end
     def assert_locked!
       raise Invalid,'session_not_locked' unless @owner_pid==Process.pid && @owner_thread==Thread.current
+      current=File.lstat(@directory)
+      held=@directory_file.stat
+      raise Invalid,'session_scope_changed' unless [current,held].all? do |stat|
+        stat.directory? && stat.uid==Process.uid && stat.mode&07777==0700
+      end && current.dev==held.dev && current.ino==held.ino
+      current=File.lstat(File.join(@directory,'.lock'))
+      held=@lock_file.stat
+      self.class.secure_file!(current)
+      self.class.secure_file!(held)
+      raise Invalid,'session_scope_changed' unless current.dev==held.dev && current.ino==held.ino
     end
     def valid_state!(data)
       valid=A133Install.exact?(data,%w[schema context session_id revision roles checksum]) &&
@@ -155,9 +175,11 @@ module A133Install
         file.flush
         file.fsync
       end
+      assert_locked!
       File.rename(temp,@path)
-      File.open(@directory,File::RDONLY) { |file| file.fsync }
+      # Publication is already visible even if the directory fsync fails.
       @data=data
+      @directory_file.fsync
     ensure
       if owned && temp
         begin
@@ -202,12 +224,16 @@ module A133Install
     private_class_method :new
   end
 
-  def run(directory:,manifest:,adb:,serial:,cid:,backup:,protected_env:,timeout: 600)
+  def run(directory:,manifest:,adb:,serial:,cid:,backup:,protected_env:,timeout: 600,expected_bundle_sha256:nil)
     store=nil
     active=nil
     written=0
     attempted=false
     verified=A133Bundle.verify(manifest)
+    if expected_bundle_sha256
+      raise Invalid,'session_bundle_changed' unless sha?(expected_bundle_sha256) &&
+        bundle_digest(verified[:receipt])==expected_bundle_sha256
+    end
     raise Invalid,'invalid_backup_receipt' unless backup.is_a?(Hash) && backup['cid']==cid &&
       backup['status']=='backup_integrity_verified' && backup['bytes']==A133Backup::BYTES &&
       %w[gpt_headers_crc gpt_arrays_crc partition_layout_verified].all? { |key| backup[key]==true } &&
