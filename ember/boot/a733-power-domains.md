@@ -206,12 +206,13 @@ Q_STOPPED before clock removal. This justifies failure retention, not a claim
 that clocks caused the pending CORE transition. The experiment never changes
 PWCR, supplies, PCK delays or power policy, and never requests CORE power-off.
 
-On physical Zero 3W, #11 completed GPU_CLK UPDATE and passed local CCU
+On physical Zero 3W, the current experiment completed GPU_CLK UPDATE and passed local CCU
 readiness before the bounded waiter returned `ETIMEDOUT` (60): CORE PWPR
 `0x8`, PWSR `0`, MISR `0`. Resources remained reserved until reboot; no GPU
 access or rollback followed. Restoring the normal DTB returned observe-only
 operation and ended the reservation. The failing PCSM or Q-Channel phase
-remains unknown, as do separate post-PLL gate states. See the
+remains unknown. The separate post-PLL gates are open before preparation and
+after timeout. See the
 [physical result](a733-gpu-identification.md#physical-result).
 
 ## Provenance

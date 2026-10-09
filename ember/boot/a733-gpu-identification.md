@@ -8,45 +8,48 @@ The [driver](https://github.com/oxtech-ember/EmberBSD/blob/main/sys/arch/arm/sun
 is owned by EmberBSD. Software contracts, the complete GCC16 kernel build
 and physical attachment on Zero 3W are verified. Physical GPU identification
 has not yet been accepted. Read-only provider observations are verified;
-the corrected #11 experiment completed GPU_CLK UPDATE but GPU_CORE still
+the current experiment completed GPU_CLK UPDATE with the observed post-PLL
+gates open, but GPU_CORE still
 failed its strict ON/Q readiness check. No GPU register was accessed.
 
 ## Physical result
 
-On 2026-10-09, a 4 GiB Orange Pi Zero 3W booted `EMBER64 #11` from
-`aaff1e121ce4a77748ff6b7be21f4e226c9e3c4b` with the separate experimental DTB.
-The GPU, CCU, PCK and board DT sources match `f455d303824` exactly. The board
-revision was not recorded. The installed kernel, modules, vendor boot0/U-Boot
-and boot script were preserved; only the DTB selected the existing opt-in.
+On 2026-10-09, a 4 GiB Orange Pi Zero 3W booted the complete GCC16.2 kernel
+and matched modules from `f85ffd420f6aff450bac2709aa76f0da5a537551`, using the
+separate experimental DTB. The board revision was not recorded. Vendor
+boot0/U-Boot and the boot script were preserved; a previous matched bundle
+was backed up before installation.
 
 GPU_CLK UPDATE completed before the CORE waiter. The terminal CCU observation
 reported readiness with `GPU_CLK=0x83000000`, `GPU_BGR=0x00010001` and
 `AHB=0x03000002`. Bit 27 was clear. The decoded core/bus rates were 400/200 MHz;
 neither clock frequency nor the configured 800000-microvolt supply was
-independently measured. This snapshot does not observe the separate
-post-PLL automatic branch gates.
+independently measured. Before preparation and after timeout, both samples
+of PERI0PLL_GATE_EN/STATUS were `0x8fff0fff`/`0x0fff0000`: configured,
+no-auto and effective masks were all `0xfff`. This includes the 400M,
+400M_ALL, 600M and 800M branches; gate status is not a frequency measurement.
 
 CORE still returned `ETIMEDOUT` (60), with last `PWPR=0x8`, `PWSR=0`, `MISR=0`.
 There was no GPU mapping or PBVNC read. The clock/domain leases remained
 reserved until reboot. Restoring the normal DTB and rebooting returned
 observe-only operation and SSH; GPU_CLK/GPU_BGR were zero again. Kernel,
-boot script and normal DTB hashes matched the saved baseline.
+normal DTB and retained recovery image hashes matched the expected bundle.
 
 | Artifact | SHA256 |
 | --- | --- |
-| Kernel ELF | `bfd0d09f63dc364570a6d0f4b59879964f26d456016634e8053048e15095939b` |
-| Native kernel image | `1fd60e47965f2eec95e0fabeb01de63f0e44c93393c1c965ef7264dc483c5696` |
+| Kernel ELF | `529fe5130070131bbc6b6f59881b0430129ed92bde37d3d0023caa46fd604bca` |
+| Native kernel image | `66880ad9d1a2ec06cdf411de17a489c3f3b28c7b62ef9e704ff7053c8c4db143` |
 | Experimental DTB | `7a840baec0c4c76455b1ce8b2252e63bfea7a121e88c38c43c413ab1575dab7c` |
 | Restored normal DTB | `a2bd07430948db61140040a1a5c0d5872f5797a4719d7af6ff00b6c0d8d88113` |
 
-This run excludes unfinished UPDATE for this attempt. It does not distinguish
-a stalled PCSM phase from Q-Channel exit or establish the remaining clocks.
+This run excludes unfinished UPDATE and closed observed post-PLL gates.
+It does not distinguish a stalled PCSM phase from Q-Channel exit.
 MISR contains sampled input levels, not transition phase or request outputs.
 The observation does not justify a PWCR override or relaxed readiness.
 The preceding #8 attempt on 2026-10-08 did not wait for UPDATE; its same CORE
 timeout cannot retroactively establish that clocks were configured then.
 
-The normal #11 baseline agrees with the earlier #7/#8 observations:
+The normal baseline agrees with the earlier #7/#8/#11 observations:
 
 - RTC status `0x183fb0f7` classifies DCXO as 26 MHz. PLL_REF `0xf8675f00`
   normalizes it to 24 MHz. The fixed-hosc DT provider remains unchanged.

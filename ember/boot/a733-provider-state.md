@@ -143,4 +143,7 @@ from physical identification or accelerator workload acceptance.
 The post-PLL extension passes 18,245 clock assertions and 1,212 consumer
 checks on macOS, including ASan/UBSan. Fourteen compiled preparation mutants
 are rejected. The no-RTC build rejects inspection before MMIO. These are
-software contracts; post-PLL hardware observations remain pending.
+software contracts; the cross-built fixtures also pass on Zero 3W CPU.
+The [physical experiment](a733-gpu-identification.md#physical-result) confirms
+open post-PLL gates before preparation and after CORE timeout. GPU identity
+and accelerator execution remain unverified.

@@ -30,6 +30,7 @@ The carrier PCB revision and exact four-wire fan model were not established.
 | Voltage regulators | Not validated |
 | USB | Not validated as a running OS peripheral; USB boot/eMMC provisioning is separate |
 | Hardware random numbers | Not validated |
+| V3D GPU | Native observer boots and validates firmware state/rate and PM reset status; measured-clock reply has an unexpected ID, so GPU MMIO is not accessed. Identification and acceleration remain unverified ([result](../boot/bcm2712-v3d.md#physical-cm5-result)) |
 
 Long-run stability has not been established. Application results from an
 AArch64 VM do not validate this board's camera, audio or GPU/NPU paths.

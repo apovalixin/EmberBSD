@@ -33,7 +33,7 @@ Board revision: not recorded in the original support table.
 | Hardware random numbers | Tested |
 | GPU/NPU power domains | Native PCK600 provider passes software contracts and GCC16 cross object builds; physical transitions and acceleration unverified ([guide](../boot/a733-power-domains.md)) |
 | GPU/NPU clocks and resets | Native main CCU providers pass 199 software assertions and GCC12/GCC16 object builds; firmware PLLs stay unchanged, physical sequencing unverified ([guide](../boot/a733-accelerator-clocks.md)) |
-| GPU identification | The #11 opt-in completes GPU clock UPDATE; CORE ON/Q still times out before GPU MMIO. Normal observation and recovery boot pass; identity and acceleration remain unverified ([physical result](../boot/a733-gpu-identification.md#physical-result)) |
+| GPU identification | The opt-in completes GPU clock UPDATE with observed post-PLL gates open; CORE ON/Q still times out before GPU MMIO. Normal observation and recovery boot pass; identity and acceleration remain unverified ([physical result](../boot/a733-gpu-identification.md#physical-result)) |
 
 Long-run stability has not been established. Application results from an
 AArch64 VM do not validate this board's camera, audio or GPU/NPU paths.

@@ -417,10 +417,10 @@ on every board in the hardware catalog.
   reads stable power-controller snapshots and identifies both GPU domains
   as single-Q-Channel PPUs; the inconsistent CORE state remains unresolved.
   The corrected [clock-only experiment](ember/boot/a733-gpu-identification.md#physical-result)
-  completed GPU_CLK UPDATE on physical Zero 3W with kernel #11. CCU reported
+  completed GPU_CLK UPDATE on physical Zero 3W. CCU reported
   400/200 MHz configuration, but CORE ON/Q still timed out before GPU MMIO.
   Reboot with the restored normal DTB returned gated clocks and SSH.
-  Separate post-PLL gates were not observed in this run. Physical identity,
+  The observed post-PLL gates were open before preparation and after timeout. Physical identity,
   the cause of the remaining CORE transition and acceleration are unverified.
   The missing power handshake, general shared resource management, DMA/MMU
   and command submission still require porting. These are
@@ -438,7 +438,9 @@ on every board in the hardware catalog.
   This validates the ACPI polling/DMA success path; hardware IRQ/fault handling
   remains unverified. A [native BCM2712 V3D observer](ember/boot/bcm2712-v3d.md)
   validates firmware clock/reset state before fault-aware identification;
-  70 actual-source cases pass on host and CM5 CPU with fake hardware.
+  81 actual-source cases pass on host and CM5 CPU with fake hardware.
+  On physical CM5, its matched kernel boots but rejects the measured-clock
+  reply's unexpected ID before GPU access; state/rate and PM status are recorded.
   Physical V3D identification and acceleration remain unverified.
 
 ### Board support and system builds
