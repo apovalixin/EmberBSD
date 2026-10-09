@@ -2270,6 +2270,16 @@ aicwf_rx_data(struct aicwf_softc *sc, const uint8_t *pkt, size_t mpdu_len)
 
 	if (!sc->sc_if_attached || (flags & AICWF_RX_FLAG_UPLOAD) == 0)
 		return;
+	/* Metadata only: protected management bodies may contain key material. */
+	if (mpdu_len >= sizeof(struct ieee80211_frame) &&
+	    (wh[0] & IEEE80211_FC0_TYPE_MASK) == IEEE80211_FC0_TYPE_MGT &&
+	    (wh[0] == IEEE80211_FC0_SUBTYPE_DEAUTH ||
+	    wh[0] == IEEE80211_FC0_SUBTYPE_DISASSOC ||
+	    wh[0] == 0xd0))	/* Action; absent from legacy net80211. */
+		IEEE80211_DPRINTF(&sc->sc_ic, IEEE80211_MSG_STATE,
+		    "management RX: subtype 0x%02x flags 0x%02x len %zu "
+		    "status 0x%08x descriptor 0x%08x\n",
+		    wh[0], wh[1], mpdu_len, status, flags);
 	if (mpdu_len >= 2 && wh[0] == IEEE80211_FC0_SUBTYPE_AUTH) {
 		/* Unassociated management frames can have no firmware VIF. */
 		const uint8_t vif = (flags >> 8) & 0xff;
