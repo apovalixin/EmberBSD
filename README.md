@@ -331,7 +331,10 @@ on every board in the hardware catalog.
   consumers in AArch64 VM, preparing the current SVG path.
   The matching [Rust build-host package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/rust.md)
   and cargo-c pass normal macOS installation and a native Rust/C ABI consumer
-  after a Ports correction to Mach-O dependency metadata.
+  after a Ports correction to Mach-O dependency metadata. Its
+  [packaged NetBSD std](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-build-tools/rust-target-std.md)
+  installs into the same host compiler and passes target TLS/C consumers and
+  an offline Cargo target with macOS proc macros in the AArch64 VM.
   labwc client surfaces and full SVG
   remain unaccepted.
   A Ports
