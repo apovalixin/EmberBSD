@@ -43,11 +43,11 @@
 - Consumes: current Entry policy/codec/Source/channel.
 - Produces: frozen Policy snapshot and Readback.verify(expected: original/armed/consumed) with whole boot/bootloader/recovery/env checks, zero writes and hardware_bytes.
 
-- [ ] **Step 1: Write actual-I/O tests** for frozen policy/input mutation, exact modes/states, consumed reordering/extra changes, boot/critical/tail drift, usage and invalid capture/options/privacy.
-- [ ] **Step 2: Run new readback test.** Expected: FAIL with missing Policy/Readback.
-- [ ] **Step 3: Implement shared policy and verifier**, preserve Entry write behavior and old reasons.
-- [ ] **Step 4: Run new tests and Entry65/regression2 on both Rubies.** Expected: all pass.
-- [ ] **Step 5: Commit** `feat(a133): verify immutable factory recovery states`.
+- [x] **Step 1: Write actual-I/O tests** for frozen policy/input mutation, exact modes/states, consumed reordering/extra changes, boot/critical/tail drift, usage and invalid capture/options/privacy.
+- [x] **Step 2: Run new readback test.** Expected: FAIL with missing Policy/Readback.
+- [x] **Step 3: Implement shared policy and verifier**, preserve Entry write behavior and old reasons.
+- [x] **Step 4: Run new tests and Entry65/regression2 on both Rubies.** Expected: all pass.
+- [x] **Step 5: Commit** `feat(a133): verify immutable factory recovery states`.
 
 ### Task 2: Guarded reboot transitions and public instructions
 

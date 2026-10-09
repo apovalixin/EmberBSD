@@ -2,7 +2,7 @@
 # Origin: EmberBSD - guarded locked-Android recovery entry and factory env restoration.
 require 'stringio'
 require 'shellwords'
-require_relative 'a133-recovery-env'
+require_relative 'a133-recovery-policy'
 require_relative 'a133-usb-backup-source'
 
 module A133Recovery
@@ -24,33 +24,8 @@ module A133Recovery
       raise failure,cause:nil
     end
 
-    def sha?(value)
-      value.is_a?(String) && value.ascii_only? && value.match?(/\A[0-9a-f]{64}\z/)
-    end
-
     def policy(original_env,backup)
-      hashes=backup.is_a?(Hash) ? backup['partition_sha256'] : nil
-      raise A133Usb::Invalid,'invalid_entry_backup' unless backup.is_a?(Hash) &&
-        backup['serial']==@serial && backup['cid']==@cid && backup['status']=='backup_integrity_verified' &&
-        backup['bytes']==A133Backup::BYTES && %w[gpt_headers_crc gpt_arrays_crc partition_layout_verified
-          critical_copies_verified hardware_boot_copies_verified].all? { |key| backup[key]==true } &&
-        sha?(backup['uncompressed_sha256']) && sha?(backup['gpt_sha256']) && hashes.is_a?(Hash) &&
-        hashes.keys.all? { |key| key.is_a?(String) } &&
-        hashes.keys.sort==%w[boot bootloader env recovery] && hashes.values.all? { |value| sha?(value) }
-      pinned=%w[env bootloader recovery].each_with_object({}) { |key,out| out[key]=hashes[key].dup.freeze }
-      gpt_sha=backup['gpt_sha256'].dup.freeze
-      bytes=A133Backup::INVENTORY.find { |part| part[:name]=='env' }.fetch(:sectors)*512
-      raise A133Usb::Invalid,'original_environment_size_mismatch' unless original_env.is_a?(String) && original_env.bytesize==bytes
-      original=original_env.b.dup.freeze
-      raise A133Usb::Invalid,'original_environment_hash_mismatch' unless Digest::SHA256.hexdigest(original)==pinned['env']
-      prefix=original.byteslice(0,A133Env::SIZE).freeze
-      armed=A133Recovery.prepare(prefix).freeze
-      tail=original.byteslice(A133Env::SIZE,bytes-A133Env::SIZE)
-      consumed=A133Env.decode(prefix).fetch(:entries).to_h.merge(A133Recovery::UPDATES.reject { |key,_| key=='hook' })
-      consumed=consumed.each_with_object({}) { |(key,value),out| out[key.dup.freeze]=value.dup.freeze }.freeze
-      {original_sha:pinned['env'],armed_sha:Digest::SHA256.hexdigest(armed+tail),
-        original_prefix:prefix,armed_prefix:armed,tail_sha:Digest::SHA256.hexdigest(tail),
-        consumed:consumed,bootloader_sha:pinned['bootloader'],recovery_sha:pinned['recovery'],gpt_sha:gpt_sha}.freeze
+      A133Recovery::Policy.new(serial:@serial,cid:@cid,original_env:original_env,backup:backup).data
     end
 
     def read_hash(role)
@@ -131,6 +106,6 @@ module A133Recovery
     def restore(original_env:,backup:)
       transition(:restore,original_env,backup)
     end
-    private :sha?,:policy,:read_hash,:read_environment,:guard!,:consumed?,:transition
+    private :policy,:read_hash,:read_environment,:guard!,:consumed?,:transition
   end
 end
