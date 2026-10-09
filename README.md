@@ -363,12 +363,14 @@ on every board in the hardware catalog.
   The [librsvg 2.63.2 package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/librsvg.md)
   passes four CM5 CPU-rendering cycles: SVG/PNG pixels, dynamic SVG loading,
   embedded AVIF, text and typelib invocation. Ports repaired the isolated
-  consumer's missing MIME database; labwc surfaces and GPU rendering remain
-  separate acceptance stages.
+  consumer's missing MIME database; this is CPU-rendering acceptance.
   Ports' [labwc 0.20.2nb2 package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/labwc.md)
   cross-builds on macOS with SVG, icons, translations and man pages.
   All 62 installed files/links and 80 target ELF files pass inspection.
-  A complete Wayland session and GPU rendering remain unaccepted.
+  Ports' separate [labwc session check](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/labwc-session.md)
+  passes two VirGL/ANGLE Metal sessions on Apple M4: four EGL frames each,
+  screencopy pixels, actual virtual USB input and clean restart. Sustained
+  desktop use, VT switching and physical-board GPU acceleration remain unaccepted.
   A Ports
   [host-side VirGL 1.3.0 adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/utm-virgl-host)
   preserves the upstream IOV-size correction and prevents resource publication
