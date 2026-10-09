@@ -115,6 +115,22 @@ The four modules were installed from the same build. Existing DTB, boot
 firmware and partition layout were preserved; a previous kernel remains
 available for recovery.
 
+## Management-frame diagnostic, 2026-10-09
+
+Cross-built `EMBER64 #10` from `34b57a229ddd500e2f780a7b0be0717698877f2c`
+booted on the same 4 GiB board with matching modules. After the mesh removed
+the 2.4 GHz association, the driver received unprotected deauthentication
+frames while the supplicant stayed COMPLETED. Clearing the temporary BSSID
+lock did not restore traffic. The test's timed service restart restored
+SAE/PMF on 5 GHz; an 8 MiB file passed in both directions with equal hashes.
+See [the recovery boundary](../boot/aicwf-sae.md#band-steering-and-acceptance).
+SA Query recovery is not implemented by this diagnostic change.
+
+Kernel SHA256: ELF
+`2308326611c7716585de7ddcf97f2d3af2472dc8c35c390c63e455336f28da35`;
+native image
+`eeeda8ce0d71e8e186d063c29bc0a0d56b56a222b6f3dac25d28ec07b01d831e`.
+
 ## Evidence
 
 ### Accelerator provider boot, 2026-10-08

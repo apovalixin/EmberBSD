@@ -44,6 +44,25 @@ checks before attributing that failure to SAE or the kernel. In the physical
 Zero 3W trial, the AP explicitly prohibited 2.4 GHz about a minute after joining;
 the same policy removed WPA2 and WPA3 associations.
 
+A 2026-10-09 diagnostic build reproduced the removal with the BSSID lock
+cleared after association. The driver received repeated unprotected,
+26-byte deauthentication frames but did not forward them to the supplicant.
+No firmware disconnect indication arrived. A timed restart of the normal
+supplicant service restored 5 GHz and an 8 MiB bidirectional transfer passed.
+This is recovery by the test harness, not autonomous driver recovery.
+The captured metadata does not include the reason code or frame addresses.
+
+The host path currently lacks SA Query handling for an AP/STA state mismatch.
+Do not convert an unprotected deauthentication frame directly into a trusted
+disconnect. A complete fix must validate the peer and reason, use protected
+SA Query requests and responses, and reject stale, replayed or unauthenticated
+responses. Negotiated PMF alone does not validate that recovery path.
+
+Diagnostic builds expose management-frame type, flags, length and hardware
+status through `sysctl -w net.link.ieee80211.vap0.debug=524288` (verify that
+`vap0.parent` is the intended interface). No frame body or key is logged.
+Restore the previous debug value after the trial.
+
 Do not pin the client to a BSSID that the AP's policy forbids. For a network
 that requires 5 GHz, set the network profile's `freq_list` to its allowed
 5 GHz frequencies, without a BSSID lock. Other network profiles can retain
@@ -82,7 +101,7 @@ the driver being tested.
 
 The wire layout was inspected in Radxa's AIC8800 SDIO driver at revision
 [`d13d07963cd15d731e2895e8288a04cca6152ac9`](https://github.com/radxa-pkg/aic8800/tree/d13d07963cd15d731e2895e8288a04cca6152ac9/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv):
-`lmac_msg.h`, `lmac_mac.h`, `rwnx_msg_tx.c`, `rwnx_msg_rx.c`, `rwnx_tx.c`
+`lmac_msg.h`, `lmac_mac.h`, `rwnx_msg_tx.c`, `rwnx_msg_rx.c`, `rwnx_tx.c`,
 `rwnx_rx.h` and `aicwf_sdio.c`. The BSD implementation uses those protocol facts; it does
 not import the GPL Linux driver. Keep the vendor firmware's redistribution
 terms separate from the host driver's licence.
