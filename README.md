@@ -463,8 +463,9 @@ on every board in the hardware catalog.
   186 actual-source cases pass on host and CM5 CPU with fake hardware.
   On physical CM5, the matched kernel identifies V3D 7.1 with one core and
   reads HUB/CORE/MMU registers after validated clock/reset and stable idle SMS
-  checks. The field-based SMS correction preserves unchanged mode fields;
-  no firmware or SMS write is added. GPU DMA/MMU operation, interrupts,
+  checks. A separate opt-in [native reset probe](ember/boot/bcm2712-v3d-takeover.md)
+  completes SMS and PM reset on that CM5 and validates the post-reset inventory.
+  The ordinary kernel remains a passive observer. GPU DMA/MMU operation, interrupts,
   command submission, Mesa rendering and acceleration remain unverified.
 
 ### Board support and system builds

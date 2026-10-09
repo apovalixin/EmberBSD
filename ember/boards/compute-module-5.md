@@ -30,7 +30,7 @@ The carrier PCB revision and exact four-wire fan model were not established.
 | Voltage regulators | Not validated |
 | USB | Not validated as a running OS peripheral; USB boot/eMMC provisioning is separate |
 | Hardware random numbers | Not validated |
-| V3D GPU | Physical V3D 7.1 identification, one core and readable HUB/CORE/MMU registers confirmed with a matched GCC16 kernel. GPU commands, DMA/MMU operation, rendering and acceleration remain unverified ([result](../boot/bcm2712-v3d.md#physical-cm5-result)) |
+| V3D GPU | Physical V3D 7.1 identification and one opt-in native SMS/PM reset completed with matched GCC16 kernels. GPU commands, DMA/MMU operation, rendering and acceleration remain unverified ([identification](../boot/bcm2712-v3d.md#physical-cm5-result), [reset](../boot/bcm2712-v3d-takeover.md#physical-cm5-acceptance)) |
 
 Long-run stability has not been established. Application results from an
 AArch64 VM do not validate this board's camera, audio or GPU/NPU paths.

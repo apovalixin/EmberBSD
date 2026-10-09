@@ -148,6 +148,35 @@ Zero 3W running EmberBSD `f85ffd420f6`. Its SHA256 was
 This execution used simulated V3D registers on the board's CPU; it did not
 touch the A733 GPU or establish physical CM5 reset support.
 
+## Physical CM5 acceptance
+
+On 2026-10-09, the clean GCC16 cross build from
+`8f73f416cfa96120eb02862b1adfacf97d2728ac` booted as `EMBERV3D #1`
+on CM5 Rev 1.0, BCM2712 D0, 4 GiB, on Waveshare CM5-NANO-B.
+The carrier PCB revision and installed UEFI source revision remain unknown.
+The existing firmware was retained. The installed kernel SHA256 was
+`0bfbde78e9a83b7b088110a179c6da5d1f7eefccf6588efb7d3008443abf51b3`;
+buildinfo and all four matched module hashes were verified.
+
+The probe completed the initial interrupt masks, SMS clear-power-off and
+reset, the PM reset cycle, post-reset masks and the second inventory.
+It reported completion at 2.309 seconds after kernel start. All 22 inventory
+registers matched their pre-reset values, including V3D 7.1 identity,
+MMU_CTL=0, MMUC_CTL=0x80000000, PT_BASE=0, BYPASS=0..0xfff,
+TFU_CS=0x2000, TFU_SU=0, CSD_STATUS=0, GMP_STATUS=0x30,
+ERR_STAT=0x1000 and both interrupt status registers=0.
+PM remained 0x1040; SMS returned to REE=0/TEE=0x50.
+SSH over Wi-Fi worked after boot. The successful boot receipt SHA256 is
+`768334cfa301aac4ce8b3732e553a80fee08d5bac88065fe401e9d336df5da92`.
+
+The previous ordinary kernel, modules and boot configuration were backed up
+and verified on both board and host before installation. After this one
+short acceptance run, the ordinary `EMBER64` bundle was restored.
+This proves the reset sequence on this firmware handoff, not repeated reset,
+firmware exclusion, AXI drain, DMA/MMU operation, interrupts, command
+submission or graphics acceleration. The first SSH attempt timed out during
+startup; the later connection retrieved the complete successful boot log.
+
 ## Implementation checklist
 
 - [x] Keep option-free observation free of claims and all hardware writes.
@@ -159,8 +188,8 @@ touch the A733 GPU or establish physical CM5 reset support.
   failure, SMS modes/states/timeouts, PM corruption, reset ordering/delay,
   quarantine and absence of DMA/submission.
 - [x] Run the passive regression and new contracts with ASan/UBSan on macOS.
-- [ ] Independently review, then cross-build the complete clean-commit kernel.
-- [ ] Record physical acceptance separately; no physical takeover is yet proven.
+- [x] Independently review, then cross-build the complete clean-commit kernel.
+- [x] Record one physical reset acceptance separately from software contracts.
 
 The next DMA experiment needs a separate design and acceptance. In particular,
 _CCA=0 requires actual bus_dma mappings and CPU/GPU cache synchronization;
