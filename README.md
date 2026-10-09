@@ -361,8 +361,10 @@ on every board in the hardware catalog.
   Ports' [complete GdkPixbuf package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/gdk-pixbuf.md)
   passes thirteen raster formats and four decoding cycles on CM5.
   The [librsvg 2.63.2 package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/librsvg.md)
-  builds, but its SVG-loader runtime check fails; that checkpoint is not full SVG acceptance.
-  labwc client surfaces and full SVG remain unaccepted.
+  passes four CM5 CPU-rendering cycles: SVG/PNG pixels, dynamic SVG loading,
+  embedded AVIF, text and typelib invocation. Ports repaired the isolated
+  consumer's missing MIME database; labwc surfaces and GPU rendering remain
+  separate acceptance stages.
   A Ports
   [host-side VirGL 1.3.0 adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/utm-virgl-host)
   preserves the upstream IOV-size correction and prevents resource publication
