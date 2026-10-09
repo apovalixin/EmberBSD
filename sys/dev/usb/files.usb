@@ -1,3 +1,4 @@
+# Origin: EmberBSD external ucom transport build integration, 2026-10-10.
 #	$NetBSD: files.usb,v 1.182.2.2 2025/12/14 11:18:30 martin Exp $
 #
 # Config file and device description for machine-independent USB code.
@@ -136,6 +137,8 @@ file	dev/usb/umidi_quirks.c		umidi
 device	ucom
 attach	ucom at ucombus
 file	dev/usb/ucom.c			ucom | ucombus		needs-flag
+file	dev/usb/ucom_transport_core.c	ucom | ucombus
+file	dev/usb/ucom_transport_rx.c	ucom | ucombus
 
 
 # Generic devices
