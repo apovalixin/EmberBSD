@@ -11,7 +11,9 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifndef __BIT
 #define __BIT(n) (UINT32_C(1) << (n))
+#endif
 #define KASSERT(v) assert(v)
 #define BUS_SPACE_BARRIER_READ 1
 #define BUS_SPACE_BARRIER_WRITE 2
@@ -307,6 +309,28 @@ stopped(int expected)
 	assert(writes == old_writes);
 }
 
+static void
+physical_snapshot(void)
+{
+	/*
+	 * CM5 Rev 1.0 / BCM2712 D0 / 4 GiB, R5 boot 2026-10-09.
+	 * SSH dmesg receipt SHA256:
+	 * 56450c7765791190c4428385c8efdeecf490652003f53d97fac3551d26f83de2.
+	 * Register order follows the independent register fixture above.
+	 */
+	static const uint32_t actual[] = {
+		0x81117, 0x1900, 0x20a10, 0x07443356, 0x81001431,
+		0xc0078101, 0x20804664, 0, 0x80000000, 0, 0, 0xfff,
+		0x2000, 0, 0, 0x30, 0, 0, 0, 0x1000, 0, 0
+	};
+
+	assert(sizeof(actual) == sizeof(values));
+	memcpy(values, actual, sizeof(values));
+	pm_initial = pm_value = 0x1040;
+	sms[0] = 0;
+	sms[1] = 0x50;
+}
+
 struct claim_call { device_t owner; int result; };
 static void *
 claim_thread(void *arg)
@@ -421,7 +445,17 @@ main(void)
 		setup(true);
 		values[busy_regs[i]] |= busy_bits[i];
 		stopped(EBUSY);
+		setup(true);
+		corrupt_reg = (int)busy_regs[i];
+		corrupt_value = values[busy_regs[i]] | busy_bits[i];
+		stopped(EBUSY);
 	}
+	setup(true);
+	values[0] ^= 1;
+	stopped(ENODEV);
+	setup(true);
+	values[3] ^= 1;
+	stopped(ENODEV);
 	for (bit = 0; bit < 32; bit++) {
 		if (((__BIT(0) | __BIT(7) | __BIT(12) | __BIT(20) |
 		    __BIT(27)) & __BIT(bit)) == 0)
@@ -449,12 +483,56 @@ main(void)
 			bad_sms_tee ^= __BIT(bit);
 			/* Power-off states are allowed only in the clear phase. */
 			stopped(bit >= 8 && bit <= 16 ? ETIMEDOUT : EIO);
+			setup(true);
+			bad_sms_phase = i;
+			bad_sms_ree ^= __BIT(bit);
+			stopped((bit >= 8 && bit <= 16) || (i == 2 && bit == 2) ?
+			    ETIMEDOUT : EIO);
 		}
 	}
 	setup(true);
 	sms_cycles = 3;
 	assert(bcmv3d_takeover_probe(&dev, 1) == 0);
 	assert(elapsed_us == 601 && tv3d.complete);
+
+	/* The original whole-register zero gates reject this real snapshot. */
+	setup(true);
+	physical_snapshot();
+	assert(bcmv3d_takeover_probe(&dev, 1) == 0);
+	assert(tv3d.complete && writes == 8 && unmaps == 0);
+	for (i = 0; i < 8; i++) {
+		setup(true);
+		physical_snapshot();
+		values[15] = (i & 3) << 4;
+		values[19] = (i & 4) != 0 ? 0x1000 : 0;
+		assert(bcmv3d_takeover_probe(&dev, 1) == 0);
+		assert(tv3d.complete && writes == 8 && unmaps == 0);
+	}
+	/* Preserve rejection of all other known and unknown register bits. */
+	for (bit = 0; bit < 32; bit++) {
+		if (bit != 4 && bit != 5) {
+			setup(true);
+			physical_snapshot();
+			values[15] |= __BIT(bit);
+			stopped(EBUSY);
+			setup(true);
+			physical_snapshot();
+			corrupt_reg = 15;
+			corrupt_value = values[15] | __BIT(bit);
+			stopped(EBUSY);
+		}
+		if (bit != 12) {
+			setup(true);
+			physical_snapshot();
+			values[19] |= __BIT(bit);
+			stopped(EBUSY);
+			setup(true);
+			physical_snapshot();
+			corrupt_reg = 19;
+			corrupt_value = values[19] | __BIT(bit);
+			stopped(EBUSY);
+		}
+	}
 	printf("BCM2712 V3D takeover actual-source contract: %u cases passed\n",
 	    cases);
 	return 0;

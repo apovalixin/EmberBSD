@@ -64,7 +64,7 @@ and readback follow each successful write. This is not the unused
 
 The register and lifecycle reference is Raspberry Pi Linux
 [`43c132e8863c3bff3647033b6a7d2bf87b15501c`](https://github.com/raspberrypi/linux/tree/43c132e8863c3bff3647033b6a7d2bf87b15501c):
-`drivers/gpu/drm/v3d/{v3d_drv.c,v3d_gem.c,v3d_regs.h,v3d_drv.h}` and
+`drivers/gpu/drm/v3d/{v3d_drv.c,v3d_gem.c,v3d_regs.h,v3d_drv.h,v3d_debugfs.c}` and
 `drivers/pmdomain/bcm/bcm2835-power.c`. The implementation here uses native
 EmberBSD bus-space, locking and error propagation; it does not import Linux
 driver code.
@@ -82,17 +82,83 @@ unexecuted. CORE_IDENT1 is read independently; HUB_IDENT1 is not substituted
 for it. The complete identification receipt remains in
 [the passive observer guide](bcm2712-v3d.md).
 
+The R5 physical inventory reported GMP_STATUS=0x30 and ERR_STAT=0x1000.
+Whole-register zero checks incorrectly rejected these values before any
+write. GMP bits 4/5 are RD_ACTIVE/WR_ACTIVE, distinct from outstanding read
+and write counts. The Linux `v3d_idle_axi` condition checks count fields
+and CFG_BUSY; it does not check these activity bits. That drain function is
+disabled in the reset path and is not evidence of a verified V7.1 drain.
+
+For ERR_STAT, Broadcom's
+[VideoCore IV Architecture Guide](https://docs.broadcom.com/doc/12358545),
+table 87 on page 100, defines bit 12 VCDI as a read-only VCD idle indication.
+The pinned Linux V3D driver retains the same named bit without a V7-specific
+alternative. Applying that meaning to V7.1 is an inference from the current
+driver and the earlier specification, not a claim to have a public V7.1
+field specification. Mesa's V7.1 simulator register header is supplied by
+the external simulator and is not present in the public Mesa source tree.
+
+The narrow eligibility policy allows only GMP bits 4/5 and ERR_STAT bit 12
+to be nonzero. All outstanding-count, CFG_BUSY, protection/error/reset and
+unknown bits retain their rejection. The raw values remain in the inventory.
+Neither permitted status proves AXI drain, CL inactivity, or firmware
+exclusion. No other eligibility or write condition changes.
+
+## Software checks
+
+Run both actual-source contracts on the development host:
+
+```sh
+CFLAGS='-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' \
+    sh ember/tools/bcm2712-v3d-contract.sh
+CFLAGS='-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer' \
+    sh ember/tools/bcm2712-v3d-takeover-contract.sh
+```
+
+Both also run from `kernel-contracts.sh` in portable and all modes. The
+passive contract compiles without the takeover option. The takeover contract
+compiles the actual production PM/reset and takeover function bodies with
+fake bus services and a pthread-backed native-claim mutex. Its independent
+write allowlist rejects MMU/submission, W1C, power-off and unrelated PM writes.
+This simulates recoverable failures; it cannot test physical interconnect
+fault delivery or firmware exclusion.
+
+The macOS ASan/UBSan run passed 186 passive cases with nine rejected causal
+mutants, and 463 takeover cases with fourteen rejected causal mutants. Tests
+cover every read on the success path, every mapping/write failure, failed
+writes both before and after simulated hardware effects, all SMS mode/flag
+bits, documented transient progress, bounded timeout, post-reset corruption,
+concurrent claims, reset delay/order, quarantine and forbidden writes.
+The complete R5 register snapshot first failed against the unchanged
+production source, then passed with the two status masks. Both old
+whole-register zero checks are independently rejected causal mutants.
+All other GMP and ERR_STAT bits are injected before and after reset and
+must still stop the probe. The SSH dmesg receipt SHA256 is
+`56450c7765791190c4428385c8efdeecf490652003f53d97fac3551d26f83de2`.
+
+For a target-ABI contract binary, set `CC`, `V3D_TAKEOVER_OUTPUT` and
+`V3D_TAKEOVER_COMPILE_ONLY=1`. `TEST_RUNNER` names a wrapper that executes
+one supplied binary path. `V3D_TAKEOVER_SKIP_MUTANTS=1` runs only the positive
+contract suite. Target execution validates software ABI behavior, not GPU
+hardware. The test uses pthreads for the concurrent-claim case.
+
+The GCC 16.2 static AArch64 contract passed all 463 cases on an Orange Pi
+Zero 3W running EmberBSD `f85ffd420f6`. Its SHA256 was
+`097bfc0cc1edb9e7b69a5c07a2cc80f15f2e74649f9adbb18b6cf342df2374d5`.
+This execution used simulated V3D registers on the board's CPU; it did not
+touch the A733 GPU or establish physical CM5 reset support.
+
 ## Implementation checklist
 
-- [ ] Keep option-free observation free of claims and all hardware writes.
-- [ ] Add exact-resource PM ownership, seal and single reset APIs.
-- [ ] Add persistent mappings, bounded SMS reset and validated PM readback.
-- [ ] Preserve unrelated PM and interrupt-mask fields; never restore W1C.
-- [ ] Exercise actual production sources with fake bus/ACPI/mailbox services.
-- [ ] Check no opt-in writes, second/foreign owner, every map/read/write
+- [x] Keep option-free observation free of claims and all hardware writes.
+- [x] Add exact-resource PM ownership, seal and single reset APIs.
+- [x] Add persistent mappings, bounded SMS reset and validated PM readback.
+- [x] Preserve unrelated PM and interrupt-mask fields; never restore W1C.
+- [x] Exercise actual production sources with fake bus/ACPI/mailbox services.
+- [x] Check no opt-in writes, second/foreign owner, every map/read/write
   failure, SMS modes/states/timeouts, PM corruption, reset ordering/delay,
   quarantine and absence of DMA/submission.
-- [ ] Run the passive regression and new contracts with ASan/UBSan on macOS.
+- [x] Run the passive regression and new contracts with ASan/UBSan on macOS.
 - [ ] Independently review, then cross-build the complete clean-commit kernel.
 - [ ] Record physical acceptance separately; no physical takeover is yet proven.
 

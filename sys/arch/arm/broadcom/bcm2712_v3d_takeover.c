@@ -31,6 +31,8 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define TV3D_MASK_SET	0x60
 #define TV3D_HUB_IRQS	0x0000007f
 #define TV3D_CORE_IRQS	0x0fff007f
+#define TV3D_GMP_ACTIVITY	(__BIT(4) | __BIT(5))
+#define TV3D_ERR_VCD_IDLE	__BIT(12)
 #define TV3D_POLL_COUNT	1000
 #define TV3D_POLL_US	100
 
@@ -166,14 +168,17 @@ tv3d_eligible(const struct tv3d_snapshot *snapshot)
 	 * CT/PCS fields are inventory only. This destructive initialization
 	 * reset can cancel unknown firmware CL work; it cannot resume it or
 	 * prove that firmware will never submit again.
+	 * GMP RD/WR_ACTIVE are not outstanding counts. ERR VCDI is an idle
+	 * indication (VCIV table 87; same bit in the V7.1 Linux register map).
+	 * Retain the conservative rejection of every other register bit.
 	 */
 	if ((snapshot->reg[TV3D_MMU_CTL] & (__BIT(0) | __BIT(7) |
 	    __BIT(12) | __BIT(20) | __BIT(27))) != 0 ||
 	    (snapshot->reg[TV3D_MMUC_CTL] & __BIT(2)) != 0 ||
 	    (snapshot->reg[TV3D_TFU_CS] & __BIT(0)) != 0 ||
 	    (snapshot->reg[TV3D_CSD_STATUS] & 0xf) != 0 ||
-	    snapshot->reg[TV3D_GMP_STATUS] != 0 ||
-	    snapshot->reg[TV3D_ERROR] != 0 ||
+	    (snapshot->reg[TV3D_GMP_STATUS] & ~TV3D_GMP_ACTIVITY) != 0 ||
+	    (snapshot->reg[TV3D_ERROR] & ~TV3D_ERR_VCD_IDLE) != 0 ||
 	    snapshot->reg[TV3D_HUB_STATUS] != 0 ||
 	    snapshot->reg[TV3D_CORE_STATUS] != 0)
 		return EBUSY;
