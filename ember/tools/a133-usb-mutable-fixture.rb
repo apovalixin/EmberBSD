@@ -28,11 +28,18 @@ when 'getprop ro.boot.flash.locked' then puts '0'
 when 'getprop ro.boot.verifiedbootstate' then puts 'orange'
 when 'cat /proc/device-tree/compatible' then STDOUT.write("allwinner,a133\0fixture,board\0")
 when 'cat /proc/self/mountinfo' then STDOUT.write("1 0 0:1 / / rw - rootfs rootfs rw\n")
-when 'for p in /proc/[0-9]*; do cat "$p/mountinfo" || exit 1; done'
+when 'for p in /proc/[0-9]*; do cat "$p/mountinfo" || exit 1; done',
+  'for p in /proc/[0-9]*; do for t in "$p"/task/[0-9]*; do cat "$t/mountinfo" || exit 1; done; done'
   if state['inventory_unreadable']
     STDERR.write('PRIVATE_PROCESS_DIAGNOSTIC'); exit 1
   end
   STDOUT.write(state.fetch('mountinfo',"1 0 0:1 / / rw - rootfs rootfs rw\n"))
+  if command.include?('/task/')
+    if state['thread_unreadable']
+      STDERR.write('PRIVATE_THREAD_DIAGNOSTIC'); exit 1
+    end
+    STDOUT.write(state.fetch('thread_mountinfo',''))
+  end
 when 'cat /proc/swaps'
   STDOUT.write(state.fetch('swaps',"Filename\tType\tSize\tUsed\tPriority\n"))
 when 'for d in /sys/class/block/mmcblk0/holders/* /sys/class/block/mmcblk0p*/holders/*; do if [ -e "$d" ]; then echo "$d"; fi; done'

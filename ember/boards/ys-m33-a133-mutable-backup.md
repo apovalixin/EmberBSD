@@ -36,8 +36,10 @@ The fixed physical profile is31037849600-byte eMMC with17 named GPT partitions.
 Both GPT headers/arrays, by-name mappings, geometry and boot-area sizes are
 checked. Source serial/CID, GPT fingerprint, recovery state, root method and
 lock properties remain pinned through each read and the final checkpoint.
-All readable process mount inventories are checked, not only the shell's own
-namespace. Any mounted block device (including aliases), nonempty swap list,
+All readable process/thread mount inventories are checked, not only the shell's own
+namespace. Thread inventories use /proc/PID/task/TID/mountinfo; nonleader
+thread directories are not listed directly under /proc ([Linux task documentation](https://man7.org/linux/man-pages/man5/proc_pid_task.5.html)).
+Any mounted block device (including aliases), nonempty swap list,
 eMMC holder, malformed/unreadable inventory or source change stops the stage.
 The mount inventory is bounded to1MiB; an oversized inventory is refused.
 
@@ -100,6 +102,8 @@ have bounded symbolic reasons and discard inherited private causes.
 
 Two matching reads with unmounted inventories are sampled evidence, not a
 kernel snapshot: transient mounts or an unobserved raw writer remain possible.
+In particular, UDISK can change after its second read while metadata finishes;
+the receipt describes the two matching reads, not a current common disk state.
 The recorded source is trusted, not cryptographically attested. An offline
 check cannot rediscover current source state or authenticate the manifest.
 filesystem_consistency remains not_established_by_integrity_check.
@@ -117,6 +121,7 @@ private files and source mutation at the strict ADB boundary:
 ```sh
 ruby ember/tools/a133-mutable-check-test.rb
 ruby ember/tools/a133-usb-mutable-backup-test.rb
+ruby ember/tools/a133-usb-mutable-thread-test.rb
 ruby ember/tools/a133-usb-backup-test.rb
 ruby ember/tools/a133-usb-backup-lifetime-test.rb
 ```

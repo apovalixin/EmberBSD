@@ -92,7 +92,7 @@ module A133UsbBackup
     def mutable_inspect!
       raise Invalid,'usb_mutable_requires_recovery' unless @state=='recovery'
       profile=inspect!
-      recovery_unmounted!('for p in /proc/[0-9]*; do cat "$p/mountinfo" || exit 1; done')
+      recovery_unmounted!('for p in /proc/[0-9]*; do for t in "$p"/task/[0-9]*; do cat "$t/mountinfo" || exit 1; done; done')
       swaps=query('cat /proc/swaps').lines.map(&:split)
       raise Invalid,'usb_swap_inventory_invalid' unless swaps.first==%w[Filename Type Size Used Priority]
       holders=query('for d in /sys/class/block/mmcblk0/holders/* /sys/class/block/mmcblk0p*/holders/*; do if [ -e "$d" ]; then echo "$d"; fi; done')

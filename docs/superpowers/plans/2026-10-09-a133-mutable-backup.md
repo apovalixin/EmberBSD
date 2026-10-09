@@ -23,7 +23,7 @@
 ## Review Focus
 
 - A second namespace mounts the block device through an alias; reject the acquisition.
-- UDISK changes while the other partition is read; no final success manifest.
+- UDISK changes during the first pass and differs in its next full read; no final success manifest. Raw changes after its second read remain a sampled-evidence limit.
 - Host evidence changes during the last source check or publication; fail despite matching earlier hashes.
 - The source has no mounts but active swap/holders or unreadable process inventory; reject.
 - An old valid manifest is replayed for another CID or an aliased host file; refuse fresh verification.
@@ -78,3 +78,22 @@ Channel13/transfer43/session25 passed on Ruby4.0.5; syntax/diff/local-link check
 The working reference remained reachable with GUI/voice/MCU processes running;
 ADB inventory was empty. No physical acquisition, storage write, reboot, sound
 or camera test occurred. Kernel/userland sources were not changed or rebuilt.
+
+## Review and execution decisions
+
+Independent GPT-6 Astra reviewed7167770feb63..82119597c164 and independently
+passed checker24/acquisition28/diff check. It identified one Important gap:
+nonleader recovery threads were missing from mount inventory. Two regressions
+reproduced accepted hidden/unreadable thread inventories on both Rubies before
+the fix. The source now reads each process's task/TID mountinfo, failing closed.
+After the fix, thread2 and all named suites passed again on both Rubies;
+channel13/transfer43/session25/syntax/diff/link checks also passed.
+Fix verification belongs to the implementer; no second review or physical Linux
+namespace reproduction is claimed. No Critical/Minor findings were returned.
+
+- Execute inline under autonomous authorization; written artifacts and final review replace per-step human review. Cost: no per-step human design feedback.
+- Preserve the contribution branch without unrelated main kernel integration. Cost: BSP reconciliation still required before kernel work/merge.
+- Keep unmounted/two-read observations separate from filesystem snapshots. Cost: physical quiescence/restoration acceptance remains required.
+- Test fixtures while physical ADB is absent. Cost: real vendor/large-transfer acceptance remains open.
+- A raw UDISK change after its second read can accompany a success receipt; narrow the overbroad Review Focus to changes visible in its next full read. Cost: copies need not share an instantaneous filesystem state.
+- The review sets physical compatibility/quiescence/restoration aside as hardware stages. Cost: real recovery durability can still fail despite green host contracts.

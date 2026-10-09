@@ -23,15 +23,17 @@ just trusts cached hashes would not establish the retained bytes.
 
 Require explicit trusted serial/CID and root-readable USB recovery. Validate
 both GPTs, all physical partition bounds, hardware boot sizes and the source
-profile at each checkpoint. Observe all readable process mount inventories,
+profile at each checkpoint. Observe all readable process/thread mount inventories,
 refuse any mounted block device, nonempty swap inventory or eMMC holder.
 Fail if the inventory cannot be read. Capture both entire partitions, then
 read both again and require their complete hashes to match the captured hashes.
-A late source change prevents successful publication.
+A late source-profile/mount/swap/holder change prevents successful publication.
 
 These are sampled observations, not a kernel snapshot or cryptographic
 attestation. A recovery can have unobserved raw writers or changes between
-checks. Describe the result as recovery_unmounted_two_matching_reads;
+checks. A raw change after UDISK's second read, during metadata's second read,
+can still yield a successful sampled-evidence receipt. Describe the result as
+recovery_unmounted_two_matching_reads;
 filesystem_consistency remains not_established_by_integrity_check and
 installation_ready=false. Physical quiescence and Android restoration remain
 acceptance work. Do not turn a manifest's existence into a success receipt.
