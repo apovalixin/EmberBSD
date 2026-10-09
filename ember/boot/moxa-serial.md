@@ -171,7 +171,30 @@ Errors from two-part modem control are returned; successfully changed bits
 remain reflected in cached state. Hardware partial-control rollback belongs
 to the parent, which must expose uncertainty/fault instead of claiming success.
 
-## Native and kernel acceptance
+## Cross build and native execution
+
+Prefer building the fixture on the development host with the fork's prepared
+AArch64 cross tools. Supply a separate, pinned target-runtime sysroot containing
+`usr/include`, `usr/lib` and `lib` from the matching NetBSD 11 software lab.
+It supplies TTY/VFS/rump and C runtime dependencies, not a claim of complete
+EmberBSD userland coherence. The private component compiles kernel sources from
+the fork; the runner records source/header/link-input and output hashes.
+No target binary is executed on the development host.
+
+```sh
+sh ember/tools/ucom-transport-rump-cross-build.sh /absolute/clean-source \
+    /absolute/prepared-kernel-build /absolute/pinned-target-runtime \
+    /absolute/new-cross-output
+```
+
+Copy the resulting `test` to the matching disposable VM and run
+`RUMP_NCPU=4 ./test`. Record the target runtime/library hashes and output.
+The wrapper passes `MAKEOBJDIR` on the make command line and checks `.OBJDIR`
+before compilation: generated files remain in the new private output.
+The source/build/sysroot paths must have no whitespace; host `shasum` is
+required. No libraries or kernel are installed by this check.
+
+### Explicit native build fallback
 
 On a matching NetBSD 11 development runtime with compiler, rump libraries and
 the fork's clean source export (native make paths must have no whitespace):
