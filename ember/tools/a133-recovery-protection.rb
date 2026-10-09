@@ -95,8 +95,9 @@ module A133Recovery
       guard!(pinned)
       {status:'recovery_protection_verified',protected_env:pinned[:protected_env],
         env_sha256:pinned[:expected_sha],writes_performed:attempted ? 1 : 0,installation_ready:false}
-    rescue A133Usb::Invalid,A133UsbBackup::Invalid,A133Recovery::Invalid => error
-      failure=A133Usb::Invalid.new(error.message)
+    rescue A133Usb::Invalid,A133UsbBackup::Invalid,A133Recovery::Invalid,SystemCallError,IOError => error
+      reason=error.is_a?(SystemCallError) || error.is_a?(IOError) ? 'usb_protection_io_failed' : error.message
+      failure=A133Usb::Invalid.new(reason)
       failure.write_attempted=attempted
       raise failure,cause:nil
     end

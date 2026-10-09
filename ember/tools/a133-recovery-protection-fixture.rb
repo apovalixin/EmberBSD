@@ -59,6 +59,9 @@ when 'dd of=/dev/block/mmcblk0p2 bs=1048576 conv=notrunc 2>/dev/null && sync'
   when 'late_mount'
     state['mountinfo']="1 0 0:1 / / rw - rootfs rootfs rw\n2 1 179:2 / /alias rw - ext4 /dev/block/alias rw\n"
     state['block_ids']=['179:2']
+  when 'launcher_invalid'
+    File.rename(File.join(base,'launch'),File.join(base,'launch-retained'))
+    File.write(File.join(base,'launch'),'PRIVATE_HOST_LOCATION')
   end
   File.write(state_path,JSON.generate(state))
 else

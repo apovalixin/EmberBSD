@@ -83,3 +83,29 @@ or rebuilds; the primary dirty checkout was preserved. Fresh origin/main is
 d8d473d58d9f; its new SVG documentation does not change these A133 host tools.
 ADB inventory was empty. The working reference was reachable with GUI/voice/MCU
 processes; no physical write, reboot, audio or camera test occurred.
+
+## Independent review and one fix pass
+
+GPT-6 Astra reviewed d1a6c92851cf..945a66200083, independently passed bytes14
+on both Rubies, USB49 on Ruby4 and diff check. One Important finding: ENOTDIR
+after an actual dd exposed the launcher path and lost write_attempted. Before
+and after submission regressions failed on both runtimes, then passed after
+SystemCallError/IOError normalization with cause:nil and preserved attempted.
+The implementer reran the entire relevant suite: 256/256 on Ruby4.0.5 and
+256/256 on system2.6.10 (11 scripts: bytes14/USB49/I-O2/recovery19/channel13/
+transfer43/session25/mutable-check24/acquisition28/thread2/capture37).
+Syntax/diff/public-link checks passed. No second reviewer or hardware acceptance.
+One Minor remains deferred: malformed UTF-8 caller identifiers/hashes may raise
+ArgumentError before USB instead of normalized diagnostics; callers require ASCII.
+
+### Rulings carried from execution/review
+
+- Ruling: Execute inline and publish the existing draft PR/wiki under repeated autonomous authorization — preserve the chosen plan without intermediate questions — cost: no per-step human design review.
+- Ruling: Preserve the contribution branch without merging unrelated origin/main kernel work — host-only stage uses inspected sources — cost: BSP reconciliation remains before kernel changes/merge.
+- Ruling: Accept trusted fresh in-process verifier receipts, not saved receipts — match existing writer boundary and keep this primitive focused — cost: future coordinator must verify and retain original evidence and exclusive device ownership.
+- Ruling: Exercise file fixtures while preserving the working reference — no new identified recovery ADB target — cost: physical cable return, power-loss and restoration remain unaccepted.
+- Final: Ruling: Backup/mutable evidence authenticity/freshness/lifetime is delegated to the trusted coordinator — existing receipt capability boundary stands — cost: stale/fabricated receipts are not detected by this primitive alone.
+- Final: Ruling: Other hosts/processes and transient mounts remain outside sampled guards — require exclusive operation and retain explicit observation limits — cost: concurrent writers can still race observations.
+- Final: Ruling: A manual retry with exact protected bytes does not issue an extra sync after a previous failed sync — preserve the idempotent no-write contract, without durability/acceptance claim — cost: persisted bytes and cold-power durability can differ until physical acceptance.
+- Final: Ruling: Env execution/cold boot/cable return/power-loss/restoration stay physical acceptance stages — host readback cannot prove them — cost: a green host stage may still fail on hardware.
+- Final: Ruling: Earlier BSP/main reconciliation is outside this plan review — keep existing PR draft — cost: the full historical branch is not yet merge-ready.

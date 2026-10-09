@@ -67,18 +67,26 @@ write and still undergoes fresh env/recovery/source checks. An unrelated,
 partly-written or foreign env is rejected, including an identical protected
 prefix with a different tail. No other partition or hardware boot area is
 written. There is no automatic retry, rollback or adoption of unknown state.
+If a manual retry follows a failed sync but the complete protected env matches,
+it still performs no write or extra sync. Readback alone does not establish
+durability across a subsequent power loss.
 
 Success returns recovery_protection_verified, env_sha256, private protected_env,
 writes_performed0 or1 and installation_ready=false. A133Usb::Invalid carries
 write_attempted=false before submission, true once sending the write has begun.
 A failed transport/sync/readback or late drift may leave changed storage;
 stop later stages and retain the original evidence for controlled recovery.
+System I/O failures are normalized without private host paths and retain the
+possible-write flag. Caller identifier/hash strings must be ASCII; a malformed
+UTF-8 argument can still raise a generic ArgumentError before USB submission.
+That minor diagnostics limitation is deferred.
 
 ## Validation and limits
 
 ```sh
 ruby ember/tools/a133-recovery-protect-test.rb
 ruby ember/tools/a133-recovery-protection-test.rb
+ruby ember/tools/a133-recovery-protection-regression-test.rb
 ```
 
 Tests encode factory env independently and run actual dd on sparse
