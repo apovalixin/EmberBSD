@@ -459,6 +459,12 @@ on every board in the hardware catalog.
   [hardware receipt](ember/boards/compute-module-5.md#hardware-check-2026-10-08).
   Other boards, access-point combinations and long-run operation need
   separate acceptance; this is not an 802.11r/802.11v roaming claim.
+- **Zero 3W WPA3 and recovery:** the AIC8800D80 path supports SAE/H2E
+  with required PMF. Protected SA Query recovers an AP/client state mismatch
+  through the normal supplicant. Physical checks cover query/response,
+  automatic reconnection and an 8 MiB transfer each way; see the
+  [guide](ember/boot/aicwf-sae.md) and
+  [hardware receipt](ember/boards/orange-pi-zero-3w.md#protected-association-recovery-2026-10-09).
 - **Consistent Wi-Fi discovery and CM5 cooling:** `bwfm` retains firmware
   scan channels and signal ranking across both bands; the CM5 ACPI fan can
   [remain at maximum cooling](ember/boot/thermal-fan.md) across reboot.
@@ -623,8 +629,8 @@ passed without command timeouts. No WPA3 throughput improvement is claimed.
 - **Zero 3W Wi-Fi:** the AIC8800D80 connected-scan recovery is fixed and
   physically checked. [External SAE/H2E with required PMF](ember/boot/aicwf-sae.md)
   connects on 5 GHz and passes an 8 MiB transfer each way. Nonzero initial
-  IGTK packet numbers are rejected. Recovery after an AP removes the station
-  still needs protected SA Query handling; 802.11r/v and long-duration acceptance
+  IGTK packet numbers are rejected. Protected SA Query and automatic recovery
+  after an AP removes the station are physically checked; 802.11r/v and long-duration acceptance
   remain outside this result. The [board page](ember/boards/orange-pi-zero-3w.md#wi-fi-limits-and-connected-scan-regression)
   records the firmware, bundle and tests.
 - **Short firmware replies** still need a command-transport fix and regression.

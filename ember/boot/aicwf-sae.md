@@ -44,19 +44,30 @@ checks before attributing that failure to SAE or the kernel. In the physical
 Zero 3W trial, the AP explicitly prohibited 2.4 GHz about a minute after joining;
 the same policy removed WPA2 and WPA3 associations.
 
-A 2026-10-09 diagnostic build reproduced the removal with the BSSID lock
-cleared after association. The driver received repeated unprotected,
-26-byte deauthentication frames but did not forward them to the supplicant.
-No firmware disconnect indication arrived. A timed restart of the normal
-supplicant service restored 5 GHz and an 8 MiB bidirectional transfer passed.
-This is recovery by the test harness, not autonomous driver recovery.
-The captured metadata does not include the reason code or frame addresses.
+Before the SA Query fix, the driver received unprotected deauthentication
+frames without notifying the supplicant, and firmware sent no disconnect
+indication. The 2026-10-09 physical acceptance now confirms a protected
+query/response and automatic recovery from reason-6 state mismatch.
+A separate host verified an 8 MiB transfer each way after recovery, before
+any fallback service restart. Recovery interrupted traffic for about
+40 seconds in that trial; it was not a seamless handover. The
+[board evidence](../boards/orange-pi-zero-3w.md#protected-association-recovery-2026-10-09)
+records the exact bundle and test boundary.
 
-The host path currently lacks SA Query handling for an AP/STA state mismatch.
-Do not convert an unprotected deauthentication frame directly into a trusted
-disconnect. A complete fix must validate the peer and reason, use protected
-SA Query requests and responses, and reject stale, replayed or unauthenticated
-responses. Negotiated PMF alone does not validate that recovery path.
+The host path now passes peer-validated unprotected deauthentication and
+disassociation reasons 6/7 to upstream wpa_supplicant's SA Query state
+machine. Such a frame starts a protected liveness check; it does not directly
+terminate the association. Only the current peer and association can send or
+receive SA Query frames. Firmware encrypts requests with the installed PTK.
+Received responses require successful firmware CCMP/key status, matching
+addresses and a fresh management packet number. Reinstalling an unchanged
+PTK preserves the firmware transmit counter and the host replay boundary.
+The supplicant verifies the transaction ID and reconnects on query timeout.
+
+Firmware remains responsible for CCMP integrity verification. The host's
+status/replay contracts do not substitute for forged-frame injection over
+the air. The current interface supports the minimal SA Query exchange;
+operating-channel validation (OCV) is not provided.
 
 Diagnostic builds expose management-frame type, flags, length and hardware
 status through `sysctl -w net.link.ieee80211.vap0.debug=524288` (verify that
@@ -83,6 +94,9 @@ sh ember/tests/aicwf-flow-control.sh
 sh ember/tests/aicwf-command.sh
 sh ember/tests/aicwf-sae-lifetime.sh
 sh ember/tests/aicwf-sae-event.sh
+sh ember/tests/aicwf-pmf.sh
+sh ember/tests/aicwf-pmf-key.sh
+sh ember/tests/aicwf-pmf-transport.sh
 ```
 
 The first runs bounded AIC request/frame/IGTK checks and the shared RSN
@@ -90,6 +104,10 @@ security checks also used by bwfm. The extracted-function regressions cover
 connected scans, adjacent-channel beacons, the D80 free-buffer register,
 short command replies, stale commands and confirmations,
 CONFIGURE during requested leave, and allocation failure in SAE events.
+The PMF contracts cover peer/length/protection checks, packet-number replay,
+key confirmation and retirement, duplicate PTK installation, allocation
+failure and actual RX/TX forwarding. The key-task regression also checks
+that callbacks under a net80211 spin lock never acquire an adaptive mutex.
 For a live ABI check, build
 `ember/tools/bwfm-sae-ioctl.c` with the current net80211 headers and run it as
 root with `aicwf0`, with the supplicant stopped and recovery arranged.
@@ -97,11 +115,26 @@ It checks lengths, version/reserved fields, stale authorization and denial
 of unprivileged configuration. Its historical filename does not restrict
 the driver being tested.
 
+For a positive on-air SA Query probe, build against current EmberBSD headers:
+
+```sh
+cc -O2 -Wall -Wextra -Werror ember/tools/aicwf-sa-query.c -o aicwf-sa-query
+# First terminal, on the device, as root:
+./aicwf-sa-query aicwf0
+# Second terminal, after the probe reports that it is listening:
+wpa_cli -i aicwf0 reassociate
+```
+
+The probe observes the new SAE generation, sends a protected query and
+requires the matching response within 60 seconds. It changes no profile.
+Reassociation interrupts traffic; arrange recovery first on Wi-Fi-only
+boards. This positive probe does not exercise timeout recovery or RF forgery.
+
 ## Protocol provenance
 
 The wire layout was inspected in Radxa's AIC8800 SDIO driver at revision
 [`d13d07963cd15d731e2895e8288a04cca6152ac9`](https://github.com/radxa-pkg/aic8800/tree/d13d07963cd15d731e2895e8288a04cca6152ac9/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv):
 `lmac_msg.h`, `lmac_mac.h`, `rwnx_msg_tx.c`, `rwnx_msg_rx.c`, `rwnx_tx.c`,
-`rwnx_rx.h` and `aicwf_sdio.c`. The BSD implementation uses those protocol facts; it does
+`rwnx_rx.c`, `rwnx_rx.h` and `aicwf_sdio.c`. The BSD implementation uses those protocol facts; it does
 not import the GPL Linux driver. Keep the vendor firmware's redistribution
 terms separate from the host driver's licence.

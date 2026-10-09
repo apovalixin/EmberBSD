@@ -88,7 +88,7 @@ and the D80's eight-bit SDIO buffer count; both have causal regressions.
 A forced 2.4 GHz SAE association completed, but a subsequent file transfer
 stopped after about a minute. The AP log recorded band-steering removal at
 the same time; a WPA2 control reproduced that policy. The firmware/client
-can still report COMPLETED after this removal. This trial does not establish
+retained COMPLETED before the SA Query fix described below. This trial does not establish
 sustained WPA3 traffic on 2.4 GHz. The installed network profile restricts
 candidates to 5 GHz to match the AP policy, without pinning one BSSID.
 Other profiles retain their existing band choices. See
@@ -115,21 +115,40 @@ The four modules were installed from the same build. Existing DTB, boot
 firmware and partition layout were preserved; a previous kernel remains
 available for recovery.
 
-## Management-frame diagnostic, 2026-10-09
+## Protected association recovery, 2026-10-09
 
-Cross-built `EMBER64 #10` from `34b57a229ddd500e2f780a7b0be0717698877f2c`
-booted on the same 4 GiB board with matching modules. After the mesh removed
-the 2.4 GHz association, the driver received unprotected deauthentication
-frames while the supplicant stayed COMPLETED. Clearing the temporary BSSID
-lock did not restore traffic. The test's timed service restart restored
-SAE/PMF on 5 GHz; an 8 MiB file passed in both directions with equal hashes.
-See [the recovery boundary](../boot/aicwf-sae.md#band-steering-and-acceptance).
-SA Query recovery is not implemented by this diagnostic change.
+Cross-built `EMBER64 #11` from `aaff1e121ce4a77748ff6b7be21f4e226c9e3c4b`
+booted on the same 4 GiB board with four matching modules and the updated
+base wpa_supplicant 2.11. A positive probe sent a protected SA Query and
+received the peer's protected response with the matching transaction ID.
+The driver admitted its firmware CCMP/key status and fresh packet number.
 
-Kernel SHA256: ELF
-`2308326611c7716585de7ddcf97f2d3af2472dc8c35c390c63e455336f28da35`;
-native image
-`eeeda8ce0d71e8e186d063c29bc0a0d56b56a222b6f3dac25d28ec07b01d831e`.
+The previous diagnostic build had received unprotected deauthentication
+frames after AP removal without passing them to the supplicant. The new
+path reported reason 6, let the protected SA Query time out, and began a
+new association. In the accepted trial, the client moved from 2.4 GHz to
+a 5 GHz channel-60 mesh AP automatically. Association recovered about
+27 seconds after the event, after two authentication timeouts; gateway
+traffic returned in about 40 seconds. A separate host then verified SSH
+and an exact 8 MiB transfer each way before acknowledging the watchdog.
+The test's fallback service restart did not run. This is recovery after
+an interruption, not seamless roaming or 802.11r/v support.
+
+A first trial also reconnected automatically, but its file check overlapped
+the test fallback; it was not used as traffic acceptance. The router refused
+a later forced join to the same 2.4 GHz AP. The accepted trial used the
+other mesh AP. Router policy and persistent credentials were unchanged.
+The ordinary 5 GHz profile remains active; diagnostic logging is disabled.
+See [the protocol and recovery boundary](../boot/aicwf-sae.md#band-steering-and-acceptance).
+Firmware integrity enforcement still needs RF forgery/replay testing.
+
+SHA256:
+
+| Component | Hash |
+|---|---|
+| ELF kernel | `bfd0d09f63dc364570a6d0f4b59879964f26d456016634e8053048e15095939b` |
+| Native image | `1fd60e47965f2eec95e0fabeb01de63f0e44c93393c1c965ef7264dc483c5696` |
+| wpa_supplicant | `0e5235f96fee5830b1ba4a1662c6b5f548e5489ab9b8bede99a1144db954271c` |
 
 ## Evidence
 
