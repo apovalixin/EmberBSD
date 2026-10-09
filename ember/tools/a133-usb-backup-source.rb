@@ -102,6 +102,26 @@ module A133UsbBackup
       raise Invalid,error.message,cause:nil
     end
 
+    def environment_inspect!
+      return mutable_inspect! if @state=='recovery'
+      profile=inspect!
+      ids=query('cat /sys/class/block/mmcblk0/dev /sys/class/block/mmcblk0p2/dev').lines.map(&:strip)
+      raise Invalid,'usb_environment_device_ids_invalid' unless ids.size==2 && ids.uniq.size==2 &&
+        ids.all? { |id| id.match?(/\A[0-9]+:[0-9]+\z/) }
+      rows=query('for p in /proc/[0-9]*; do for t in "$p"/task/[0-9]*; do cat "$t/mountinfo" || exit 1; done; done',limit:1048576).lines.map(&:split)
+      raise Invalid,'usb_mount_inventory_invalid' if rows.empty? || !rows.all? do |fields|
+        fields.size>=10 && fields[2].match?(/\A[0-9]+:[0-9]+\z/) && (fields.index('-') || 0)>=6
+      end
+      raise Invalid,'usb_target_mounted' if rows.any? { |fields| ids.include?(fields[2]) }
+      swaps=query('cat /proc/swaps').lines.map(&:split)
+      raise Invalid,'usb_swap_inventory_invalid' unless swaps.first==%w[Filename Type Size Used Priority]
+      holders=query('for p in /sys/class/block/mmcblk0 /sys/class/block/mmcblk0p2; do [ -d "$p/holders" ] && [ -r "$p/holders" ] && [ -x "$p/holders" ] || exit 1; for d in "$p"/holders/*; do if [ -e "$d" ]; then echo "$d"; fi; done; done')
+      raise Invalid,'usb_target_in_use' unless swaps.size==1 && holders.empty?
+      profile
+    rescue Invalid,A133Usb::Invalid,A133Backup::Invalid => error
+      raise Invalid,error.message,cause:nil
+    end
+
     def read(role)
       mutable=%w[UDISK metadata].include?(role)
       profile = mutable ? mutable_inspect! : inspect!

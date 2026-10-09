@@ -1,6 +1,6 @@
 # A133 Recovery Entry Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Guard the Android one-shot recovery env write and exact factory restoration from known recovery states.
 
@@ -42,11 +42,11 @@
 - Consumes: verify_stream retained GPT bytes, Source.inspect!/mutable_inspect! and channel.
 - Produces: gpt_sha256 in stream/file/capture receipts; Source.environment_inspect! returning pinned profile or Invalid.
 
-- [ ] **Step 1: Write tests** for fresh raw/capture GPT digest, changed valid GPT identity, other Android mounts permitted, whole/env/task alias mount, holders, swap, unreadable/malformed inventories and unchanged source.
-- [ ] **Step 2: Run new GPT/usage tests.** Expected: FAIL with missing receipt field or inspection method.
-- [ ] **Step 3: Implement receipt propagation and target guard** while keeping Source write-free and old schemas unchanged.
-- [ ] **Step 4: Run both new suites and old backup-library/capture-check/mutable-thread tests on both Rubies.** Expected: all pass. Whole relevant suite is completed with Task2 because its fixture exercises this interface during actual writes.
-- [ ] **Step 5: Commit** `feat(a133): bind env transitions to backup GPT and usage`.
+- [x] **Step 1: Write tests** for fresh raw/capture GPT digest, changed valid GPT identity, other Android mounts permitted, whole/env/task alias mount, holders, swap, unreadable/malformed inventories and unchanged source.
+- [x] **Step 2: Run new GPT/usage tests.** Expected: FAIL with missing receipt field or inspection method.
+- [x] **Step 3: Implement receipt propagation and target guard** while keeping Source write-free and old schemas unchanged.
+- [x] **Step 4: Run both new suites and old backup-library/capture-check/mutable-thread tests on both Rubies.** Expected: all pass. Whole relevant suite is completed with Task2 because its fixture exercises this interface during actual writes.
+- [x] **Step 5: Commit** `feat(a133): bind env transitions to backup GPT and usage`.
 
 ### Task 2: Guarded arm/restore library and instructions
 

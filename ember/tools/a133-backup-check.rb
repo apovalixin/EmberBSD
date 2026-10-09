@@ -112,6 +112,7 @@ module A133Backup
     validate_gpt(head, tail, bytes, inventory)
     hashes = ranges.each_with_object({}) { |range, result| result[range[:name]] = range[:hash].hexdigest }
     {bytes: bytes, uncompressed_sha256: digest.hexdigest, partition_sha256: hashes,
+     gpt_sha256: Digest::SHA256.hexdigest(head + tail),
      gpt_headers_crc: true, gpt_arrays_crc: true, partition_layout_verified: true}
   end
 

@@ -30,10 +30,17 @@ when 'getprop ro.boot.verifiedbootstate' then puts state.fetch('verified','green
 when 'cat /proc/device-tree/compatible' then STDOUT.write("allwinner,a133\0fixture,board\0")
 when 'cat /proc/self/mountinfo' then STDOUT.write("1 0 0:1 / / rw - rootfs rootfs rw\n")
 when 'for p in /proc/[0-9]*; do for t in "$p"/task/[0-9]*; do cat "$t/mountinfo" || exit 1; done; done'
-  if state['inventory_unreadable']
+  if state['inventory_unreadable'] || state['thread_unreadable']
     STDERR.write('PRIVATE_THREAD_DIAGNOSTIC'); exit 1
   end
   STDOUT.write(state.fetch('mountinfo',"1 0 0:1 / / rw - rootfs rootfs rw\n"))
+  STDOUT.write(state.fetch('thread_mountinfo',''))
+when 'cat /sys/class/block/mmcblk0/dev /sys/class/block/mmcblk0p2/dev'
+  exit 2 if state['usage_unreadable']
+  STDOUT.write(state.fetch('dev_ids',"179:0\n179:2\n"))
+when 'for p in /sys/class/block/mmcblk0 /sys/class/block/mmcblk0p2; do [ -d "$p/holders" ] && [ -r "$p/holders" ] && [ -x "$p/holders" ] || exit 1; for d in "$p"/holders/*; do if [ -e "$d" ]; then echo "$d"; fi; done; done'
+  exit 2 if state['holders_unreadable']
+  puts '/sys/class/block/mmcblk0p2/holders/dm-0' if state['holders']
 when 'cat /proc/swaps'
   STDOUT.write(state.fetch('swaps',"Filename\tType\tSize\tUsed\tPriority\n"))
 when 'for d in /sys/class/block/mmcblk0/holders/* /sys/class/block/mmcblk0p*/holders/*; do if [ -e "$d" ]; then echo "$d"; fi; done'
