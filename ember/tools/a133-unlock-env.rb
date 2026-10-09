@@ -71,17 +71,14 @@ if $PROGRAM_NAME == __FILE__
       file.fsync
     end
     File.link(partial, output)
+    result[:host_files_created] = 1
     result[:status] = 'unlock_copy_prepared'
     result[:input_sha256] = Digest::SHA256.hexdigest(data)
     result[:output_sha256] = Digest::SHA256.hexdigest(candidate)
     result[:changed_variables] = A133Unlock::UPDATES.keys.sort
-    result[:host_files_created] = 1
-    puts JSON.pretty_generate(result)
   rescue A133Unlock::Invalid, SystemCallError, IOError => error
     result[:status] = 'preparation_stopped'
     result[:reason] = error.is_a?(A133Unlock::Invalid) ? error.message : 'host_file_error'
-    puts JSON.pretty_generate(result)
-    exit 1
   ensure
     if partial_stat && partial
       begin
@@ -89,7 +86,15 @@ if $PROGRAM_NAME == __FILE__
         File.unlink(partial) if current.dev == partial_stat.dev && current.ino == partial_stat.ino
       rescue Errno::ENOENT
         # Remove only our owned temporary inode, never a replaced path.
+      rescue SystemCallError, IOError
+        result[:temporary_cleanup_failed] = true
+        if result[:status] == 'unlock_copy_prepared'
+          result[:status] = 'preparation_stopped'
+          result[:reason] = 'host_cleanup_failed'
+        end
       end
     end
   end
+  puts JSON.pretty_generate(result)
+  exit 1 if result[:status] == 'preparation_stopped'
 end

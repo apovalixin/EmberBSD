@@ -55,6 +55,13 @@ removes only the owned temporary inode. JSON contains symbolic errors and
 hashes, without host paths or private env values. It is not a durable install
 journal, release signature or proof against a malicious local directory owner.
 
+The final JSON is emitted after temporary cleanup. A cleanup failure returns
+`preparation_stopped`, a nonzero exit and `temporary_cleanup_failed=true`, with
+no raw filesystem error. `host_files_created` still reports one if publication
+already succeeded; that output and the owned temporary file can remain.
+Preserve and inspect them before a new invocation, which will refuse occupied
+paths. A previous operation error is retained when cleanup also fails.
+
 ```ruby
 require_relative '../tools/a133-unlock-env'
 candidate = A133Unlock.prepare(original_prefix_bytes)
@@ -81,6 +88,7 @@ Accepted EmberBSD trial boot and complete Android restoration remain separate.
 
 ```sh
 ruby ember/tools/a133-unlock-env-test.rb
+ruby ember/tools/a133-unlock-env-cleanup-test.rb
 ruby ember/tools/a133-env-edit-test.rb
 ruby ember/tools/a133-recovery-env-test.rb
 ruby ember/tools/a133-recovery-protect-test.rb
@@ -93,3 +101,5 @@ publication. These tests never execute the vendor scripts or access a tablet.
 The previously observed physical procedure is recorded in the
 [cable-installation receipt](validation/2026-10-08-a133-cable-install.md);
 this common preparer requires its own future physical integration acceptance.
+The cleanup regression uses real permission failures before/after publication
+and at lstat; run it as a non-root user so directory access restrictions apply.
