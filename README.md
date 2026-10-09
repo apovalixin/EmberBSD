@@ -23,7 +23,8 @@ are maintained in the related repositories below.
 - For an application, start with
   [EmberBSD-Examples](https://github.com/oxtech-ember/EmberBSD-Examples) and its
   documented dependencies in [EmberBSD-Ports](https://github.com/oxtech-ember/EmberBSD-Ports).
-- For an AI coding assistant, connect the developer skills described below.
+- For an AI assistant, choose [user skills](#connect-user-skills) for device use
+  or [developer skills](#connect-developer-skills) for development.
 
 ## EmberBSD ecosystem
 
@@ -34,13 +35,30 @@ are maintained in the related repositories below.
 | [EmberBSD-Examples](https://github.com/oxtech-ember/EmberBSD-Examples) | Standalone applications and reproducible demonstrations | Local AI, robotics and desktop scenarios with requirements and checks |
 | [EmberBSD-Runtime](https://github.com/oxtech-ember/EmberBSD-Runtime) | Application execution, lifecycle, permissions and shared device operations | Design stage; no released runtime implementation |
 | [EmberBSD-SDK](https://github.com/oxtech-ember/EmberBSD-SDK) | Application interfaces, package contracts, developer tools and compatibility checks | Design stage; no stable application API or released SDK tools |
-| [Ember-Agent-Skills](https://github.com/oxtech-ember/Ember-Agent-Skills) | Instructions for EmberBSD users and AI coding assistants | Portable Agent Skills for applications, ports and tested contributions |
+| [Ember-Agent-Skills](https://github.com/oxtech-ember/Ember-Agent-Skills) | Instructions for developers and their AI assistants | Application development, board bring-up, shared ports and tested contributions |
+| [EmberBSD-User-Skills](https://github.com/oxtech-ember/EmberBSD-User-Skills) | Instructions for users and their local or remote AI assistants | Applications, device diagnostics, personal Ports and GitHub workflows; package checks and client discovery verified |
 
 Runtime will execute applications on the device; SDK will define their
 interfaces and development tools. Examples demonstrate usable scenarios;
 Ports owns adaptations to third-party software. Agent-Skills helps developers
-use these projects and contribute fixes. A repository's intended purpose is
-not a claim that all of its planned features are implemented.
+use these projects and contribute fixes. User-Skills guides device operation
+and personal software changes, including source patches that follow upstream.
+A repository's intended purpose is not a claim that all of its planned features
+are implemented.
+
+## Connect user skills
+
+[EmberBSD-User-Skills](https://github.com/oxtech-ember/EmberBSD-User-Skills)
+provides the `emberbsd-user` package and `emberbsd-user-guide` skill. Use it to
+install and configure applications, diagnose faults, or maintain personal Ports
+patches and publish them to your selected GitHub repository. Personal source
+customization stays a user workflow; it does not require a contribution PR.
+
+Follow the [loading instructions](https://github.com/oxtech-ember/EmberBSD-User-Skills#load-the-package)
+for your client. Both skill packages can coexist. Version 0.1.0 passed package
+consistency and native Codex discovery checks; these checks do not establish
+on-device agent behavior or end-to-end personal Ports maintenance. The package
+uses available tools and supplies no agent runtime or credentials.
 
 ## Connect developer skills
 
@@ -592,7 +610,10 @@ on every board in the hardware catalog.
   Migrating GCC16's hardcoded bootstrap as/ld defaults remains pending.
   [Developer skills](#connect-developer-skills) help
   AI coding assistants find the owning project, test changes and prepare
-  contributions. A general validated installation image is not yet released.
+  contributions. [User skills](#connect-user-skills) guide application use,
+  device diagnosis and personal Ports maintenance with the available tools;
+  package discovery is verified, while on-device agent behavior remains untested.
+  A general validated installation image is not yet released.
 
 The costs are equally plain. Fixes from upstream are merged by hand.
 Only what the linked board pages mark "Tested" is claimed on physical
