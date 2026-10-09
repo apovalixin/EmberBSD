@@ -52,6 +52,12 @@ native combined fixture; README.md and ember/boards/ys-m33-a133-cable-stage.md.
   Important/Critical fixes once, record every ruling/minor and final test evidence.
 - [ ] Update existing draft PR and both wikis; cleanup only this plan scratch.
 
+## Current verification
+
+The initial native composition14 passed on both runtimes, as did Journal15,
+CLI2, unlocked-only admission2 and image regressions5/Session25. A23-suite
+post-change matrix is running on both; final publication waits for its outputs.
+
 ## Execution rulings
 
 1. Continue inline under the user's repeated autonomous-work authorization;
@@ -62,3 +68,12 @@ native combined fixture; README.md and ember/boards/ys-m33-a133-cable-stage.md.
    coverage aligned; a later shared primitive remains separate work.
 3. Hardware feedback and accepted first boot remain future gates. Cost: a
    green host composition does not prove physical install or fleet readiness.
+
+4. The task-done checkpoint repeats inexpensive regressions after the read
+   Session25 outputs. Cost: that checkpoint alone does not replace the original
+   suite evidence.
+5. Add require_unlocked:true to Protection's repeated guards in this flow;
+   preserve its default API. Cost: one additional opt-in constructor contract.
+6. Start the single fresh review while the final regression matrices run, after
+   initial native/new tests pass. Cost: its verdict alone cannot establish final
+   test success; publication waits for both matrices and any required fix pass.

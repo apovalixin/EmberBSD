@@ -47,6 +47,11 @@ result = protection.install(
 # Keep result[:protected_env] private for the existing guarded image writer.
 ```
 
+The composed cable stage passes `require_unlocked: true` to the constructor.
+That opt-in mode requires0/orange at every protection guard; the default
+continues to support both locked1/green and unlocked0/orange recovery.
+Non-boolean values are refused before transport observation.
+
 Each ADB subprocess has the configured timeout1..7200 seconds. Source
 inspection pins USB serial, eMMC CID, root/state, hardware sizes, GPT and
 layout. Every checkpoint inspects all readable process/task mount inventories,

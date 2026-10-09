@@ -396,6 +396,12 @@ recorded reboot; physical vendor/data-preservation acceptance remains separate.
 A [private session coordinator](ember/boards/ys-m33-a133-install-session.md)
 rechecks live ranges on repeat and keeps recovery protected after failed writes;
 its filesystem/resume contract is tested on a file-backed host fixture.
+The [composed cable write stage](ember/boards/ys-m33-a133-cable-stage.md) binds
+the release before unlock and resumes through persistent recovery protection
+and image writes. Once protection starts, resume never re-enters unlock;
+host contracts exercise actual file-backed writes and interrupted preparation.
+It still leaves recovery protected and reports installation_ready=false;
+release signing, physical restoration and accepted first boot remain separate.
 To contribute another board, follow
 [adding a board](ember/boards/adding-a-board.md) and the
 [developer skill](https://github.com/neonix20b/Ember-Agent-Skills#add-your-board).

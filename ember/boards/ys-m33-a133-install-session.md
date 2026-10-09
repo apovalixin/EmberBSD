@@ -16,6 +16,8 @@ regular, non-symlink and single-linked. Every invocation holds a nonblocking
 exclusive lock for its entire execution and failure recording. All callers for
 that tablet must use the same directory: no cross-directory/global lease exists.
 Preserve the directory while a run is active.
+Held directory/lock descriptors are compared to current inode/owner/mode
+before publication. A detached lock cannot publish into a replacement scope.
 
 Context pins serial/CID, source commit, full-backup/recovery/protected-env hashes
 and the three image roles/lengths/hashes. A new bundle or context is refused
@@ -25,6 +27,8 @@ schema/duplicate keys/checksum, written to an exclusive random temporary file,
 fsynced, renamed atomically and followed by directory fsync. Unknown crash
 leftovers are preserved and never trusted. Checksum is corruption detection,
 not authentication against a malicious local owner.
+After rename, the in-memory report retains the already visible state even
+if directory fsync fails; later failure recording cannot erase that intent.
 
 Rows record pending/checking/writing/verified/failed. `writing` is persisted
 before device writes; `verified` follows successful guarded readback. These
@@ -50,6 +54,10 @@ Success is `write_stage_verified` with `installation_ready=false` and the count
 of ranges actually rewritten in that invocation. `A133Install::Invalid` carries
 a bounded symbolic reason and a redacted `report`, including possible-write
 status. Do not treat all persisted verified rows as a first-boot receipt.
+An optional `expected_bundle_sha256` checks the semantic fingerprint of the
+freshly verified release before USB admission. `A133Install.bundle_digest`
+produces that digest from a verified receipt, independent of artifact order.
+The [composed cable stage](ys-m33-a133-cable-stage.md) supplies this pin.
 
 The caller must first identify and bind the tablet, freshly verify its full
 backup and quiescent mutable-data copies, retain boot0/boot1, accept release

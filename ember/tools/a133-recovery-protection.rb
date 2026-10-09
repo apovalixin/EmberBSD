@@ -7,7 +7,9 @@ require_relative 'a133-usb-backup-source'
 
 module A133Recovery
   class Protection
-    def initialize(adb:,serial:,cid:,root_method:'adbd',timeout:600)
+    def initialize(adb:,serial:,cid:,root_method:'adbd',timeout:600,require_unlocked:false)
+      raise A133Usb::Invalid,'invalid_protection_options' unless [true,false].include?(require_unlocked)
+      @require_unlocked=require_unlocked
       raise A133Usb::Invalid,'invalid_usb_identity' unless serial.is_a?(String) &&
         serial.bytesize.between?(1,128) && serial.match?(/\A[a-zA-Z0-9._-]+\z/) &&
         cid.is_a?(String) && cid.match?(/\A[0-9a-f]{32}\z/)
@@ -66,8 +68,8 @@ module A133Recovery
     def guard!(policy)
       profile=@source.mutable_inspect!
       raise A133Usb::Invalid,'usb_protection_identity_mismatch' unless profile[:serial]==@serial && profile[:cid]==@cid
-      raise A133Usb::Invalid,'usb_protection_state_unsupported' unless
-        [%w[1 green],%w[0 orange]].include?([profile[:locked],profile[:verified]])
+      allowed=@require_unlocked ? [%w[0 orange]] : [%w[1 green],%w[0 orange]]
+      raise A133Usb::Invalid,'usb_protection_state_unsupported' unless allowed.include?([profile[:locked],profile[:verified]])
       raise A133Usb::Invalid,'usb_protection_gpt_mismatch' unless profile[:gpt_sha256]==policy[:gpt_sha]
       raise A133Usb::Invalid,'usb_recovery_changed' unless read_hash('recovery')==policy[:recovery_sha]
     end

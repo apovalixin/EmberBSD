@@ -238,6 +238,9 @@ The [session coordinator](ys-m33-a133-install-session.md) adds private locked
 progress and fresh range verification on every repeat. It coordinates only
 the prepared recovery write stage; factory backup/recovery setup and accepted
 first boot remain integration work.
+The [composed cable write stage](ys-m33-a133-cable-stage.md) now binds release
+inputs before unlock and resumes through protection and image writes on host
+fixtures. It does not release recovery or accept the first boot.
 The [capture binding checker](ys-m33-a133-backup-recovery.md#bind-a-trusted-capture-record-and-critical-copies)
 freshly verifies the full backup and four critical copies against a trusted
 record and explicit serial/CID. Its offline binding does not replace live USB
