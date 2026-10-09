@@ -416,14 +416,12 @@ on every board in the hardware catalog.
   status, so the strict reader refuses readiness. The matched #7 kernel
   reads stable power-controller snapshots and identifies both GPU domains
   as single-Q-Channel PPUs; the inconsistent CORE state remains unresolved.
-  A matched #8 [clock-only experiment](ember/boot/a733-gpu-identification.md#experimental-clock-preparation)
-  completed its GPU-local clock/reset writes but timed out waiting for CORE
-  ON/Q acceptance. It stopped before GPU MMIO; the actual identity remains
-  unverified. Reboot restored the normal observe-only state and gated clocks.
-  The experiment had not checked clock UPDATE completion. The corrected path
-  bounds that wait, validates CCU readiness before CORE and records terminal
-  clocks on timeout. Host and AArch64 VM software contracts pass; the correction
-  has not established the physical timeout's cause or GPU readiness.
+  The corrected [clock-only experiment](ember/boot/a733-gpu-identification.md#physical-result)
+  completed GPU_CLK UPDATE on physical Zero 3W with kernel #11. CCU reported
+  400/200 MHz configuration, but CORE ON/Q still timed out before GPU MMIO.
+  Reboot with the restored normal DTB returned gated clocks and SSH.
+  Separate post-PLL gates were not observed in this run. Physical identity,
+  the cause of the remaining CORE transition and acceleration are unverified.
   The missing power handshake, general shared resource management, DMA/MMU
   and command submission still require porting. These are
   porting targets, not available EmberBSD acceleration. Board bring-up,
@@ -438,7 +436,10 @@ on every board in the hardware catalog.
   On physical CM5, a normal reboot and 128 firmware clock reads through four
   processes plus 32 temperature/throttle checks pass with that matched build.
   This validates the ACPI polling/DMA success path; hardware IRQ/fault handling
-  and a V3D driver remain unverified.
+  remains unverified. A [native BCM2712 V3D observer](ember/boot/bcm2712-v3d.md)
+  validates firmware clock/reset state before fault-aware identification;
+  70 actual-source cases pass on host and CM5 CPU with fake hardware.
+  Physical V3D identification and acceleration remain unverified.
 
 ### Board support and system builds
 

@@ -99,6 +99,10 @@ sun60i_a733_dcxo_query(int phandle, struct sunxi_rtc_dcxo_state *state)
 #define	GPU_CLK_UPDATE		__BIT(27)
 #define	GPU_UPDATE_POLL_US	10
 #define	GPU_UPDATE_TIMEOUT_US	10000
+/* A733 User Manual V1.00, sections 4.1.6.249 and 4.1.6.258. */
+#define	PERI0PLL_GATE_EN_REG	0x1908
+#define	PERI0PLL_GATE_STAT_REG	0x1988
+#define	GPU_READINESS_REG_MASK	__BITS(A733_GPU_MASTER, A733_GPU_REF)
 #define	SMHC0_CLK_REG		0xd00
 #define	SMHC0_BGR_REG		0xd0c
 #define	SMHC1_CLK_REG		0xd10
@@ -706,7 +710,7 @@ sun60i_a733_gpu_evaluate(struct sun60i_a733_gpu_state *state)
 	int error;
 
 	state->reason = A733_GPU_SNAPSHOT_CHANGED;
-	if (state->changed != 0)
+	if ((state->changed & GPU_READINESS_REG_MASK) != 0)
 		return EBUSY;
 	state->reason = A733_GPU_DCXO_CHANGED;
 	if (state->dcxo_sample[0][0] != state->dcxo_sample[1][0] ||
@@ -819,11 +823,15 @@ sun60i_a733_ccu_gpu_inspect(struct clk *gpu, struct sun60i_a733_gpu_state *resul
 		[A733_GPU_BUS] = GPU0_BGR_REG,
 		[A733_GPU_AHB] = AHB_CFG_REG,
 		[A733_GPU_MASTER] = AHB_MASTER_GATE_REG,
+		[A733_GPU_PERIPH_GATE_EN] = PERI0PLL_GATE_EN_REG,
+		[A733_GPU_PERIPH_GATE_STAT] = PERI0PLL_GATE_STAT_REG,
 	};
 	struct sun60i_a733_gpu_state state = { 0 };
 	struct sunxi_rtc_dcxo_state dcxo[2];
 	struct sunxi_ccu_softc *sc;
 	struct clk *hosc;
+	bus_addr_t addr;
+	bus_size_t size;
 	int node, error;
 
 	if (result == NULL)
@@ -835,6 +843,10 @@ sun60i_a733_ccu_gpu_inspect(struct clk *gpu, struct sun60i_a733_gpu_state *resul
 	if (gpu->domain == NULL || gpu->domain->priv == NULL)
 		return ENXIO;
 	sc = gpu->domain->priv;
+	/* sunxi_ccu_attach maps this exact FDT range; reject truncated maps. */
+	if (fdtbus_get_reg(sc->sc_phandle, 0, &addr, &size) != 0 ||
+	    size < PERI0PLL_GATE_STAT_REG + sizeof(uint32_t))
+		return ENXIO;
 	if (OF_getproplen(sc->sc_phandle, "netbsd,dcxo-source") != 4)
 		return EINVAL;
 	node = fdtbus_get_phandle(sc->sc_phandle, "netbsd,dcxo-source");
@@ -858,6 +870,12 @@ sun60i_a733_ccu_gpu_inspect(struct clk *gpu, struct sun60i_a733_gpu_state *resul
 	if (error != 0)
 		return error;
 	for (u_int i = 0; i < 2; i++) {
+		state.periph_gates[i].configured = __SHIFTOUT(
+		    state.sample[i][A733_GPU_PERIPH_GATE_EN], __BITS(27,16));
+		state.periph_gates[i].no_auto =
+		    state.sample[i][A733_GPU_PERIPH_GATE_EN] & __BITS(11,0);
+		state.periph_gates[i].effective = __SHIFTOUT(
+		    state.sample[i][A733_GPU_PERIPH_GATE_STAT], __BITS(27,16));
 		memcpy(state.dcxo_sample[i], dcxo[i].sample, sizeof(dcxo[i].sample));
 		state.dcxo_hz[i] = dcxo[i].rate_hz;
 	}
@@ -950,8 +968,14 @@ static bool
 sun60i_a733_gpu_same(const struct sun60i_a733_gpu_state *a,
     const struct sun60i_a733_gpu_state *b)
 {
-	return b->changed == 0 &&
-	    memcmp(a->sample, b->sample, sizeof(a->sample)) == 0 &&
+	/* Autonomous diagnostic gate status is not part of the old policy. */
+	for (u_int s = 0; s < 2; s++) {
+		for (u_int i = A733_GPU_REF; i <= A733_GPU_MASTER; i++) {
+			if (a->sample[s][i] != b->sample[s][i])
+				return false;
+		}
+	}
+	return (b->changed & GPU_READINESS_REG_MASK) == 0 &&
 	    memcmp(a->dcxo_sample, b->dcxo_sample, sizeof(a->dcxo_sample)) == 0 &&
 	    memcmp(a->dcxo_hz, b->dcxo_hz, sizeof(a->dcxo_hz)) == 0 &&
 	    memcmp(a->hosc_hz, b->hosc_hz, sizeof(a->hosc_hz)) == 0;

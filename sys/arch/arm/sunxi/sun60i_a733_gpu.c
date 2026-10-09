@@ -108,6 +108,8 @@ sun60i_gpu_clock_report(struct sun60i_gpu_softc *sc,
 		[A733_GPU_BUS] = "GPU_BGR[0xb24]",
 		[A733_GPU_AHB] = "AHB[0x500]",
 		[A733_GPU_MASTER] = "AHB_MASTER[0x5c0]",
+		[A733_GPU_PERIPH_GATE_EN] = "PERI0_GATE_EN[0x1908]",
+		[A733_GPU_PERIPH_GATE_STAT] = "PERI0_GATE_STAT[0x1988]",
 	};
 	const char *reason = "unknown";
 
@@ -131,6 +133,13 @@ sun60i_gpu_clock_report(struct sun60i_gpu_softc *sc,
 			aprint_normal_dev(sc->sc_dev, "%s 0x%08x -> 0x%08x\n",
 			    names[i], state->sample[0][i], state->sample[1][i]);
 	}
+	for (u_int i = 0; i < 2; i++)
+		aprint_normal_dev(sc->sc_dev, "PERI0 gates sample %u: "
+		    "configured 0x%03x, no-auto 0x%03x, effective 0x%03x "
+		    "(400M bit1, 400M_ALL bit2, 600M bit9, 800M bit10); "
+		    "diagnostic only\n", i, state->periph_gates[i].configured,
+		    state->periph_gates[i].no_auto,
+		    state->periph_gates[i].effective);
 }
 
 static void
@@ -248,6 +257,13 @@ sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
 			error = EOPNOTSUPP;
 			goto out;
 		}
+		sc->sc_stage = "experimental initial clock observation";
+		error = sun60i_a733_ccu_gpu_inspect(gpu, &clocks_state);
+		if (error != 0)
+			goto out;
+		aprint_normal_dev(sc->sc_dev,
+		    "initial CCU observation before preparation\n");
+		sun60i_gpu_clock_report(sc, &clocks_state);
 		sc->sc_stage = "experimental domain reservation";
 		error = sun60i_a733_pck_gpu_reserve(power_node, sc);
 		if (error != 0)

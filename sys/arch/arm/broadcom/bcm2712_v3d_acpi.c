@@ -1,0 +1,288 @@
+/* Origin: EmberBSD BCM2712 V3D passive identification, 2026-10-09. */
+/* SPDX-License-Identifier: BSD-2-Clause */
+/* Copyright (c) 2026 EmberBSD contributors. */
+
+/*
+ * Register facts: raspberrypi/linux 43c132e8863c3bff3647033b6a7d2bf87b15501c,
+ * v3d_regs.h, v3d_drv.c and bcm2712-ds.dtsi. ACPI layout: eotics-com/
+ * edk2-platforms c4b5d05de1f2ef633bdb4c175b5c118fcb2666ed, RPi5 Dsdt.asl.
+ * This observer never enables clocks, changes power/reset/SMS, or submits
+ * work. An unready firmware handoff ends the probe. No DRM device is exposed.
+ */
+
+#include <sys/cdefs.h>
+__KERNEL_RCSID(0, "$NetBSD$");
+
+#include <sys/param.h>
+#include <sys/bus.h>
+#include <sys/device.h>
+#include <sys/endian.h>
+#include <sys/systm.h>
+
+#include <dev/acpi/acpivar.h>
+#include <arm/broadcom/bcm2835_mbox.h>
+#include <arm/broadcom/bcm2835_pmwdogvar.h>
+#include <arch/evbarm/rpi/vcprop.h>
+#include <arch/evbarm/rpi/vcio.h>
+
+#define BCMV3D_HUB	0
+#define BCMV3D_CORE	1
+#define BCMV3D_SMS	2
+#define BCMV3D_NREG	3
+#define BCMV3D_RESET_N	__BIT(6)
+#define BCMV3D_SMS_TEE	0x400
+#define BCMV3D_HUB_IDENT1	0x0c
+#define BCMV3D_HUB_IDENT3	0x14
+#define BCMV3D_MMU_DEBUG	0x1238
+
+static const bus_addr_t bcmv3d_addresses[BCMV3D_NREG] = {
+	UINT64_C(0x1002000000), UINT64_C(0x1002008000),
+	UINT64_C(0x1002030800)
+};
+static const bus_size_t bcmv3d_lengths[BCMV3D_NREG] = {
+	0x4000, 0x6000, 0x700
+};
+
+struct bcmv3d_softc {
+	device_t sc_dev;
+	bus_space_tag_t sc_bst;
+	const char *sc_stage;
+	uint32_t sc_clock_state, sc_clock_rate, sc_clock_measured, sc_pm;
+	uint32_t sc_sms[2], sc_ident1, sc_ident3, sc_core_ident0, sc_mmu;
+	bool sc_observed;
+};
+
+static int bcmv3d_match(device_t, cfdata_t, void *);
+static void bcmv3d_attach(device_t, device_t, void *);
+static int bcmv3d_finalize(device_t);
+
+CFATTACH_DECL_NEW(bcmv3d_acpi, sizeof(struct bcmv3d_softc),
+    bcmv3d_match, bcmv3d_attach, NULL, NULL);
+
+/* A single property tag has eight payload bytes and a four-byte terminator. */
+static int
+bcmv3d_clock(uint32_t tag, uint32_t *value)
+{
+	uint32_t request[8] __aligned(16) = {
+		htole32(32), 0, htole32(tag), htole32(8), 0,
+		htole32(VCPROP_CLK_V3D), 0, 0
+	};
+	uint32_t response;
+	int error;
+
+	/* No caller can use this helper to send a firmware write request. */
+	if (tag != VCPROPTAG_GET_CLOCKSTATE &&
+	    tag != VCPROPTAG_GET_CLOCKRATE &&
+	    tag != VCPROPTAG_GET_CLOCK_MEASURED)
+		return EINVAL;
+	error = bcmmbox_request(BCMMBOX_CHANARM2VC, request,
+	    sizeof(request), &response);
+	if (error != 0)
+		return error;
+	if (le32toh(request[0]) != sizeof(request) ||
+	    le32toh(request[1]) != VCPROP_REQ_SUCCESS ||
+	    le32toh(request[2]) != tag || le32toh(request[3]) != 8 ||
+	    le32toh(request[4]) != (VCPROPTAG_RESPONSE | 8) ||
+	    le32toh(request[5]) != VCPROP_CLK_V3D || request[7] != 0)
+		return EIO;
+	*value = le32toh(request[6]);
+	return 0;
+}
+
+static int
+bcmv3d_prerequisites(struct bcmv3d_softc *sc)
+{
+	int error;
+
+	sc->sc_stage = "firmware V3D clock state";
+	error = bcmv3d_clock(VCPROPTAG_GET_CLOCKSTATE, &sc->sc_clock_state);
+	if (error != 0)
+		return error;
+	sc->sc_stage = "firmware V3D clock rate";
+	error = bcmv3d_clock(VCPROPTAG_GET_CLOCKRATE, &sc->sc_clock_rate);
+	if (error != 0)
+		return error;
+	sc->sc_stage = "firmware V3D measured clock";
+	error = bcmv3d_clock(VCPROPTAG_GET_CLOCK_MEASURED,
+	    &sc->sc_clock_measured);
+	if (error != 0)
+		return error;
+	sc->sc_stage = "BCM2712 PM owner";
+	error = bcmpmwdog_v3d_status(&sc->sc_pm);
+	if (error != 0)
+		return error;
+	aprint_normal_dev(sc->sc_dev,
+	    "clock5 state=%#x rate=%u measured=%u Hz PM_GRAFX2712=%#x\n",
+	    sc->sc_clock_state, sc->sc_clock_rate, sc->sc_clock_measured,
+	    sc->sc_pm);
+	sc->sc_stage = "firmware clock/reset readiness";
+	/* State bit 1 means nonexistent; unknown bits are not accepted. */
+	if (sc->sc_clock_state != 1 || sc->sc_clock_rate == 0 ||
+	    sc->sc_clock_measured == 0 || (sc->sc_pm & BCMV3D_RESET_N) == 0)
+		return EBUSY;
+	return 0;
+}
+
+static int
+bcmv3d_observe(struct bcmv3d_softc *sc)
+{
+	bus_space_handle_t handles[BCMV3D_NREG];
+	bool mapped[BCMV3D_NREG] = { false, false, false };
+	uint32_t sms[2];
+	unsigned int i;
+	int error;
+
+	error = bcmv3d_prerequisites(sc);
+	if (error != 0)
+		return error;
+	sc->sc_stage = "SMS mapping";
+	error = bus_space_map(sc->sc_bst, bcmv3d_addresses[BCMV3D_SMS],
+	    bcmv3d_lengths[BCMV3D_SMS], 0, &handles[BCMV3D_SMS]);
+	if (error != 0)
+		return error;
+	mapped[BCMV3D_SMS] = true;
+	sc->sc_stage = "SMS readiness";
+	/*
+	 * Strictly require the whole REE/TEE word to be idle, including no
+	 * lock, mode transition, interrupt or power-off indication. Peek
+	 * catches bus faults; it cannot time out a stalled hardware bus.
+	 */
+	for (i = 0; i < 2; i++) {
+		error = bus_space_peek_4(sc->sc_bst, handles[BCMV3D_SMS],
+		    i * BCMV3D_SMS_TEE, &sc->sc_sms[i]);
+		if (error != 0)
+			goto out;
+	}
+	aprint_normal_dev(sc->sc_dev, "SMS REE=%#x TEE=%#x\n",
+	    sc->sc_sms[0], sc->sc_sms[1]);
+	if (sc->sc_sms[0] != 0 || sc->sc_sms[1] != 0) {
+		error = EBUSY;
+		goto out;
+	}
+	for (i = 0; i < 2; i++) {
+		error = bus_space_peek_4(sc->sc_bst, handles[BCMV3D_SMS],
+		    i * BCMV3D_SMS_TEE, &sms[i]);
+		if (error != 0)
+			goto out;
+		if (sms[i] != sc->sc_sms[i]) {
+			error = EBUSY;
+			goto out;
+		}
+	}
+	for (i = BCMV3D_HUB; i <= BCMV3D_CORE; i++) {
+		sc->sc_stage = i == BCMV3D_HUB ? "HUB mapping" : "CORE mapping";
+		error = bus_space_map(sc->sc_bst, bcmv3d_addresses[i],
+		    bcmv3d_lengths[i], 0, &handles[i]);
+		if (error != 0)
+			goto out;
+		mapped[i] = true;
+	}
+	sc->sc_stage = "V3D identification";
+	error = bus_space_peek_4(sc->sc_bst, handles[BCMV3D_HUB],
+	    BCMV3D_HUB_IDENT1, &sc->sc_ident1);
+	if (error != 0)
+		goto out;
+	if ((sc->sc_ident1 & 15) != 7 ||
+	    ((sc->sc_ident1 >> 4) & 15) != 1 ||
+	    ((sc->sc_ident1 >> 8) & 15) != 1) {
+		error = ENODEV;
+		goto out;
+	}
+	error = bus_space_peek_4(sc->sc_bst, handles[BCMV3D_HUB],
+	    BCMV3D_HUB_IDENT3, &sc->sc_ident3);
+	if (error != 0)
+		goto out;
+	error = bus_space_peek_4(sc->sc_bst, handles[BCMV3D_CORE], 0,
+	    &sc->sc_core_ident0);
+	if (error != 0)
+		goto out;
+	error = bus_space_peek_4(sc->sc_bst, handles[BCMV3D_HUB],
+	    BCMV3D_MMU_DEBUG, &sc->sc_mmu);
+	if (error != 0)
+		goto out;
+	aprint_normal_dev(sc->sc_dev,
+	    "V3D 7.1 IDENT1=%#x IDENT3=%#x CORE_IDENT0=%#x MMU_DEBUG=%#x; "
+	    "identification only, no command submission\n", sc->sc_ident1,
+	    sc->sc_ident3, sc->sc_core_ident0, sc->sc_mmu);
+out:
+	for (i = 0; i < BCMV3D_NREG; i++)
+		if (mapped[i])
+			bus_space_unmap(sc->sc_bst, handles[i], bcmv3d_lengths[i]);
+	return error;
+}
+
+static int
+bcmv3d_finalize(device_t dev)
+{
+	struct bcmv3d_softc *sc = device_private(dev);
+	int error;
+
+	if (sc->sc_observed)
+		return 0;
+	sc->sc_observed = true;
+	error = bcmv3d_observe(sc);
+	if (error != 0)
+		aprint_normal_dev(dev, "observation stopped at %s: error %d; "
+		    "GPU state unchanged\n", sc->sc_stage, error);
+	return 0;
+}
+
+static int
+bcmv3d_match(device_t parent, cfdata_t cf, void *aux)
+{
+	struct acpi_attach_args *aa = aux;
+	ACPI_DEVICE_INFO *info = aa->aa_node->ad_devinfo;
+	static const char * const ids[] = { "BCM2850", NULL };
+
+	if (aa->aa_node->ad_type != ACPI_TYPE_DEVICE ||
+	    (info->Valid & ACPI_VALID_HID) == 0 ||
+	    strcmp(info->HardwareId.String, "BCM2712") != 0)
+		return 0;
+	return acpi_match_hid(info, ids);
+}
+
+static void
+bcmv3d_attach(device_t parent, device_t self, void *aux)
+{
+	struct bcmv3d_softc *sc = device_private(self);
+	struct acpi_attach_args *aa = aux;
+	struct acpi_resources res;
+	struct acpi_mem *mem;
+	ACPI_INTEGER cca, sta;
+	ACPI_STATUS status;
+	unsigned int i;
+	int error;
+
+	sc->sc_dev = self;
+	sc->sc_bst = aa->aa_memt;
+	aprint_naive("\n");
+	aprint_normal(": BCM2712 V3D passive observer\n");
+	if (ACPI_FAILURE(acpi_eval_integer(aa->aa_node->ad_handle,
+	    "_STA", &sta)) || sta != 0x0f ||
+	    ACPI_FAILURE(acpi_eval_integer(aa->aa_node->ad_handle,
+	    "_CCA", &cca)) || cca != 0) {
+		aprint_error_dev(self, "unsupported _STA/_CCA; no GPU access\n");
+		return;
+	}
+	status = acpi_resource_parse(self, aa->aa_node->ad_handle, "_CRS",
+	    &res, &acpi_resource_parse_ops_default);
+	if (ACPI_FAILURE(status)) {
+		aprint_error_dev(self, "cannot parse resources; no GPU access\n");
+		return;
+	}
+	for (i = 0; i < BCMV3D_NREG; i++) {
+		mem = acpi_res_mem(&res, i);
+		if (mem == NULL || mem->ar_base != bcmv3d_addresses[i] ||
+		    mem->ar_length != bcmv3d_lengths[i])
+			break;
+	}
+	acpi_resource_cleanup(&res);
+	if (i != BCMV3D_NREG) {
+		aprint_error_dev(self, "unsupported resource %u; no GPU access\n", i);
+		return;
+	}
+	/* Mailbox and PM providers must finish autoconfiguration first. */
+	error = config_finalize_register(self, bcmv3d_finalize);
+	if (error != 0)
+		aprint_error_dev(self, "cannot defer observation: %d\n", error);
+}

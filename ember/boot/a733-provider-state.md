@@ -64,7 +64,7 @@ GPU consumer's TOP5 binding nor proves GPU readiness; it performs no transition.
 
 `sun60i_a733_ccu_gpu_ready(gpu_clock, &core_hz, &bus_hz)` accepts the native
 A733 GPU module clock handle. Both results are published only on success.
-It verifies two equal CCU register snapshots, then checks the GPU module gate
+It verifies two equal snapshots of the eleven required registers, then checks the GPU module gate
 and update bit, bus gate, deasserted GPU reset, and GPU AHB master gate.
 Missing handles or the oscillator provider return `ENXIO`; a foreign clock
 provider returns `EOPNOTSUPP`. Changing or inactive required hardware returns
@@ -73,19 +73,28 @@ provider returns `EOPNOTSUPP`. Changing or inactive required hardware returns
 `sun60i_a733_ccu_gpu_inspect(gpu_clock, &state)` separates observation from
 readiness. A nonzero return leaves `state` unchanged. Zero means a complete
 observation: `readiness_error` still determines whether the path is ready.
-The result includes two samples of eleven CCU registers, their changed-bit
+The result includes two samples of thirteen CCU registers, their changed-bit
 mask, two fixed-hosc rates, bracketing hardware DCXO observations, and the
 first failed condition. Derived core and
 bus rates are valid only when `readiness_error` is zero; otherwise they are
 zero. The existing `gpu_ready` wrapper retains its errors and output rules.
 
-After handle/provider validation, inspection queries RTC, performs exactly
-22 CCU reads, then queries RTC again: four RTC reads in total. Both queries
+After handle/provider validation, inspection rejects an FDT mapping shorter than
+`0x198c`, queries RTC, performs exactly 26 CCU reads, then queries RTC again: four RTC reads in total. Both queries
 must succeed. A failure of either query leaves the complete inspection output
-unchanged, including after the CCU reads. Different CCU samples take priority,
+unchanged, including after the CCU reads. Different required CCU samples take priority,
 followed by changed DCXO raw status/rate, changed fixed-hosc diagnostic rate,
 and the existing gate/reset/PLL checks. There are no retries or writes.
 Matching endpoints do not reserve either provider or exclude intervening changes.
+
+The two additional registers are `PERI0PLL_GATE_EN` at `+0x1908` and its
+status at `+0x1988` (A733 User Manual V1.00, sections 4.1.6.249/258).
+Bits 27:16 decode configured and effective branch gates; control bits 11:0
+report automatic-gating bypass. In the normalized masks, 400M is bit 1,
+400M_ALL bit 2, 600M bit 9 and 800M bit 10. Both raw samples and decoded
+masks are printed. These additional observations are diagnostic only: their
+changes remain in `changed`, but do not alter the previous eleven-register
+readiness or reservation comparisons. They do not establish power readiness.
 
 PLL_REF normalization uses the hardware-classified 19.2/24/26 MHz DCXO value,
 never fixed-hosc. Exact integer arithmetic must prove a 24 MHz reference
@@ -130,3 +139,8 @@ on acquisition errors, and the compatibility wrapper. Existing transition and
 attach tests remain controls. Passing these contracts and focused
 cross-compilation is separate
 from physical identification or accelerator workload acceptance.
+
+The post-PLL extension passes 18,245 clock assertions and 1,212 consumer
+checks on macOS, including ASan/UBSan. Fourteen compiled preparation mutants
+are rejected. The no-RTC build rejects inspection before MMIO. These are
+software contracts; post-PLL hardware observations remain pending.

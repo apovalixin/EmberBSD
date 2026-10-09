@@ -57,6 +57,10 @@ __KERNEL_RCSID(0, "$NetBSD$");
 /* A cell the boot loader did not report. */
 #define	PM_ACPI_UNREPORTED	0xffffffff
 
+/* Origin: EmberBSD read-only BCM2712 PM owner access, 2026-10-09. */
+#define BCM2712_PM_GRAFX	0x304
+static struct bcm2835pmwdog_softc *bcmpmwdog_v3d_sc;
+
 /*
  * Why the PMIC was reset, bit by bit, as the Raspberry Pi configuration
  * reference documents power_reset in /chosen/power.
@@ -116,6 +120,9 @@ bcmpmwdog_acpi_attach(device_t parent, device_t self, void *aux)
 
 	aprint_normal_dev(self, "power management, reset and watchdog\n");
 	bcmpmwdog_attach_common(sc);
+	if (mem->ar_length >= BCM2712_PM_GRAFX + sizeof(uint32_t) &&
+	    bcmpmwdog_v3d_sc == NULL)
+		bcmpmwdog_v3d_sc = sc;
 	bcmpmwdog_acpi_power_source(self);
 done:
 	acpi_resource_cleanup(&res);
@@ -161,4 +168,15 @@ bcmpmwdog_acpi_power_source(device_t self)
 	if (overcurrent != PM_ACPI_UNREPORTED && overcurrent != 0)
 		aprint_normal(", USB over-current at boot");
 	aprint_normal("\n");
+}
+
+int
+bcmpmwdog_v3d_status(uint32_t *value)
+{
+	struct bcm2835pmwdog_softc *sc = bcmpmwdog_v3d_sc;
+
+	if (sc == NULL)
+		return ENXIO;
+	return bus_space_peek_4(sc->sc_iot, sc->sc_ioh,
+	    BCM2712_PM_GRAFX, value);
 }

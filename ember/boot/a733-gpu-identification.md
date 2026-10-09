@@ -8,65 +8,58 @@ The [driver](https://github.com/oxtech-ember/EmberBSD/blob/main/sys/arch/arm/sun
 is owned by EmberBSD. Software contracts, the complete GCC16 kernel build
 and physical attachment on Zero 3W are verified. Physical GPU identification
 has not yet been accepted. Read-only provider observations are verified;
-the separate #8 clock-only experiment timed out before GPU access.
+the corrected #11 experiment completed GPU_CLK UPDATE but GPU_CORE still
+failed its strict ON/Q readiness check. No GPU register was accessed.
 
-## Physical result, 2026-10-08
+## Physical result
 
-A 4 GiB Orange Pi Zero 3W booted matched `EMBER64 #8`, four modules and the
-separate experimental DTB from `94ba2f5a99532e2f02720cb4172bcc9441e002ff`.
-The board revision was not recorded. Vendor boot0/U-Boot and the boot script
-were preserved. MicroSD root and Wi-Fi/SSH returned; #7 backups were retained.
+On 2026-10-09, a 4 GiB Orange Pi Zero 3W booted `EMBER64 #11` from
+`aaff1e121ce4a77748ff6b7be21f4e226c9e3c4b` with the separate experimental DTB.
+The GPU, CCU, PCK and board DT sources match `f455d303824` exactly. The board
+revision was not recorded. The installed kernel, modules, vendor boot0/U-Boot
+and boot script were preserved; only the DTB selected the existing opt-in.
 
-The consumer reached its bounded CORE waiter after all four GPU-local CCU
-write/readback checks succeeded, without waiting for GPU_CLK UPDATE completion.
-The waiter returned `ETIMEDOUT` (60), with
-last CORE `PWPR=0x8`, `PWSR=0`, `MISR=0`. Resources were retained until reboot;
-there was no rollback or retry, and no GPU mapping or PBVNC read occurred.
-The result does not distinguish incomplete clock configuration, a stalled PCSM
-phase or Q-Channel exit. It does not justify a PWCR override or relaxed readiness.
-The subsequent #8 reboot with the normal DTB restored observe-only operation
-and Wi-Fi/SSH. GPU_CLK/GPU_BGR returned to zero; PLL, RTC and AHB observations
-matched the baseline. Reboot ended the reservation; no GPU access occurred.
+GPU_CLK UPDATE completed before the CORE waiter. The terminal CCU observation
+reported readiness with `GPU_CLK=0x83000000`, `GPU_BGR=0x00010001` and
+`AHB=0x03000002`. Bit 27 was clear. The decoded core/bus rates were 400/200 MHz;
+neither clock frequency nor the configured 800000-microvolt supply was
+independently measured. This snapshot does not observe the separate
+post-PLL automatic branch gates.
 
-The preceding #7 read-only baseline and #8 pre-attempt diagnostic agree:
+CORE still returned `ETIMEDOUT` (60), with last `PWPR=0x8`, `PWSR=0`, `MISR=0`.
+There was no GPU mapping or PBVNC read. The clock/domain leases remained
+reserved until reboot. Restoring the normal DTB and rebooting returned
+observe-only operation and SSH; GPU_CLK/GPU_BGR were zero again. Kernel,
+boot script and normal DTB hashes matched the saved baseline.
 
-RTC status was stable at `0x183fb0f7`, classifying DCXO as 26 MHz. Both RTC
-queries bracketing the CCU snapshot agreed. The global fixed-hosc provider
-still reports its unchanged 24 MHz DT value. With the hardware-classified
-26 MHz input, PLL_REF `0xf8675f00` (N=96, M=104, P=1) normalizes exactly to
-24 MHz. This is register decoding, not an independent frequency measurement.
+| Artifact | SHA256 |
+| --- | --- |
+| Kernel ELF | `bfd0d09f63dc364570a6d0f4b59879964f26d456016634e8053048e15095939b` |
+| Native kernel image | `1fd60e47965f2eec95e0fabeb01de63f0e44c93393c1c965ef7264dc483c5696` |
+| Experimental DTB | `7a840baec0c4c76455b1ce8b2252e63bfea7a121e88c38c43c413ab1575dab7c` |
+| Restored normal DTB | `a2bd07430948db61140040a1a5c0d5872f5797a4719d7af6ff00b6c0d8d88113` |
 
-The bounded [PCK diagnostic](a733-power-domains.md#read-only-gpu-ppu-diagnostic)
-read 20 registers twice for each GPU domain, with no changed values.
-Both identify as PCK-600, PPU v1.1, with one Q-Channel: IDR0 `0x10130101`,
-IDR1 `0x2`, IIDR `0x0b61143b`, AIDR `0x11`. The key states were:
+This run excludes unfinished UPDATE for this attempt. It does not distinguish
+a stalled PCSM phase from Q-Channel exit or establish the remaining clocks.
+MISR contains sampled input levels, not transition phase or request outputs.
+The observation does not justify a PWCR override or relaxed readiness.
+The preceding #8 attempt on 2026-10-08 did not wait for UPDATE; its same CORE
+timeout cannot retroactively establish that clocks were configured then.
 
-| Domain | PWPR | PMER | PWSR | DISR | MISR | PWCR |
-| --- | --- | --- | --- | --- | --- | --- |
-| GPU_TOP (5) | `0x8` | `0` | `0x8` | `0` | `0x100` | `0x101` |
-| GPU_CORE (6) | `0x8` | `0` | `0` | `0x1` | `0` | `0x101` |
+The normal #11 baseline agrees with the earlier #7/#8 observations:
 
-CORE's static-ON policy and status remain inconsistent with the strict
-reader's readiness contract. MISR reports sampled input levels, not the
-controller's transition phase or its request output. These observations
-do not establish the cause or justify overriding the handshake enables.
-The provider diagnostic itself makes no register writes or GPU accesses.
+- RTC status `0x183fb0f7` classifies DCXO as 26 MHz. PLL_REF `0xf8675f00`
+  normalizes it to 24 MHz. The fixed-hosc DT provider remains unchanged.
+- Both PCK GPU domains identify as PCK-600, PPU v1.1, one Q-Channel:
+  IDR0 `0x10130101`, IDR1 `0x2`, IIDR `0x0b61143b`, AIDR `0x11`.
+- GPU_TOP has PWPR/PWSR `0x8` and MISR `0x100`; GPU_CORE has PWPR `0x8`,
+  PWSR `0`, DISR `1`, MISR `0`. Both PWCR values are `0x101`.
+- GPU_CLK/GPU_BGR are zero, PLL_GPU0 is `0x41104500`; the normal consumer
+  reports `GPU module gated (error 16)` before any GPU access.
 
-The baseline CCU snapshots agree: GPU_CLK/GPU_BGR are zero and PLL_GPU0 is
-`0x41104500`. The module/bus gates are clear and reset is asserted. The normal
-consumer reports `GPU module gated (error 16)` with GPU_TOP statically ON.
-
-The #8 preconditions accepted enabled DCDC4 programmed to 800000 microvolts
-and the existing 400 MHz source. Neither voltage nor frequency was physically
-measured. These were short boot checks, not sustained runs or acceleration.
-
-The three exact target contracts passed on the real Zero 3W CPU under #7:
-15,188 CCU checks, 1,102 consumer checks, and 133 new PCK ownership/wait cases
-plus its existing matrices. They use fake MMIO and do not test GPU hardware.
-Those checks predate the UPDATE-completion correction below.
-Native image SHA256:
-`eb1e35340f0869d0e532025cf74e93e0119c2966f249d82bcc26f6a7f35b0808`;
-experimental Zero 3W DTB SHA256: `7a840baec0c4c76455b1ce8b2252e63bfea7a121e88c38c43c413ab1575dab7c`.
+These are short boot observations, not sustained operation or acceleration.
+The [read-only PCK diagnostic](a733-power-domains.md#read-only-gpu-ppu-diagnostic)
+and CCU observations preserve firmware-owned state.
 
 ## Local binding
 
@@ -125,7 +118,7 @@ or query errors prevent GPU mapping and reads.
 
 For a completed CCU observation that is not ready, the consumer reports the
 first failed condition, the queried DCDC4 setting in microvolts, both
-oscillator rates, and the eleven raw CCU registers. Differing registers show
+oscillator rates, and the thirteen raw CCU registers. Differing registers show
 both samples. This uses one bounded provider inspection, without a second
 query, writes, or GPU MMIO. Acquisition errors do not print an unavailable
 snapshot. The reported supply setting is not a physical voltage measurement;
@@ -203,7 +196,7 @@ The production-body contracts cover reservation, each write failure, retention,
 delayed UPDATE clearing, deadline/stuck cases, CCU-before-CORE ordering and
 terminal acquisition failure. Its 15,253 clock and 1,156 consumer checks also
 pass as AArch64 executables in an isolated VM. This is software-only validation;
-it does not establish the cause of #8 or physical readiness. Run the three A733
+it does not establish the cause of the remaining physical CORE timeout. Run the three A733
 clock/power/identification contracts and `sh ember/tools/a733-gpu-prepare-mutations.sh`.
 The experiment remains disabled in normal board DTBs.
 

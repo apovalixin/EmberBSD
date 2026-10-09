@@ -33,6 +33,7 @@ enum sun60i_a733_gpu_reg {
 	A733_GPU_REF, A733_GPU_PERIPH, A733_GPU_PERIPH_PAT0,
 	A733_GPU_PERIPH_PAT1, A733_GPU_PLL, A733_GPU_PAT0, A733_GPU_PAT1,
 	A733_GPU_MODULE, A733_GPU_BUS, A733_GPU_AHB, A733_GPU_MASTER,
+	A733_GPU_PERIPH_GATE_EN, A733_GPU_PERIPH_GATE_STAT,
 	A733_GPU_NREGS
 };
 
@@ -52,6 +53,15 @@ enum sun60i_a733_gpu_reason {
 struct sun60i_a733_gpu_state {
 	uint32_t sample[2][A733_GPU_NREGS];
 	uint32_t changed;	/* One bit per register whose samples differ. */
+	/*
+	 * Diagnostic only: bits 0..11 correspond to PERI0 gates 16..27.
+	 * 400M=1, 400M_ALL=2, 600M=9, 800M=10; one means enabled,
+	 * except no_auto where one means automatic gating is disabled.
+	 * These observations do not change readiness or reserve the gates.
+	 */
+	struct {
+		uint32_t configured, no_auto, effective;
+	} periph_gates[2];
 	u_int hosc_hz[2];
 	uint32_t dcxo_sample[2][2];	/* Queries bracketing the CCU reads. */
 	u_int dcxo_hz[2];

@@ -137,6 +137,6 @@ The contract and GCC 12.5/16 AArch64 kernel-object cross-builds have passed.
 The extended 15,188-check contract also passed natively on physical Zero 3W
 under kernel #7. It executes real CPU instructions with fake MMIO, not GPU
 clock hardware. The complete GCC16.2 #8 kernel subsequently booted with the
-separate experimental DTB; see the [physical result](a733-gpu-identification.md#physical-result-2026-10-08).
+separate experimental DTB; see the [physical result](a733-gpu-identification.md#physical-result).
 That bounded clock/reset attempt did not reach GPU identification. Neither
 GPU rendering nor NPU inference is established.

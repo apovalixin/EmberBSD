@@ -33,7 +33,7 @@ Board revision: not recorded in the original support table.
 | Hardware random numbers | Tested |
 | GPU/NPU power domains | Native PCK600 provider passes software contracts and GCC16 cross object builds; physical transitions and acceleration unverified ([guide](../boot/a733-power-domains.md)) |
 | GPU/NPU clocks and resets | Native main CCU providers pass 199 software assertions and GCC12/GCC16 object builds; firmware PLLs stay unchanged, physical sequencing unverified ([guide](../boot/a733-accelerator-clocks.md)) |
-| GPU identification | Read-only consumer attaches in `EMBER64 #5`; stable snapshots show GPU module/bus clocks gated and reset asserted before GPU MMIO. Actual identity and acceleration remain unverified ([physical result](../boot/a733-gpu-identification.md#physical-result-2026-10-08)) |
+| GPU identification | The #11 opt-in completes GPU clock UPDATE; CORE ON/Q still times out before GPU MMIO. Normal observation and recovery boot pass; identity and acceleration remain unverified ([physical result](../boot/a733-gpu-identification.md#physical-result)) |
 
 Long-run stability has not been established. Application results from an
 AArch64 VM do not validate this board's camera, audio or GPU/NPU paths.
@@ -158,7 +158,7 @@ The matched GCC16 `EMBER64 #5` bundle from `f625fd9a0de` boots on this
 4 GiB Zero 3W with eight CPUs, microSD root and Wi-Fi/SSH. The read-only
 GPU consumer observes stable CCU snapshots with the GPU module/bus clocks
 gated and reset asserted. DCDC4 is programmed to 800 mV and GPU_TOP is
-statically ON. The probe stops before GPU MMIO. The [physical result and bundle hashes](../boot/a733-gpu-identification.md#physical-result-2026-10-08)
+statically ON. The probe stops before GPU MMIO. The [physical result and bundle hashes](../boot/a733-gpu-identification.md#physical-result)
 distinguish this outcome from the passing software contracts. No active
 accelerator power sequence, DMA, firmware load or command execution was tested.
 

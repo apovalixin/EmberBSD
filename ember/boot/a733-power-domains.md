@@ -137,7 +137,7 @@ strict errors. In physical kernel #6, CORE6 had policy `8`, emulation `0`
 and status `0`, hence `EBUSY`. Matched physical #7 confirms that mismatch
 and identifies both domains as one-Q-Channel PCK-600/PPU v1.1. Both have
 PWCR `0x101`; CORE MISR is `0`, whereas TOP MISR is `0x100`.
-All 80 reads succeeded with unchanged samples. The [physical receipt](a733-gpu-identification.md#physical-result-2026-10-08)
+All 80 reads succeeded with unchanged samples. The [physical receipt](a733-gpu-identification.md#physical-result)
 records the remaining values and scope. Arm DEN0051E section 5.2.8 requires the requested static mode to
 be reached before changing PWCR.DEVREQEN. The pinned BSP's manual
 `PWCR=0; PWPR=8` GPU initialization is therefore not a justified recovery
@@ -206,13 +206,13 @@ Q_STOPPED before clock removal. This justifies failure retention, not a claim
 that clocks caused the pending CORE transition. The experiment never changes
 PWCR, supplies, PCK delays or power policy, and never requests CORE power-off.
 
-On physical Zero 3W, matched #8 passed local CCU preparation but the bounded
-wait returned `ETIMEDOUT` (60): CORE PWPR `0x8`, PWSR `0`, MISR `0`.
-Resources remained reserved until reboot; no GPU access or rollback followed.
-The next boot restored normal observe-only operation and ended the reservation.
-Clock-only preparation was insufficient in this state. The failing PCSM or
-Q-Channel phase remains unknown. Verified A733 firmware/I/O sequencing is
-required before further active changes; see the [physical result](a733-gpu-identification.md#physical-result-2026-10-08).
+On physical Zero 3W, #11 completed GPU_CLK UPDATE and passed local CCU
+readiness before the bounded waiter returned `ETIMEDOUT` (60): CORE PWPR
+`0x8`, PWSR `0`, MISR `0`. Resources remained reserved until reboot; no GPU
+access or rollback followed. Restoring the normal DTB returned observe-only
+operation and ended the reservation. The failing PCSM or Q-Channel phase
+remains unknown, as do separate post-PLL gate states. See the
+[physical result](a733-gpu-identification.md#physical-result).
 
 ## Provenance
 
