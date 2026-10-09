@@ -30,6 +30,23 @@ module A133Recovery
   rescue A133Env::Invalid
     raise Invalid, 'invalid_environment'
   end
+
+  def protect(data)
+    vars = A133Env.decode(data).fetch(:entries).to_h
+    raise Invalid, 'recovery_hook_already_present' if UPDATES.keys.any? { |key| vars.key?(key) }
+    raise Invalid, 'unsupported_factory_environment' unless PROFILE.all? { |key, value| vars[key] == value }
+    candidate = A133Env.patch(data, {
+      'boot_normal' => 'run ember_recovery_once',
+      'ember_recovery_once' => UPDATES.fetch('ember_recovery_once')
+    })
+    restored = A133Env.patch(candidate, {
+      'boot_normal' => PROFILE.fetch('boot_normal'), 'ember_recovery_once' => ''
+    })
+    raise Invalid, 'non_reversible_environment' unless restored == data
+    candidate
+  rescue A133Env::Invalid
+    raise Invalid, 'invalid_environment', cause: nil
+  end
 end
 
 if $PROGRAM_NAME == __FILE__
