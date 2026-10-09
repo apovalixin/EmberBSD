@@ -101,6 +101,13 @@ were unchanged after returning to EmberBSD.
 
 ## Android backup and QEMU
 
+The [guarded recovery entry library](ys-m33-a133-recovery-entry.md) now exposes
+Android-side one-shot arming and locked-recovery restoration with fresh capture
+GPT/critical binding, target-usage guards and complete env readback. Host tests
+accept only exact known states, including reordered consumed exports. A new
+physical round trip, supported unlock interface and accepted first boot remain
+integration gates; it performs no reboot or unlock itself.
+
 The common [backup checker and recovery-copy preparer](ys-m33-a133-backup-recovery.md)
 now validate complete saved main-eMMC images and produce a guarded one-shot
 env candidate on the host. They neither write nor restart a tablet and never

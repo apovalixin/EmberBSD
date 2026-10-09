@@ -61,11 +61,11 @@
 - Consumes: capture receipt gpt_sha256 and Source.environment_inspect! from Task1; prepare/decode/patch, Channel.run.
 - Produces: Entry.new(adb:,serial:,cid:,state:,root_method:'vendor_su',timeout:600).arm/restore(original_env:,backup:), symbol-keyed env_entry_armed/restored receipt with accurate writes_performed, env_sha256 and installation_ready:false; errors Invalid with write_attempted.
 
-- [ ] **Step 1: Write actual-dd tests** for device arm/repeat, recovery restore of armed/consumed/reordered states, original repeat, full tail and critical images unchanged; wrong state/backup/GPT/profile/usage, altered consumed values, caller mutation, read/partial/sync/readback failures and late transport/source drift.
-- [ ] **Step 2: Run `ruby ember/tools/a133-recovery-entry-test.rb`.** Expected: FAIL with missing entry library.
-- [ ] **Step 3: Implement policy pinning and strict state selection**, with only prefix writes and normalized errors. Document vendor/hardware/no-swap limits and remaining unlock/trial boot stages.
-- [ ] **Step 4: Run all new tests and old recovery-env/protect/protection/regression/channel/transfer/session/mutable/capture/backup/acquisition contracts on both Rubies.** Expected: all pass; no single whole-OS host command exists. Run syntax/diff/local-link checks; expected success.
-- [ ] **Step 5: Commit** `feat(a133): guard one-shot recovery entry and restoration`.
+- [x] **Step 1: Write actual-dd tests** for device arm/repeat, recovery restore of armed/consumed/reordered states, original repeat, full tail and critical images unchanged; wrong state/backup/GPT/profile/usage, altered consumed values, caller mutation, read/partial/sync/readback failures and late transport/source drift.
+- [x] **Step 2: Run `ruby ember/tools/a133-recovery-entry-test.rb`.** Expected: FAIL with missing entry library.
+- [x] **Step 3: Implement policy pinning and strict state selection**, with only prefix writes and normalized errors. Document vendor/hardware/no-swap limits and remaining unlock/trial boot stages.
+- [x] **Step 4: Run all new tests and old recovery-env/protect/protection/regression/channel/transfer/session/mutable/capture/backup/acquisition contracts on both Rubies.** Expected: all pass; no single whole-OS host command exists. Run syntax/diff/local-link checks; expected success.
+- [x] **Step 5: Commit** `feat(a133): guard one-shot recovery entry and restoration`.
 
 ## Completion
 

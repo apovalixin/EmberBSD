@@ -380,6 +380,10 @@ A [persistent recovery env transition](ember/boards/ys-m33-a133-recovery-protect
 uses fresh caller-verified backup evidence, changes only the env prefix and
 checks the full env tail and retained recovery; actual-dd fixture tests do not
 prove bootloader execution, power-loss recovery or physical cable return.
+A [guarded factory recovery entry](ember/boards/ys-m33-a133-recovery-entry.md)
+binds one-shot Android env writes and known-state restoration to fresh full-backup
+GPT/critical hashes; its host contract leaves reboot, unlock and physical round-trip
+acceptance to later integration.
 A [private session coordinator](ember/boards/ys-m33-a133-install-session.md)
 rechecks live ranges on repeat and keeps recovery protected after failed writes;
 its filesystem/resume contract is tested on a file-backed host fixture.

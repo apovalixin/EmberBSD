@@ -62,6 +62,8 @@ when 'dd of=/dev/block/mmcblk0p2 bs=1048576 conv=notrunc 2>/dev/null && sync'
     File.open(File.join(base,'part2'),'r+b') { |f| f.seek(16777215); f.write('X') }
   when 'recovery_corrupt'
     File.open(File.join(base,'part6'),'r+b') { |f| f.write('X') }
+  when 'bootloader_corrupt'
+    File.open(File.join(base,'part1'),'r+b') { |f| f.write('X') }
   when 'cid_drift' then state['cid']='f'*32
   when 'late_mount'
     state['mountinfo']="1 0 0:1 / / rw - rootfs rootfs rw\n2 1 179:2 / /alias rw - ext4 /dev/block/alias rw\n"
@@ -91,9 +93,9 @@ else
   if (match=command.match(%r{\Afor d in ([0-9: ]+); do if \[ -e /sys/dev/block/\$d \]; then echo \$d; fi; done\z}))
     match[1].split.each { |id| puts id if state.fetch('block_ids',[]).include?(id) }; exit
   end
-  match=command.match(%r{\Aexec dd if=/dev/block/(mmcblk0(?:p[26])?) bs=(512|1048576) (?:skip=([0-9]+) )?count=([0-9]+) 2>/dev/null\z})
+  match=command.match(%r{\Aexec dd if=/dev/block/(mmcblk0(?:p[126])?) bs=(512|1048576) (?:skip=([0-9]+) )?count=([0-9]+) 2>/dev/null\z})
   abort 'fixture rejected unexpected/write command' unless match
-  role={'mmcblk0'=>'disk','mmcblk0p2'=>'part2','mmcblk0p6'=>'part6'}.fetch(match[1])
+  role={'mmcblk0'=>'disk','mmcblk0p1'=>'part1','mmcblk0p2'=>'part2','mmcblk0p6'=>'part6'}.fetch(match[1])
   if role=='part2'
     case state['read_mode']
     when 'short' then STDOUT.write(File.binread(File.join(base,role))[0...-512]); exit
