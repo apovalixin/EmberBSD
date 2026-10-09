@@ -39,11 +39,11 @@
 - Consumes: A133Env.decode/patch and existing PROFILE/UPDATES.
 - Produces: A133Recovery.protect(data), returning131072 bytes or A133Recovery::Invalid.
 
-- [ ] **Step 1: Write independent-byte tests** for intended two-variable changes, exact reversible padding/opaque preservation, existing reserved keys, unsupported profiles, bad CRC/size and compatibility with the image writer's protection validation.
-- [ ] **Step 2: Run `ruby ember/tools/a133-recovery-protect-test.rb`.** Expected: FAIL because protect is missing.
-- [ ] **Step 3: Implement protect** with profile/collision checks and byte restoration.
-- [ ] **Step 4: Run new protect and existing recovery-env tests on `ruby` and `/usr/bin/ruby`.** Expected: all pass.
-- [ ] **Step 5: Commit** `feat(a133): prepare persistent recovery protection`.
+- [x] **Step 1: Write independent-byte tests** for intended two-variable changes, exact reversible padding/opaque preservation, existing reserved keys, unsupported profiles, bad CRC/size and compatibility with the image writer's protection validation.
+- [x] **Step 2: Run `ruby ember/tools/a133-recovery-protect-test.rb`.** Expected: FAIL because protect is missing.
+- [x] **Step 3: Implement protect** with profile/collision checks and byte restoration.
+- [x] **Step 4: Run new protect and existing recovery-env tests on `ruby` and `/usr/bin/ruby`.** Expected: all pass.
+- [x] **Step 5: Commit** `feat(a133): prepare persistent recovery protection`.
 
 ### Task 2: Guarded env transition and instructions
 
@@ -58,12 +58,28 @@
 - Consumes: protect from Task1, Source.mutable_inspect!/read, Channel.run, trusted receipt shapes from Capture/Mutable.
 - Produces: Protection.new(adb:,serial:,cid:,root_method:'adbd',timeout:600).install(original_env:,backup:,mutable:), returning symbol-keyed recovery_protection_verified receipt with protected_env, env_sha256, writes_performed and installation_ready:false. Failures are A133Usb::Invalid with accurate write_attempted boolean.
 
-- [ ] **Step 1: Write actual-dd tests** for exact prefix and tail preservation, idempotent fresh check, locked/unlocked/wrappers, receipt/identity/state/layout/GPT mismatch, foreign env/recovery, threaded mounts/swap/holders, policy mutation during USB, bounded read errors, partial write/sync/readback failure and post-write drift. Before-write failures preserve all device files; after-write failures retain attempted status.
-- [ ] **Step 2: Run `ruby ember/tools/a133-recovery-protection-test.rb`.** Expected: FAIL with missing protection primitive.
-- [ ] **Step 3: Implement pinned policy and separate guarded writer**, then document caller trust/exclusivity and physical limitations.
-- [ ] **Step 4: Run both new suites and existing recovery-env/channel/transfer/session/mutable/check/acquisition/capture contracts on both Rubies; syntax and `git diff --check`.** Expected: all pass. There is no single native test command covering all OS components; relevant host-tool contracts define this stage's suite.
-- [ ] **Step 5: Commit** `feat(a133): guard persistent recovery env writes`.
+- [x] **Step 1: Write actual-dd tests** for exact prefix and tail preservation, idempotent fresh check, locked/unlocked/wrappers, receipt/identity/state/layout/GPT mismatch, foreign env/recovery, threaded mounts/swap/holders, policy mutation during USB, bounded read errors, partial write/sync/readback failure and post-write drift. Before-write failures preserve all device files; after-write failures retain attempted status.
+- [x] **Step 2: Run `ruby ember/tools/a133-recovery-protection-test.rb`.** Expected: FAIL with missing protection primitive.
+- [x] **Step 3: Implement pinned policy and separate guarded writer**, then document caller trust/exclusivity and physical limitations.
+- [x] **Step 4: Run both new suites and existing recovery-env/channel/transfer/session/mutable/check/acquisition/capture contracts on both Rubies; syntax and `git diff --check`.** Expected: all pass. There is no single native test command covering all OS components; relevant host-tool contracts define this stage's suite.
+- [x] **Step 5: Commit** `feat(a133): guard persistent recovery env writes`.
 
 ## Completion
 
 One fresh independent review of this plan's entire change range; one regression-first fix pass. Update the existing draft PR and Ember/ROOMY wiki with source revisions and verification limits; preserve ROOMY review status. Publish under existing autonomous authorization. Copy all rulings/review evidence into this plan and final response before removing only this plan's scratch workspace.
+
+## Execution evidence
+
+On2026-10-09, protection-bytes14/protection-USB49/recovery-copy19/channel13/
+transfer43/session25/mutable-check24/acquisition28/thread2/capture37 passed on
+Ruby4.0.5 and system2.6.10. The fixture sends actual binary dd reads/writes to
+sparse fixed-layout files. Mixed receipt keys reproduced ArgumentError before
+string-key validation; the final API rejects them with a redacted Invalid.
+The partial-write restart fixture places retained opaque data before the boot
+variables: its512-byte cut is actually incomplete; an earlier small fixture
+legitimately reached the exact expected env despite transport failure.
+Syntax, diff and46 public local-link checks passed. No kernel/userland changes
+or rebuilds; the primary dirty checkout was preserved. Fresh origin/main is
+d8d473d58d9f; its new SVG documentation does not change these A133 host tools.
+ADB inventory was empty. The working reference was reachable with GUI/voice/MCU
+processes; no physical write, reboot, audio or camera test occurred.

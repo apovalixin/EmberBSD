@@ -145,6 +145,15 @@ the selected tablet, original env readback, full backup, locked recovery round
 trip, complete write readback, rollback on failure and USB access. It must not
 mistake a successful file-generation command for hardware acceptance.
 
+## Install persistent recovery protection
+
+The separate [persistent protection primitive](ys-m33-a133-recovery-protection.md)
+consumes freshly verified capture/mutable receipts and the full original env.
+It changes only128KiB, verifies the complete16MiB env including its retained
+tail, rechecks the signed recovery and refuses unknown states. Its library
+contract is tested with actual dd; locked cable-return/cold-boot/restoration
+acceptance and the complete installer remain open.
+
 ## Evidence and reproducible checks
 
 The host contracts use small independently constructed GPT images and real
