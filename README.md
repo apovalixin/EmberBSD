@@ -358,6 +358,10 @@ on every board in the hardware catalog.
   hash/search cases passing on EmberBSD/CM5.
   Matching GLib 2.90.1 metadata now supplies seven cross-built GIR/typelib
   pairs, with loading and introspection/libffi invocation verified on CM5.
+  Ports' [complete GdkPixbuf package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/gdk-pixbuf.md)
+  passes thirteen raster formats and four decoding cycles on CM5.
+  The [librsvg 2.63.2 package](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/librsvg.md)
+  builds, but its SVG-loader runtime check fails; that checkpoint is not full SVG acceptance.
   labwc client surfaces and full SVG remain unaccepted.
   A Ports
   [host-side VirGL 1.3.0 adaptation](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/probes/utm-virgl-host)
