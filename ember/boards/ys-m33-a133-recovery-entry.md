@@ -58,6 +58,8 @@ any readable process/task namespace, whole-eMMC/env holders (including dm
 aliases), incomplete usage evidence, and any active swap stop entry. This
 conservative profile can refuse factory Android using zram. Recovery retains
 the stricter guard against any mounted eMMC block partition, holder or swap.
+It requires holder directories for the whole eMMC and every expected partition
+to exist and be readable/traversable before enumeration.
 No automatic unmount or swap shutdown is performed.
 
 The only write is131072 bytes at the beginning of `/dev/block/mmcblk0p2`, using

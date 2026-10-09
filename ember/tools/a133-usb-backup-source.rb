@@ -95,7 +95,8 @@ module A133UsbBackup
       recovery_unmounted!('for p in /proc/[0-9]*; do for t in "$p"/task/[0-9]*; do cat "$t/mountinfo" || exit 1; done; done')
       swaps=query('cat /proc/swaps').lines.map(&:split)
       raise Invalid,'usb_swap_inventory_invalid' unless swaps.first==%w[Filename Type Size Used Priority]
-      holders=query('for d in /sys/class/block/mmcblk0/holders/* /sys/class/block/mmcblk0p*/holders/*; do if [ -e "$d" ]; then echo "$d"; fi; done')
+      paths=['/sys/class/block/mmcblk0']+A133Backup::INVENTORY.map { |part| "/sys/class/block/mmcblk0p#{part[:index]}" }
+      holders=query('for p in '+paths.join(' ')+'; do [ -d "$p/holders" ] && [ -r "$p/holders" ] && [ -x "$p/holders" ] || exit 1; for d in "$p"/holders/*; do if [ -e "$d" ]; then echo "$d"; fi; done; done')
       raise Invalid,'usb_target_in_use' unless swaps.size==1 && holders.empty?
       profile
     rescue Invalid,A133Usb::Invalid,A133Backup::Invalid => error

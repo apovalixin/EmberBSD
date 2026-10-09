@@ -42,13 +42,19 @@ when 'for p in /proc/[0-9]*; do cat "$p/mountinfo" || exit 1; done',
   end
 when 'cat /proc/swaps'
   STDOUT.write(state.fetch('swaps',"Filename\tType\tSize\tUsed\tPriority\n"))
-when 'for d in /sys/class/block/mmcblk0/holders/* /sys/class/block/mmcblk0p*/holders/*; do if [ -e "$d" ]; then echo "$d"; fi; done'
-  puts '/sys/class/block/mmcblk0p6/holders/dm-0' if state['holders']
 when 'cat /sys/class/block/mmcblk0/size /sys/class/block/mmcblk0/device/cid /sys/class/block/mmcblk0p1/start /sys/class/block/mmcblk0p1/size /sys/class/block/mmcblk0p2/start /sys/class/block/mmcblk0p2/size /sys/class/block/mmcblk0p3/start /sys/class/block/mmcblk0p3/size /sys/class/block/mmcblk0p4/start /sys/class/block/mmcblk0p4/size /sys/class/block/mmcblk0p5/start /sys/class/block/mmcblk0p5/size /sys/class/block/mmcblk0p6/start /sys/class/block/mmcblk0p6/size /sys/class/block/mmcblk0boot0/size /sys/class/block/mmcblk0boot1/size'
   puts "512\n#{state.fetch('cid','0123456789abcdef0123456789abcdef')}\n34\n16\n50\n16\n66\n16\n82\n16\n98\n16\n114\n201\n2\n2"
 when 'for p in bootloader env boot recovery metadata UDISK; do readlink -f /dev/block/by-name/$p || exit 1; done'
   (1..6).each { |i| puts '/dev/block/mmcblk0p'+i.to_s }
 else
+  if command.start_with?('for p in /sys/class/block/mmcblk0 ')
+    paths=['/sys/class/block/mmcblk0']+(1..6).map { |i| "/sys/class/block/mmcblk0p#{i}" }
+    expected='for p in '+paths.join(' ')+'; do [ -d "$p/holders" ] && [ -r "$p/holders" ] && [ -x "$p/holders" ] || exit 1; for d in "$p"/holders/*; do if [ -e "$d" ]; then echo "$d"; fi; done; done'
+    abort 'fixture rejected incomplete holder directory inventory' unless command==expected
+    exit 2 if state['holders_unreadable']
+    puts '/sys/class/block/mmcblk0p6/holders/dm-0' if state['holders']
+    exit
+  end
   if (match=command.match(%r{\Afor d in ([0-9: ]+); do if \[ -e /sys/dev/block/\$d \]; then echo \$d; fi; done\z}))
     match[1].split.each { |id| puts id if state.fetch('block_ids',[]).include?(id) }; exit
   end

@@ -43,8 +43,6 @@ when 'for p in /sys/class/block/mmcblk0 /sys/class/block/mmcblk0p2; do [ -d "$p/
   puts '/sys/class/block/mmcblk0p2/holders/dm-0' if state['holders']
 when 'cat /proc/swaps'
   STDOUT.write(state.fetch('swaps',"Filename\tType\tSize\tUsed\tPriority\n"))
-when 'for d in /sys/class/block/mmcblk0/holders/* /sys/class/block/mmcblk0p*/holders/*; do if [ -e "$d" ]; then echo "$d"; fi; done'
-  puts '/sys/class/block/mmcblk0p2/holders/dm-0' if state['holders']
 when 'dd of=/dev/block/mmcblk0p2 bs=1048576 conv=notrunc 2>/dev/null && sync'
   data=STDIN.read.b
   abort 'fixture rejected incorrect write size' unless data.bytesize==131072
@@ -68,12 +66,23 @@ when 'dd of=/dev/block/mmcblk0p2 bs=1048576 conv=notrunc 2>/dev/null && sync'
   when 'late_mount'
     state['mountinfo']="1 0 0:1 / / rw - rootfs rootfs rw\n2 1 179:2 / /alias rw - ext4 /dev/block/alias rw\n"
     state['block_ids']=['179:2']
+  when 'late_holders_unreadable'
+    state['holders_unreadable']=true
   when 'launcher_invalid'
     File.rename(File.join(base,'launch'),File.join(base,'launch-retained'))
     File.write(File.join(base,'launch'),'PRIVATE_HOST_LOCATION')
   end
   File.write(state_path,JSON.generate(state))
 else
+  if command.start_with?('for p in /sys/class/block/mmcblk0 ')
+    parts=JSON.parse(File.read(File.join(base,'layout.json')))
+    paths=['/sys/class/block/mmcblk0']+parts.each_index.map { |i| "/sys/class/block/mmcblk0p#{i+1}" }
+    expected='for p in '+paths.join(' ')+'; do [ -d "$p/holders" ] && [ -r "$p/holders" ] && [ -x "$p/holders" ] || exit 1; for d in "$p"/holders/*; do if [ -e "$d" ]; then echo "$d"; fi; done; done'
+    abort 'fixture rejected incomplete holder directory inventory' unless command==expected
+    exit 2 if state['holders_unreadable']
+    puts '/sys/class/block/mmcblk0p2/holders/dm-0' if state['holders']
+    exit
+  end
   if command.start_with?('cat /sys/class/block/mmcblk0/size ')
     parts=JSON.parse(File.read(File.join(base,'layout.json')))
     expected=['/sys/class/block/mmcblk0/size','/sys/class/block/mmcblk0/device/cid']+
