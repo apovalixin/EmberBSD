@@ -25,16 +25,16 @@ module A133UsbBackup
       @root_method=='adbd' ? value : "exec /system/xbin/su 0 /system/bin/sh -c #{Shellwords.escape(value)}"
     end
 
-    def query(value)
-      @channel.run(['-s',@serial,'shell','-T',command(value)])[:output].strip
+    def query(value,limit:16384)
+      @channel.run(['-s',@serial,'shell','-T',command(value)],limit:limit)[:output].strip
     end
 
     def range(skip,count)
       @channel.run(['-s',@serial,'shell','-T',command("exec dd if=/dev/block/mmcblk0 bs=512 skip=#{skip} count=#{count} 2>/dev/null")],limit:count*512)[:output]
     end
 
-    def recovery_unmounted!
-      rows = query('cat /proc/self/mountinfo').lines.map(&:split)
+    def recovery_unmounted!(inventory_command='cat /proc/self/mountinfo')
+      rows = query(inventory_command,limit:1048576).lines.map(&:split)
       raise Invalid,'usb_mount_inventory_invalid' if rows.empty? || !rows.all? do |fields|
         fields.size>=10 && fields[2].match?(/\A[0-9]+:[0-9]+\z/) && (fields.index('-') || 0)>=6
       end
@@ -89,13 +89,27 @@ module A133UsbBackup
       raise Invalid,error.message,cause:nil
     end
 
+    def mutable_inspect!
+      raise Invalid,'usb_mutable_requires_recovery' unless @state=='recovery'
+      profile=inspect!
+      recovery_unmounted!('for p in /proc/[0-9]*; do cat "$p/mountinfo" || exit 1; done')
+      swaps=query('cat /proc/swaps').lines.map(&:split)
+      raise Invalid,'usb_swap_inventory_invalid' unless swaps.first==%w[Filename Type Size Used Priority]
+      holders=query('for d in /sys/class/block/mmcblk0/holders/* /sys/class/block/mmcblk0p*/holders/*; do if [ -e "$d" ]; then echo "$d"; fi; done')
+      raise Invalid,'usb_target_in_use' unless swaps.size==1 && holders.empty?
+      profile
+    rescue Invalid,A133Usb::Invalid,A133Backup::Invalid => error
+      raise Invalid,error.message,cause:nil
+    end
+
     def read(role)
-      profile = inspect!
+      mutable=%w[UDISK metadata].include?(role)
+      profile = mutable ? mutable_inspect! : inspect!
       if role=='disk'
         target,bytes = '/dev/block/mmcblk0',A133Backup::BYTES
       elsif %w[boot0 boot1].include?(role)
         target,bytes = '/dev/block/mmcblk0'+role,profile.fetch(:hardware_bytes)
-      elsif %w[bootloader env boot recovery].include?(role)
+      elsif %w[bootloader env boot recovery UDISK metadata].include?(role)
         part = A133Backup::INVENTORY.find { |entry| entry[:name]==role }
         target,bytes = "/dev/block/mmcblk0p#{part.fetch(:index)}",part.fetch(:sectors)*512
       else
@@ -110,7 +124,7 @@ module A133UsbBackup
         count += chunk.bytesize
       end
       raise Invalid,'usb_backup_stream_size_mismatch' unless count==bytes
-      inspect!
+      mutable ? mutable_inspect! : inspect!
       count
     rescue Invalid,A133Usb::Invalid,A133Backup::Invalid => error
       raise Invalid,error.message,cause:nil

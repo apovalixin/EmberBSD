@@ -60,12 +60,21 @@
 - Consumes: A133Mutable.verify from Task1; Source.inspect!/read; existing exclusive private host output helpers.
 - Produces: A133UsbBackup.collect_mutable(directory:, serial:, cid:, adb:'adb', root_method:'adbd', timeout:3600), redacted usb_mutable_captured receipt, exactly3 private outputs; Source.mutable_inspect! and recovery-only UDISK/metadata read roles.
 
-- [ ] **Step 1: Write actual-dd tests** for exact two-pass copies, namespace mount aliases, swap/holders/unreadable inventory, source change across copies, changed second-read bytes, late host mutation/publication, stream failure, destination collision, fsync failure, timeout and redacted CLI.
-- [ ] **Step 2: Run `ruby ember/tools/a133-usb-mutable-backup-test.rb`.** Expected: FAIL with missing mutable acquisition.
-- [ ] **Step 3: Implement source guards and collector** without device-write or automatic recovery commands; retain evidence through publication; document observation limits and storage/time cost.
-- [ ] **Step 4: Run on both Rubies** mutable checker/acquisition and existing USB backup26/lifetime5/capture37/hardware18/review-regression6 suites. Expected: all pass; old full-capture behavior unchanged. Run existing channel13/transfer43/session25 on defaultRuby. Expected: all pass. Check Ruby syntax and `git diff --check`; expected: success.
-- [ ] **Step 5: Commit** `feat(a133): retain recovery mutable backups over USB`.
+- [x] **Step 1: Write actual-dd tests** for exact two-pass copies, namespace mount aliases, swap/holders/unreadable inventory, source change across copies, changed second-read bytes, late host mutation/publication, stream failure, destination collision, fsync failure, timeout and redacted CLI.
+- [x] **Step 2: Run `ruby ember/tools/a133-usb-mutable-backup-test.rb`.** Expected: FAIL with missing mutable acquisition.
+- [x] **Step 3: Implement source guards and collector** without device-write or automatic recovery commands; retain evidence through publication; document observation limits and storage/time cost.
+- [x] **Step 4: Run on both Rubies** mutable checker/acquisition and existing USB backup26/lifetime5/capture37/hardware18/review-regression6 suites. Expected: all pass; old full-capture behavior unchanged. Run existing channel13/transfer43/session25 on defaultRuby. Expected: all pass. Check Ruby syntax and `git diff --check`; expected: success.
+- [x] **Step 5: Commit** `feat(a133): retain recovery mutable backups over USB`.
 
 ## Completion
 
 Fresh independent review of this plan's change range; findings get regression-first fixes, one fix pass. Publish the existing draft PR and separately update Ember/ROOMY evidence, preserving review status. Physical USB/restoration/power-cycle acceptance remains open. Record tested revisions, source observations, test counts and every ruling before removing this plan's scratch workspace.
+
+## Execution evidence
+
+On2026-10-09, mutable checker24, acquisition28, old USBbackup26/lifetime5,
+capture37/hardware18/review-regression6 passed on Ruby4.0.5 and2.6.10.
+Channel13/transfer43/session25 passed on Ruby4.0.5; syntax/diff/local-link checks passed.
+The working reference remained reachable with GUI/voice/MCU processes running;
+ADB inventory was empty. No physical acquisition, storage write, reboot, sound
+or camera test occurred. Kernel/userland sources were not changed or rebuilt.

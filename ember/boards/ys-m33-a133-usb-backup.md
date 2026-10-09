@@ -118,3 +118,11 @@ Independent GPT-6 Astra review found one Important publication/lifetime gap;
 five late boot/manifest/directory and postpublication mutations failed against
 the pre-fix revision on both Rubies, then passed after the implementer's fix.
 The reviewer examined the pre-fix range; no new physical acquisition was run.
+
+## Separate mutable-data evidence
+
+The [recovery mutable collector](ys-m33-a133-mutable-backup.md) supplements
+this full capture with complete UDISK/metadata copies and two matching reads.
+It requires an already-root-readable unmounted recovery and explicit trusted
+serial/CID. It does not alter this manifest or establish filesystem snapshot
+consistency; physical restoration and all-stages installation remain open.

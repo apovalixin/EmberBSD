@@ -65,7 +65,7 @@ module A133UsbBackup
     end
   end
 
-  def retained_outputs(directory,names,manifest_text)
+  def retained_outputs(directory,names,manifest_text,manifest_name:'capture.json')
     opened = []
     names.each do |name|
       path = File.join(directory,name)
@@ -78,8 +78,8 @@ module A133UsbBackup
     expected_manifest_sha = Digest::SHA256.hexdigest(manifest_text)
     check = lambda do |published|
       opened.each do |entry|
-        manifest = entry[:name]=='capture.json.partial'
-        path = File.join(directory,manifest && published ? 'capture.json' : entry[:name])
+        manifest = entry[:name]==manifest_name+'.partial'
+        path = File.join(directory,manifest && published ? manifest_name : entry[:name])
         fields = [:dev,:ino,:size,:mtime,:ctime,:uid,:mode,:nlink]
         # Publishing this same inode changes ctime by link/unlink intentionally.
         # Its actual bytes are additionally checked against the generated record.

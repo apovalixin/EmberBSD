@@ -107,6 +107,15 @@ schema1 explicitly returns false. Recorded geometry and hashes remain trusted
 input, not hardware discovery or authenticity. Acquisition from a root-readable
 USB source is provided by the [backup collector](ys-m33-a133-usb-backup.md).
 
+## Retain mutable recovery copies
+
+The [mutable collector and fresh checker](ys-m33-a133-mutable-backup.md) retain
+complete UDISK/metadata copies separately from the older full capture. They
+require root-readable unmounted recovery, observe all readable mount inventories,
+swaps/holders and two matching full reads. These are sampled observations, not
+a filesystem snapshot or restore acceptance. Every receipt remains
+installation_ready=false; fresh verification is required at use.
+
 ## Prepare a one-shot recovery environment copy
 
 Read the exact original 128 KiB environment prefix from this particular tablet

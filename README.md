@@ -373,7 +373,9 @@ freshly verifies full backup and critical copies against recorded serial/CID;
 trusted provenance and live device binding remain separate checks.
 A [read-only USB backup collector](ember/boards/ys-m33-a133-usb-backup.md)
 acquires full/critical/hardware boot copies into private storage, tested through
-actual-dd source files; coherent Android and physical restoration remain unaccepted.
+actual-dd source files. A separate [recovery mutable-data collector](ember/boards/ys-m33-a133-mutable-backup.md)
+retains complete UDISK/metadata copies with unmounted-source checks and two matching
+reads on host fixtures; coherent Android and physical restoration remain unaccepted.
 A [private session coordinator](ember/boards/ys-m33-a133-install-session.md)
 rechecks live ranges on repeat and keeps recovery protected after failed writes;
 its filesystem/resume contract is tested on a file-backed host fixture.
