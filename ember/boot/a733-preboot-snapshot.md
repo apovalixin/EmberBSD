@@ -134,3 +134,52 @@ failures, unchanged normal boot flow, and builder rejection cases.
 It does not execute firmware or validate a physical MMIO transaction.
 Unknown `/chosen` properties survive the normal FDT copy into EmberBSD;
 the board result must still verify their presence using `ofctl`.
+
+## Physical Zero 3W result
+
+On 2026-10-09, the builder from `4c8a1222a5e` produced a diagnostic script
+for physical Orange Pi Zero 3W, A733, 4 GiB (PCB revision unknown).
+The normal `f85ffd420f6` EMBER64 kernel and DTB were retained.
+The kernel received `version=1`, `status=complete`, and RCCU gate value `1`.
+The eight cells after each base address were:
+
+```text
+TOP  07065000: 8 0 8 0 100 101 2 0
+CORE 07066000: 8 0 0 1   0 101 2 0
+```
+
+Values are hexadecimal, in the register order above. CORE already has
+ON policy and OFF status before the final ARISC-startup SMC and kernel.
+The same mismatch appears at kernel attachment. This locates the condition
+earlier in boot; it does not identify a writer or establish completed OFF.
+No experiment clock property or power-policy write was used.
+
+The actual U-Boot and monitor binaries confirm the two-call handoff order.
+Their SHA256 values are respectively
+`2352631ca14bbd3de7d229cc750435776d0d554290429dfa2000db90efc50145`
+and `8af16b86ae8e2eff634a3ebca76a8cdf3c10b3540387573d46c3d785545b2632`.
+This is binary evidence for that boundary, not whole-source equivalence.
+The source observation log SHA256 is
+`624794c2fb50c786ab2c7a245372888303114e31e5ce0e20f737cf9ecb18cd0d`.
+Normal boot files were restored with matching hashes before shutdown;
+subsequent normal boot and SSH access passed. GPU identification and
+acceleration remain unverified.
+
+A second run used the same kernel and diagnostic script after the operator
+removed power for ten seconds. The existing clock-only experimental DTB
+(SHA256 `7a840baec0c4c76455b1ce8b2252e63bfea7a121e88c38c43c413ab1575dab7c`)
+was used. Preboot cells were identical. Kernel preparation completed UPDATE
+with GPU_CLK `0x83000000`, GPU_BGR `0x10001`, and open post-PLL gates, but
+CORE again timed out with PWPR/PWSR/MISR `8`/`0`/`0`. GPU MMIO was not read.
+The cold-start log SHA256 is
+`12a29f72cf46776df34b171fdc106c68e8a9f86e168e02b6f5ecfdb1ee244151`.
+This excludes a failure confined to warm reboot for this setup.
+
+Arm DEN0051E section 5.2.3 explains that PWSR's reset state is independent
+of the default policy. With default ON it updates only after the automatic
+transition completes. Therefore `8`/`0` need not imply a software writer;
+a pending reset-to-ON transition is another hypothesis. A733's configured
+`DEF_PWR_POLICY` is unknown and is not exposed by the PPU ID registers.
+PWCR `0x101` is also the one-Q-Channel reset default. These observations do
+not identify the internal PCSM/QREQ phase or justify overriding DEVREQEN.
+See the [power-domain sources](a733-power-domains.md#provenance).

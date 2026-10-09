@@ -438,8 +438,11 @@ on every board in the hardware catalog.
   completed GPU_CLK UPDATE on physical Zero 3W. CCU reported
   400/200 MHz configuration, but CORE ON/Q still timed out before GPU MMIO.
   Reboot with the restored normal DTB returned gated clocks and SSH.
-  The observed post-PLL gates were open before preparation and after timeout. Physical identity,
-  the cause of the remaining CORE transition and acceleration are unverified.
+  The observed post-PLL gates were open before preparation and after timeout.
+  A [read-only preboot snapshot](ember/boot/a733-preboot-snapshot.md) finds
+  CORE's ON-policy/OFF-status mismatch before the final firmware handoff and
+  kernel entry. It persists through a confirmed power removal and the clock-only
+  experiment. Its origin, GPU identity and acceleration remain unverified.
   The missing power handshake, general shared resource management, DMA/MMU
   and command submission still require porting. These are
   porting targets, not available EmberBSD acceleration. Board bring-up,
@@ -457,11 +460,11 @@ on every board in the hardware catalog.
   remains unverified. A [native BCM2712 V3D observer](ember/boot/bcm2712-v3d.md)
   validates firmware clock/reset state before fault-aware identification;
   186 actual-source cases pass on host and CM5 CPU with fake hardware.
-  On physical CM5, the matched diagnostic kernel validates state/rate and PM
-  and reads idle SMS state. Its earlier whole-word-zero gate rejected mode
-  fields; the current observer checks state, unchanged modes and two stable
-  snapshots before HUB access. No firmware or SMS write is added.
-  Physical V3D identification and acceleration remain unverified.
+  On physical CM5, the matched kernel identifies V3D 7.1 with one core and
+  reads HUB/CORE/MMU registers after validated clock/reset and stable idle SMS
+  checks. The field-based SMS correction preserves unchanged mode fields;
+  no firmware or SMS write is added. GPU DMA/MMU operation, interrupts,
+  command submission, Mesa rendering and acceleration remain unverified.
 
 ### Board support and system builds
 
