@@ -13,6 +13,8 @@ python=${NETBSD2_PYTHON:-$(command -v python3 || true)}
 }
 "$python" "$src/ember/tools/bluetooth-uart-contract.py" "$src/sys/dev/ic/bcm2712btcom.c"
 "$python" "$src/ember/tools/bluetooth-rc-contract.py"
+sh "$src/ember/tools/bcm2712-v3d-contract.sh" "$src"
+sh "$src/ember/tools/bcm2712-v3d-takeover-contract.sh" "$src"
 if [ "$mode" = all ]; then
     "$python" "$src/ember/tools/btuart-contract.py" "$src/sys/dev/bluetooth/btuart.c"
     "$python" "$src/ember/tools/bluetooth-control-contract.py" "$src/ember/tools/bluetooth-control.c"

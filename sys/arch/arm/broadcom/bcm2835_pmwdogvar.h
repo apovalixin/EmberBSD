@@ -49,6 +49,10 @@ struct bcm2835pmwdog_softc {
 
 void bcmpmwdog_attach_common(struct bcm2835pmwdog_softc *);
 int bcmpmwdog_v3d_status(uint32_t *);
+int bcmpmwdog_v3d_claim(device_t);
+int bcmpmwdog_v3d_seal(device_t);
+int bcmpmwdog_v3d_release(device_t);
+int bcmpmwdog_v3d_reset(device_t);
 void bcm2835_system_reset(void);
 
 #endif	/* _ARM_BROADCOM_BCM2835_PMWDOG_VAR_H_ */

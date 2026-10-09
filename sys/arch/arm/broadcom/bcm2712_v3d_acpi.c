@@ -13,6 +13,8 @@
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD$");
 
+#include "opt_bcmv3d.h"
+
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/device.h>
@@ -24,6 +26,10 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <arm/broadcom/bcm2835_pmwdogvar.h>
 #include <arch/evbarm/rpi/vcprop.h>
 #include <arch/evbarm/rpi/vcio.h>
+
+#ifdef BCM2712_V3D_TAKEOVER
+int bcmv3d_takeover_probe(device_t, bus_space_tag_t);
+#endif
 
 #define BCMV3D_HUB	0
 #define BCMV3D_CORE	1
@@ -296,6 +302,10 @@ bcmv3d_finalize(device_t dev)
 	if (error != 0)
 		aprint_normal_dev(dev, "observation stopped at %s: error %d; "
 		    "GPU state unchanged\n", sc->sc_stage, error);
+#ifdef BCM2712_V3D_TAKEOVER
+	else
+		(void)bcmv3d_takeover_probe(dev, sc->sc_bst);
+#endif
 	return 0;
 }
 
