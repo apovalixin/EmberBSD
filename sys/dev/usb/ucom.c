@@ -60,6 +60,7 @@ __KERNEL_RCSID(0, "$NetBSD: ucom.c,v 1.140.2.1 2025/11/29 15:58:35 martin Exp $"
 #include <sys/timepps.h>
 #include <sys/rndsource.h>
 #include <sys/kmem.h>
+#include <sys/atomic.h>
 
 #include <dev/usb/usb.h>
 
@@ -184,6 +185,9 @@ struct ucom_softc {
 	bool			sc_tstarted;
 	bool			sc_tnotify;
 	kmutex_t		sc_tctl; /* process control -> sc_lock -> TTY */
+	unsigned		sc_terror; /* atomic fault snapshot for TTY knotes */
+	const struct filterops	*sc_treadops;
+	const struct filterops	*sc_twriteops;
 
 	struct tty		*sc_tty;	/* our tty */
 	u_char			sc_lsr;
@@ -222,6 +226,7 @@ dev_type_ioctl(ucomioctl);
 dev_type_stop(ucomstop);
 dev_type_tty(ucomtty);
 dev_type_poll(ucompoll);
+dev_type_kqfilter(ucomkqfilter);
 
 const struct cdevsw ucom_cdevsw = {
 	.d_open = ucomopen,
@@ -234,7 +239,7 @@ const struct cdevsw ucom_cdevsw = {
 	.d_tty = ucomtty,
 	.d_poll = ucompoll,
 	.d_mmap = nommap,
-	.d_kqfilter = ttykqfilter,
+	.d_kqfilter = ucomkqfilter,
 	.d_discard = nodiscard,
 	.d_cfdriver = &ucom_cd,
 	.d_devtounit = ucom_unit,
@@ -446,6 +451,7 @@ ucom_detach(device_t self, int flags)
 	/* Prevent new opens from hanging.  */
 	mutex_enter(&sc->sc_lock);
 	sc->sc_dying = true;
+	atomic_store_release(&sc->sc_terror, ENXIO);
 	mutex_exit(&sc->sc_lock);
 
 	pmf_device_deregister(self);
@@ -981,10 +987,85 @@ ucompoll(dev_t dev, int events, struct lwp *l)
 	struct tty *tp = sc->sc_tty;
 
 	UCOMHIST_FUNC(); UCOMHIST_CALLED();
-	if (ucom_transport_error(sc))
-		return POLLERR | POLLHUP;
+	if (sc->sc_transport == NULL)
+		return (*tp->t_linesw->l_poll)(tp, events, l);
 
-	return (*tp->t_linesw->l_poll)(tp, events, l);
+	/* Fault admission and selector registration form one sc_lock section. */
+	mutex_enter(&sc->sc_lock);
+	int revents = sc->sc_dying || sc->sc_tcore.state == UCT_FAULT ?
+	    POLLERR | POLLHUP : (*tp->t_linesw->l_poll)(tp, events, l);
+	mutex_exit(&sc->sc_lock);
+	return revents;
+}
+
+static const struct filterops *
+ucom_tty_filtops(struct knote *kn)
+{
+	struct tty *tp = kn->kn_hook;
+	struct ucom_softc *sc = device_lookup_private(&ucom_cd, UCOMUNIT(tp->t_dev));
+
+	return kn->kn_filter == EVFILT_READ ? sc->sc_treadops : sc->sc_twriteops;
+}
+
+static void
+filt_ucom_detach(struct knote *kn)
+{
+
+	ucom_tty_filtops(kn)->f_detach(kn);
+}
+
+static int
+filt_ucom_event(struct knote *kn, long hint)
+{
+	struct tty *tp = kn->kn_hook;
+	struct ucom_softc *sc = device_lookup_private(&ucom_cd, UCOMUNIT(tp->t_dev));
+	unsigned error;
+	int ready;
+
+	if ((hint & NOTE_SUBMIT) == 0)
+		ttylock(tp);
+	/* No sc_lock acquisition while the selector holds the TTY lock. */
+	error = atomic_load_acquire(&sc->sc_terror);
+	if (error != 0) {
+		SET(kn->kn_flags, EV_EOF);
+		kn->kn_fflags = error;
+		kn->kn_data = 0;
+		ready = 1;
+	} else {
+		CLR(kn->kn_flags, EV_EOF);
+		kn->kn_fflags = 0;
+		ready = ucom_tty_filtops(kn)->f_event(kn, hint | NOTE_SUBMIT);
+	}
+	if ((hint & NOTE_SUBMIT) == 0)
+		ttyunlock(tp);
+	return ready;
+}
+
+static const struct filterops ucom_filtops = {
+	.f_flags = FILTEROP_ISFD | FILTEROP_MPSAFE,
+	.f_attach = NULL,
+	.f_detach = filt_ucom_detach,
+	.f_event = filt_ucom_event,
+};
+
+int
+ucomkqfilter(dev_t dev, struct knote *kn)
+{
+	struct ucom_softc *sc = device_lookup_private(&ucom_cd, UCOMUNIT(dev));
+	int error;
+
+	error = ttykqfilter(dev, kn);
+	if (error || sc->sc_transport == NULL)
+		return error;
+	/* Retain native TTY readiness and detach, including canonical/VMIN rules. */
+	ttylock(sc->sc_tty);
+	if (kn->kn_filter == EVFILT_READ)
+		sc->sc_treadops = kn->kn_fop;
+	else
+		sc->sc_twriteops = kn->kn_fop;
+	kn->kn_fop = &ucom_filtops;
+	ttyunlock(sc->sc_tty);
+	return 0;
 }
 
 struct tty *
@@ -1001,10 +1082,32 @@ ucomioctl(dev_t dev, u_long cmd, void *data, int flag, struct lwp *l)
 {
 	struct ucom_softc *sc = device_lookup_private(&ucom_cd, UCOMUNIT(dev));
 	int error;
+	bool serialize;
 
 	if (sc->sc_transport == NULL)
 		return ucom_do_ioctl(dev, cmd, data, flag, l);
-	/* Cover the TTY layer's termios commit after t_param returns too. */
+	/* Leave progress/query operations available while a setting drains. */
+	switch (cmd) {
+	case TIOCSETA:
+	case TIOCSETAW:
+	case TIOCSETAF:
+	case TIOCSBRK:
+	case TIOCCBRK:
+	case TIOCSDTR:
+	case TIOCCDTR:
+	case TIOCMSET:
+	case TIOCMBIS:
+	case TIOCMBIC:
+	case TIOCSFLAGS:
+		serialize = true;
+		break;
+	default:
+		serialize = false;
+		break;
+	}
+	if (!serialize)
+		return ucom_do_ioctl(dev, cmd, data, flag, l);
+	/* Cover the TTY termios commit after t_param returns too. */
 	mutex_enter(&sc->sc_tctl);
 	error = ucom_do_ioctl(dev, cmd, data, flag, l);
 	mutex_exit(&sc->sc_tctl);
@@ -1860,6 +1963,7 @@ ucom_transport_fail(struct ucom_softc *sc, int error)
 	if (sc->sc_tcore.state != UCT_OPEN)
 		return;
 	ucom_transport_core_fault(&sc->sc_tcore, error);
+	atomic_store_release(&sc->sc_terror, sc->sc_tcore.error);
 	sc->sc_tnotify = true;
 	ucom_transport_schedule(sc);
 }
@@ -1899,8 +2003,10 @@ ucom_transport_done(struct ucom_softc *sc, uint64_t epoch, uint64_t cookie,
 			KASSERT(sc->sc_tdone == 0);
 			sc->sc_tdone = consumed;
 		}
-		if (sc->sc_tcore.state == UCT_FAULT)
+		if (sc->sc_tcore.state == UCT_FAULT) {
+			atomic_store_release(&sc->sc_terror, sc->sc_tcore.error);
 			sc->sc_tnotify = true;
+		}
 		ucom_transport_schedule(sc);
 	}
 	mutex_exit(&sc->sc_lock);
@@ -1938,6 +2044,7 @@ ucom_transport_stop(struct ucom_softc *sc)
 		ucom_transport_rx_init(sc->sc_trx);
 	sc->sc_tdone = 0;
 	sc->sc_tnotify = false;
+	atomic_store_release(&sc->sc_terror, sc->sc_dying ? ENXIO : 0);
 	mutex_exit(&sc->sc_lock);
 }
 
@@ -1981,6 +2088,10 @@ ucom_transport_softintr(struct ucom_softc *sc)
 		sc->sc_trefs++;
 		mutex_exit(&sc->sc_lock);
 		ttycancel(tp);
+		ttylock(tp);
+		selnotify(&tp->t_rsel, 0, NOTE_SUBMIT);
+		selnotify(&tp->t_wsel, 0, NOTE_SUBMIT);
+		ttyunlock(tp);
 		aprint_error_dev(sc->sc_dev, "external transport fault, error=%d\n", error);
 		if (flow)
 			sc->sc_transport->uct_rx_flow(sc->sc_parent, sc->sc_portno, epoch, 1);
@@ -2032,6 +2143,8 @@ ucom_transport_softintr(struct ucom_softc *sc)
 				submit = true;
 				sc->sc_trefs++;
 			} else {
+				if (sc->sc_tcore.state == UCT_FAULT)
+					atomic_store_release(&sc->sc_terror, sc->sc_tcore.error);
 				sc->sc_tnotify = true;
 				ucom_transport_schedule(sc);
 			}

@@ -3,6 +3,7 @@
 #include <sys/types.h>
 #include <sys/ioctl.h>
 #include <sys/poll.h>
+#include <sys/event.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -317,6 +318,70 @@ test_control_serialization(void)
 	CHECK(rump_sys_close(fd) == 0);
 }
 
+struct ioctl_job {
+	int fd, error, done, flags;
+	u_long cmd;
+	struct termios t;
+};
+
+static void *
+ioctl_thread(void *arg)
+{
+	struct ioctl_job *job = arg;
+	void *data = job->cmd == TIOCFLUSH ? (void *)&job->flags : &job->t;
+
+	job->error = rump_sys_ioctl(job->fd, job->cmd, data);
+	__atomic_store_n(&job->done, 1, __ATOMIC_RELEASE);
+	return NULL;
+}
+
+static void
+wait_ioctl(struct ioctl_job *job)
+{
+	for (int i = 0; i < 300; i++) {
+		if (__atomic_load_n(&job->done, __ATOMIC_ACQUIRE))
+			return;
+		delay();
+	}
+	CHECK(0 && "ioctl did not finish within 3 seconds");
+}
+
+static void
+test_drain_progress(void)
+{
+	const u_long commands[] = { TIOCDRAIN, TIOCSETAW, TIOCSETAF };
+
+	for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); i++) {
+		for (int flush = 0; flush < 2; flush++) {
+			int fd = open_port(0);
+			unsigned submits = snapshot(0).submits;
+			struct ioctl_job drain = { .fd = fd, .cmd = commands[i] };
+			struct ioctl_job resume = { .fd = fd,
+			    .cmd = flush ? TIOCFLUSH : TIOCSTART, .flags = FWRITE };
+			pthread_t a, b;
+
+			CHECK(rump_sys_ioctl(fd, TIOCGETA, &drain.t) == 0);
+			CHECK(rump_sys_ioctl(fd, TIOCSTOP, NULL) == 0);
+			CHECK(rump_sys_write(fd, "drain", 5) == 5);
+			outq(fd, 5);
+			CHECK(pthread_create(&a, NULL, ioctl_thread, &drain) == 0);
+			for (int n = 0; n < 10; n++)
+				delay();
+			CHECK(!__atomic_load_n(&drain.done, __ATOMIC_ACQUIRE));
+			CHECK(pthread_create(&b, NULL, ioctl_thread, &resume) == 0);
+			wait_ioctl(&resume);
+			CHECK(pthread_join(b, NULL) == 0 && resume.error == 0);
+			if (!flush) {
+				struct umock_record r = pending(0, submits);
+				complete(0, r, r.length, 0);
+			}
+			wait_ioctl(&drain);
+			CHECK(pthread_join(a, NULL) == 0 && drain.error == 0);
+			CHECK(rump_sys_close(fd) == 0);
+		}
+	}
+}
+
 static void *close_thread(void *arg)
 {
 	struct close_job *job = arg;
@@ -381,6 +446,88 @@ test_fault_wakeup_poll(void)
 	CHECK(rump_sys_close(fd) == 0);
 }
 
+struct poll_job { int fd, result; short revents; };
+static void *
+poll_thread(void *arg)
+{
+	struct poll_job *job = arg;
+	struct pollfd p = { .fd = job->fd, .events = POLLIN };
+
+	job->result = rump_sys_poll(&p, 1, 3000);
+	job->revents = p.revents;
+	return NULL;
+}
+
+static void
+test_fault_blocked_poll(void)
+{
+	/* Include faults racing with registration as well as an established wait. */
+	for (int i = 0; i < 24; i++) {
+		int fd = open_port(0);
+		struct umock_record r = snapshot(0);
+		struct poll_job job = { .fd = fd };
+		pthread_t thread;
+
+		CHECK(pthread_create(&thread, NULL, poll_thread, &job) == 0);
+		if (i == 0)
+			for (int n = 0; n < 10; n++)
+				delay();
+		KERNEL(rump_umock_fault(0, r.epoch, ETIMEDOUT));
+		CHECK(pthread_join(thread, NULL) == 0);
+		CHECK(job.result == 1 && (job.revents & (POLLERR | POLLHUP)));
+		CHECK(rump_sys_close(fd) == 0);
+	}
+}
+
+struct event_job { int queue, result; struct kevent event; };
+static void *
+event_thread(void *arg)
+{
+	struct event_job *job = arg;
+	const struct timespec timeout = { 3, 0 };
+
+	job->result = rump_sys_kevent(job->queue, NULL, 0, &job->event, 1, &timeout);
+	return NULL;
+}
+
+static void
+test_fault_kqueue(void)
+{
+	int fd = open_port(0), queue = rump_sys_kqueue();
+	struct umock_record r = snapshot(0);
+	struct kevent change, event = { 0 };
+	struct event_job job = { .queue = queue };
+	const struct timespec zero = { 0, 0 };
+	pthread_t thread;
+
+	CHECK(queue >= 0);
+	EV_SET(&change, fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+	CHECK(rump_sys_kevent(queue, &change, 1, &event, 1, &zero) == 0);
+	int error;
+	KERNEL(error = rump_umock_input(0, r.epoch, "KQ", 2));
+	CHECK(error == 0);
+	for (int n = 0; n < 300; n++) {
+		if (rump_sys_kevent(queue, NULL, 0, &event, 1, &zero) == 1)
+			break;
+		delay();
+	}
+	CHECK(event.filter == EVFILT_READ && event.data == 2 && !(event.flags & EV_EOF));
+	read_bytes(fd, "KQ", 2);
+	CHECK(pthread_create(&thread, NULL, event_thread, &job) == 0);
+	for (int n = 0; n < 10; n++)
+		delay();
+	KERNEL(rump_umock_fault(0, r.epoch, ETIMEDOUT));
+	CHECK(pthread_join(thread, NULL) == 0);
+	CHECK(job.result == 1 && job.event.filter == EVFILT_READ);
+	CHECK((job.event.flags & EV_EOF) && job.event.fflags == ETIMEDOUT);
+	EV_SET(&change, fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
+	CHECK(rump_sys_kevent(queue, &change, 1, NULL, 0, NULL) == 0);
+	EV_SET(&change, fd, EVFILT_WRITE, EV_ADD, 0, 0, NULL);
+	CHECK(rump_sys_kevent(queue, &change, 1, &event, 1, &zero) == 1);
+	CHECK((event.flags & EV_EOF) && event.fflags == ETIMEDOUT);
+	CHECK(rump_sys_close(queue) == 0 && rump_sys_close(fd) == 0);
+}
+
 static void
 test_detach_failed_attach_legacy(void)
 {
@@ -406,8 +553,9 @@ test_detach_failed_attach_legacy(void)
 }
 
 int
-main(void)
+main(int argc, char **argv)
 {
+	unsigned ran = 0;
 	struct { const char *name; void (*test)(void); } tests[] = {
 		{ "open_io", test_open_io },
 		{ "stale_duplicate", test_stale_duplicate },
@@ -416,18 +564,26 @@ main(void)
 		{ "flush_pending", test_flush_pending },
 		{ "rejected_controls", test_rejected_controls },
 		{ "control_serialization", test_control_serialization },
+		{ "drain_progress", test_drain_progress },
 		{ "close_dispatch_barrier", test_close_dispatch_barrier },
 		{ "fault_wakeup_poll", test_fault_wakeup_poll },
+		{ "fault_blocked_poll", test_fault_blocked_poll },
+		{ "fault_kqueue", test_fault_kqueue },
 		{ "detach_failed_attach_legacy", test_detach_failed_attach_legacy }
 	};
 
 	alarm(45);
+	CHECK(argc <= 2);
 	CHECK(rump_init() == 0);
 	for (size_t i = 0; i < sizeof(tests) / sizeof(tests[0]); i++) {
+		if (argc > 1 && strcmp(argv[1], tests[i].name) != 0)
+			continue;
 		tests[i].test();
+		ran++;
 		printf("PASS %s\n", tests[i].name);
 		fflush(stdout);
 	}
-	puts("ucom native: 10/10 groups passed, 0 failures (test-only USB)");
+	CHECK(ran != 0);
+	printf("ucom native: %u/%u groups passed, 0 failures (test-only USB)\n", ran, ran);
 	return 0;
 }

@@ -136,8 +136,11 @@ available. Attach rejects an incomplete table, a payload buffer outside
 | uct_detach(arg, port) | Process context; release the child binding permanently |
 
 No `sc_lock` or TTY lock is held across parent methods. A process mutex
-serializes whole ioctls and param/set; never reenter these controls on the
-same port. Lock order is process control, `sc_lock`, then TTY. t_oproc and
+serializes termios/modem/break setting ioctls and param/set, covering the
+TTY commit after parent acceptance. Drain may wait while holding this mutex,
+but progress commands (start/stop/flush) and queries remain available. Never
+reenter these setting controls on the same port. Lock order is process
+control, `sc_lock`, then TTY. t_oproc and
 hwiflow only schedule work while holding the TTY lock. Submit, flow and fault
 notification carry references that close waits for before calling stop.
 Parents release their lock before `ucom_transport_input/done/fault`.
@@ -147,6 +150,12 @@ bytes per port, with pause/resume watermarks 6144/2048. These are software
 limits, not measured throughput. Overflow or failed TTY admission faults
 that port instead of silently dropping the remainder. A fault wakes blocked
 TTY I/O, subsequent operations return its errno, and poll reports error/hangup.
+Selector registration and fault admission share `sc_lock`; fault notification
+wakes both read and write selectors. External read/write kqueue filters retain
+native TTY readiness rules while healthy and report `EV_EOF` with the transport
+errno in `fflags` on fault. They use an atomic error snapshot under the TTY
+lock, avoiding the reverse TTY-to-`sc_lock` order. Closing invalidates the
+epoch and waits for notification dispatch before clearing this snapshot.
 On a revoked TTY vnode, read may report EOF; consumers must treat EOF as loss.
 
 Done uses payload bytes, excluding the parent's framing. Full success removes
@@ -174,9 +183,10 @@ sh ember/tools/ucom-transport-rump-test.sh /absolute/clean-source \
 
 The runner builds a private component containing real ucom/core/RX and a
 test-only parent, links to the runtime's TTY/VFS/rump libraries, and records
-those library hashes. Ten groups exercise actual device nodes, data exchange,
+those library hashes. Thirteen groups exercise actual device nodes, data exchange,
 stale completion/reopen, partial TX fault, RX pressure/overflow, flush,
-rejected/serialized controls, dispatch-close ordering, blocked read/poll
+rejected/serialized controls, drain/resume/flush progress, dispatch-close
+ordering, blocked read/poll, poll-registration races, healthy/fault kqueue
 faults and detach/failed attach. Three attach warnings are intentional
 invalid children. Raw rump syscall clients retry RUMP_ERESTART where ordinary
 kernel/libc syscall handling would restart. This is bounded native software
