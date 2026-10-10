@@ -914,11 +914,21 @@ out:
 		    "FLDONE+FRDONE delivered as interrupts; both images "
 		    "verified; handlers disestablished; masks restored\n");
 	} else {
+		uint32_t hub_sts = 0, core_sts = 0, tfu = 0;
+
+		/* Post-mortem for the receipt: did the job finish and the
+		 * bit latch while the line never reached the handler? */
+		(void)bcmv3d_takeover_hub_peek(IV3D_INT_STS, &hub_sts);
+		(void)bcmv3d_takeover_core_peek(IV3D_INT_STS, &core_sts);
+		(void)bcmv3d_takeover_hub_peek(IV3D_TFU_CS, &tfu);
 		aprint_normal_dev(dev, "IRQ experiment stopped at %s: error "
-		    "%d; %s; delivered hub=%#x core=%#x; %s\n", iv3d.stage,
-		    error, iv3d.verdict != NULL ? iv3d.verdict :
+		    "%d; %s; delivered hub=%#x core=%#x; latched hub=%#x "
+		    "core=%#x spurious hub=%u core=%u TFU_CS=%#x; %s\n",
+		    iv3d.stage, error,
+		    iv3d.verdict != NULL ? iv3d.verdict :
 		    "no verdict recorded", iv3d.hub_delivered,
-		    iv3d.core_delivered,
+		    iv3d.core_delivered, hub_sts, core_sts,
+		    iv3d.hub_spurious, iv3d.core_spurious, tfu,
 		    iv3d.published ? "GPU-exposed allocations retained until "
 		    "reboot; no retry" :
 		    "nothing published; DMA allocations released");
