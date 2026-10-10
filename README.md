@@ -99,7 +99,7 @@ application stacks, adaptations and runnable checks. Small installations
 can keep only the components they need. Upstream components retain their
 own licenses and authorship.
 
-Status updated **2026-10-08**; linked component documents record their own
+Status updated **2026-10-09**; linked component documents record their own
 validation dates. Application tests on an AArch64 VM do not establish support
 on every board in the hardware catalog.
 
@@ -492,6 +492,13 @@ on every board in the hardware catalog.
 
 ### Board support and system builds
 
+- **MOXA G2 driver preparation:** [framing, shared TX, state and bounded RX helpers](ember/boot/moxa-serial.md)
+  pass 33 host C contract groups. An opt-in `ucom` backend passes sixteen native
+  rump groups with test-only USB, including TTY exchange, close barriers,
+  stale completions, per-port SEND_NEXT timeout, shared-stream faults and
+  concurrent control. All 17 existing serial
+  method-table owners cross-compile. A real MOXA USB parent, firmware and
+  physical serial checks remain pending.
 - **Allwinner A733** (Orange Pi Zero 4 and Zero 3W), a chip the base
   system has no support for: eight cores, the card at SDR104 speed,
   gigabit Ethernet, the AIC8800 Wi-Fi and Bluetooth module, processor
