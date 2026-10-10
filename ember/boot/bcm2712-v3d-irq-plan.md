@@ -1,9 +1,30 @@
 # BCM2712 V3D interrupt experiment: handoff design
 
-Status on 2026-10-10: researched design, **not implemented or executed**.
-This is stage B after the accepted [translated DMA](bcm2712-v3d-dma.md) and
-[bin/render queue](bcm2712-v3d-binrender-plan.md) experiments: replace
-polled completion with real GPU interrupt delivery through ACPI.
+Status on 2026-10-10: **implemented, contracted, reviewed by wire
+evidence and physically accepted once** on the stand CM5 (see the result
+below). This is stage B after the accepted [translated DMA](bcm2712-v3d-dma.md)
+and [bin/render queue](bcm2712-v3d-binrender-plan.md) experiments:
+real GPU interrupt delivery through ACPI instead of polled completion.
+
+## Physical CM5 result
+
+The `EMBERV3DIRQ` kernel from clean commit `a87680b0532` (SHA256
+`23e6a952d27774cb562528ba29c576c5c55ac54c304ebac7864808a180a10daf`)
+booted on the stand CM5 on 2026-10-10 and printed, after the takeover:
+
+```text
+IRQ PASS: hub TFUC and core FLDONE+FRDONE delivered as interrupts; both images verified; handlers disestablished; masks restored
+```
+
+Both GPU interrupt lines delivered their completions through
+`acpi_intr_establish_irq` handlers with exactly-once ack-then-wake; the
+TFU copy and the clear-and-store job both ran to verified images. Two
+earlier instrumented boots produced the fixes this acceptance depends
+on: handlers self-mask under a level-line storm, and the line identity
+comes from wire evidence (the table above), not from the firmware
+header's swapped names. The board was returned to the ordinary kernel
+and rechecked. The source boot log SHA256 is
+`edc13a1e216585fd17be78f94692241c8e70740ad20453b81547c7e7e738a1e3`.
 
 ## Interrupt identity (pinned)
 

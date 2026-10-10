@@ -490,9 +490,14 @@ on every board in the hardware catalog.
   [bin/render queue experiment](ember/boot/bcm2712-v3d-binrender-plan.md)
   then executed both control lists on that CM5: the binner completed and the
   render stage cleared one 64x64 tile and stored the verified RGBA8 image
-  through the published page table. The ordinary kernel remains a passive
-  observer. GPU interrupts, fault recovery, multi-job queues, a DRM render
-  interface, Mesa rendering and acceleration remain unverified.
+  through the published page table. A third opt-in
+  [interrupt experiment](ember/boot/bcm2712-v3d-irq-plan.md) delivered the
+  TFU and bin/render completions as real ACPI interrupts on both GPU lines,
+  with exactly-once acknowledgements and self-masking storm protection; the
+  stand firmware's swapped core/hub line names were identified by wire
+  evidence. The ordinary kernel remains a passive observer. GPU fault
+  recovery, multi-job queues, a DRM render interface, Mesa rendering and
+  acceleration remain unverified.
 
 ### Network diagnostics kit
 
