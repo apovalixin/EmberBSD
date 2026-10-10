@@ -39,6 +39,7 @@
 typedef uint64_t bus_addr_t;
 typedef size_t bus_size_t;
 typedef unsigned int bus_space_tag_t;
+typedef unsigned int bus_dma_tag_t;
 typedef unsigned int bus_space_handle_t;
 typedef void *cfdata_t;
 typedef uint64_t ACPI_INTEGER;
@@ -56,6 +57,7 @@ struct acpi_node {
 struct acpi_attach_args {
 	struct acpi_node *aa_node;
 	bus_space_tag_t aa_memt;
+	bus_dma_tag_t aa_dmat;
 };
 struct acpi_mem { bus_addr_t ar_base; bus_size_t ar_length; };
 struct acpi_resources { int parsed; };
@@ -108,7 +110,7 @@ static struct device dev = { &sc };
 static struct bcm2835pmwdog_softc pm = { 1, 100 };
 static ACPI_DEVICE_INFO info = { ACPI_VALID_HID, { "BCM2712" }, "BCM2850" };
 static struct acpi_node node = { ACPI_TYPE_DEVICE, &node, &info };
-static struct acpi_attach_args aa = { &node, 1 };
+static struct acpi_attach_args aa = { &node, 1, 2 };
 
 static void
 contract_print(const char *format, ...)

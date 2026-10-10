@@ -30,6 +30,9 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #ifdef BCM2712_V3D_TAKEOVER
 int bcmv3d_takeover_probe(device_t, bus_space_tag_t);
 #endif
+#if defined(BCM2712_V3D_TAKEOVER) && defined(BCM2712_V3D_DMA_PROBE)
+int bcmv3d_dma_probe(device_t, bus_dma_tag_t);
+#endif
 
 #define BCMV3D_HUB	0
 #define BCMV3D_CORE	1
@@ -69,6 +72,7 @@ struct bcmv3d_clock_result {
 struct bcmv3d_softc {
 	device_t sc_dev;
 	bus_space_tag_t sc_bst;
+	bus_dma_tag_t sc_dmat;
 	const char *sc_stage;
 	struct bcmv3d_clock_result sc_clock_state, sc_clock_rate;
 	uint32_t sc_pm;
@@ -303,8 +307,14 @@ bcmv3d_finalize(device_t dev)
 		aprint_normal_dev(dev, "observation stopped at %s: error %d; "
 		    "GPU state unchanged\n", sc->sc_stage, error);
 #ifdef BCM2712_V3D_TAKEOVER
-	else
-		(void)bcmv3d_takeover_probe(dev, sc->sc_bst);
+	else {
+		int takeover = bcmv3d_takeover_probe(dev, sc->sc_bst);
+#ifdef BCM2712_V3D_DMA_PROBE
+		/* The bounded DMA experiment runs only after a full takeover. */
+		if (takeover == 0)
+			(void)bcmv3d_dma_probe(dev, sc->sc_dmat);
+#endif
+	}
 #endif
 	return 0;
 }
@@ -337,6 +347,8 @@ bcmv3d_attach(device_t parent, device_t self, void *aux)
 
 	sc->sc_dev = self;
 	sc->sc_bst = aa->aa_memt;
+	/* GPU0's own ACPI DMA tag: the 32-bit window honoring _CCA=0. */
+	sc->sc_dmat = aa->aa_dmat;
 	aprint_naive("\n");
 	aprint_normal(": BCM2712 V3D passive observer\n");
 	if (ACPI_FAILURE(acpi_eval_integer(aa->aa_node->ad_handle,
