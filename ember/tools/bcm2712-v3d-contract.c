@@ -39,6 +39,7 @@
 typedef uint64_t bus_addr_t;
 typedef size_t bus_size_t;
 typedef unsigned int bus_space_tag_t;
+typedef void *ACPI_HANDLE;
 typedef unsigned int bus_dma_tag_t;
 typedef unsigned int bus_space_handle_t;
 typedef void *cfdata_t;
