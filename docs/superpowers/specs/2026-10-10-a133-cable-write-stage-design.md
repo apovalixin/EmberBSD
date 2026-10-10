@@ -49,6 +49,12 @@ unlocked USB recovery, CID/GPT and hardware sizes, then rerun Protection's live
 original/protected-full-env and retained-recovery guards. Unknown partial env
 stops; exact already protected env proceeds without rewriting.
 
+Carry the pinned policy inside every repeated Protection/Client guard, not
+just a handoff observation: outer lock, identity, exact GPT/hardware, all-task
+mutable usage and full env hash. Protection allows original/protected full env;
+images allow protected only. Additional guards never replace mandatory core
+checks. A non-nil expected digest is copied before verifier I/O; false rejects.
+
 Then invoke the writer with the pinned expected bundle fingerprint. It checks
 all three ranges even after previous verification, rewriting only a complete
 hash mismatch. Verify image Store lock scope and retain published state on

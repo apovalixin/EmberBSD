@@ -73,12 +73,25 @@ module A133Usb
         raise Invalid, 'usb_pipe_failed'
       ensure
         cleanup_failed = false
-        begin
-          Process.kill('KILL', -waiter.pid)
-        rescue Errno::ESRCH
-          # Also terminate descendants retaining a pipe after the parent exits.
-        rescue SystemCallError
-          cleanup_failed = true
+        3.times do |attempt|
+          begin
+            Process.kill('KILL', -waiter.pid)
+            break
+          rescue Errno::ESRCH
+            # Also terminate descendants retaining a pipe after the parent exits.
+            break
+          rescue Errno::EPERM
+            # An exiting Darwin group can temporarily have no eligible members.
+            # Never accept a persistent permission denial as successful cleanup.
+            if attempt==2
+              cleanup_failed=true
+            else
+              sleep 0.01
+            end
+          rescue SystemCallError
+            cleanup_failed = true
+            break
+          end
         end
         workers.each(&:kill)
         [input, out, err].each do |io|

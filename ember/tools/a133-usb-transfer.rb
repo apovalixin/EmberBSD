@@ -10,7 +10,9 @@ module A133Usb
   class Client
     ROLES = {'boot'=>[3,33554432], 'resources'=>[1,33554432], 'root'=>[17,27676098048]}.freeze
 
-    def initialize(adb:, serial:, cid:, timeout: 600)
+    def initialize(adb:, serial:, cid:, timeout: 600, additional_guard:nil)
+      raise Invalid,'invalid_additional_guard' unless additional_guard.nil? || additional_guard.respond_to?(:call)
+      @additional_guard=additional_guard
       raise Invalid, 'invalid_usb_identity' unless serial.is_a?(String) &&
         serial.bytesize.between?(1,128) && serial.match?(/\A[a-zA-Z0-9._-]+\z/) &&
         cid.is_a?(String) && cid.match?(/\A[0-9a-f]{32}\z/)
@@ -115,6 +117,7 @@ module A133Usb
       inspect!
       raise Invalid, 'usb_environment_changed' unless range(2,0,256) == env
       raise Invalid, 'usb_recovery_changed' unless range_sha(6,33554432) == backup['partition_sha256']['recovery']
+      raise Invalid,'usb_additional_guard_failed' if @additional_guard && @additional_guard.call!=true
     end
 
     def unchanged!(before, after)

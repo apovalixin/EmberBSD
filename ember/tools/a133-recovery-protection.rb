@@ -7,7 +7,9 @@ require_relative 'a133-usb-backup-source'
 
 module A133Recovery
   class Protection
-    def initialize(adb:,serial:,cid:,root_method:'adbd',timeout:600,require_unlocked:false)
+    def initialize(adb:,serial:,cid:,root_method:'adbd',timeout:600,require_unlocked:false,additional_guard:nil)
+      raise A133Usb::Invalid,'invalid_additional_guard' unless additional_guard.nil? || additional_guard.respond_to?(:call)
+      @additional_guard=additional_guard
       raise A133Usb::Invalid,'invalid_protection_options' unless [true,false].include?(require_unlocked)
       @require_unlocked=require_unlocked
       raise A133Usb::Invalid,'invalid_usb_identity' unless serial.is_a?(String) &&
@@ -72,6 +74,7 @@ module A133Recovery
       raise A133Usb::Invalid,'usb_protection_state_unsupported' unless allowed.include?([profile[:locked],profile[:verified]])
       raise A133Usb::Invalid,'usb_protection_gpt_mismatch' unless profile[:gpt_sha256]==policy[:gpt_sha]
       raise A133Usb::Invalid,'usb_recovery_changed' unless read_hash('recovery')==policy[:recovery_sha]
+      raise A133Usb::Invalid,'usb_additional_guard_failed' if @additional_guard && @additional_guard.call!=true
     end
 
     def install(original_env:,backup:,mutable:)

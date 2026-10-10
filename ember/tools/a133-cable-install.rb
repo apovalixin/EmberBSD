@@ -20,6 +20,25 @@ module A133Cable
     else value
     end
   end
+  def recovery_guard(store,context,adb,timeout,root_method,env_hashes)
+    source=A133UsbBackup::Source.new(adb:adb,serial:context['serial'],state:'recovery',root_method:root_method,timeout:timeout)
+    inspect=proc do
+      hardware=store.snapshot['hardware_bytes']
+      profile=source.mutable_inspect!
+      raise A133Usb::Invalid,'cable_recovery_unlock_required' unless profile.values_at(:state,:locked,:verified)==%w[recovery 0 orange]
+      raise A133Usb::Invalid,'cable_identity_changed' unless profile[:serial]==context['serial'] &&
+        profile[:cid]==context['cid'] && profile[:gpt_sha256]==context['gpt_sha256']
+      raise A133Usb::Invalid,'cable_hardware_changed' unless profile[:hardware_bytes]==hardware
+    end
+    inspect.call
+    digest=Digest::SHA256.new
+    source.read('env') { |bytes| digest.update(bytes) }
+    raise A133Usb::Invalid,'usb_environment_unknown' unless env_hashes.include?(digest.hexdigest)
+    inspect.call
+    true
+  rescue StandardError => error
+    raise A133Usb::Invalid.new(reason(error)),cause:nil
+  end
   def run(directory:,manifest:,adb:,serial:,cid:,original_env:,backup:,mutable:,
     locked_round_trip_verified:,timeout:600,wait_timeout:120,
     device_root_method:'vendor_su',recovery_root_method:'adbd')
@@ -34,7 +53,7 @@ module A133Cable
       timeout:timeout,wait_timeout:wait_timeout,device_root_method:device_root_method,recovery_root_method:recovery_root_method)
     base=A133Recovery::Policy.new(serial:serial,cid:cid,original_env:original_env,backup:backup).data
     protected=A133Recovery.protect(base[:original_prefix]).freeze
-    protected_sha=Digest::SHA256.hexdigest(protected+original_env.byteslice(131072,16777216-131072))
+    protected_sha=Digest::SHA256.hexdigest(protected+original_env.byteslice(131072,16777216-131072)).freeze
     bundle_sha=A133Install.bundle_digest(A133Bundle.verify(manifest)[:receipt]).freeze
     armed=A133Unlock.prepare(base[:original_prefix])
     context={'serial'=>serial,'cid'=>cid,'backup_sha256'=>backup['uncompressed_sha256'],
@@ -56,22 +75,22 @@ module A133Cable
           store.record('protecting',protection:true)
           latest=store.report
         end
-        profile=A133UsbBackup::Source.new(adb:adb,serial:serial,state:'recovery',
-          root_method:recovery_root_method,timeout:timeout).mutable_inspect!
-        raise Invalid,'cable_recovery_unlock_required' unless profile.values_at(:state,:locked,:verified)==%w[recovery 0 orange]
-        raise Invalid,'cable_identity_changed' unless profile[:serial]==serial && profile[:cid]==cid && profile[:gpt_sha256]==base[:gpt_sha]
-        raise Invalid,'cable_hardware_changed' unless profile[:hardware_bytes]==store.snapshot['hardware_bytes']
+        protection_hashes=[base[:original_sha],protected_sha].freeze
+        image_hashes=[protected_sha].freeze
+        preparation_guard=proc { recovery_guard(store,context,adb,timeout,recovery_root_method,protection_hashes) }
+        image_guard=proc { recovery_guard(store,context,adb,timeout,recovery_root_method,image_hashes) }
+        preparation_guard.call
         store.record('protecting')
         latest=store.report
         protection=A133Recovery::Protection.new(adb:adb,serial:serial,cid:cid,root_method:recovery_root_method,
-          timeout:timeout,require_unlocked:true).install(original_env:original_env,backup:backup,mutable:mutable)
+          timeout:timeout,require_unlocked:true,additional_guard:preparation_guard).install(original_env:original_env,backup:backup,mutable:mutable)
         raise Invalid,'cable_protection_changed' unless protection[:protected_env]==protected && protection[:env_sha256]==protected_sha
         store.record('protected')
         latest=store.report
         store.record('writing')
         latest=store.report
         images=A133Install.run(directory:File.join(directory,'images'),manifest:manifest,adb:adb,serial:serial,cid:cid,
-          backup:backup,protected_env:protected,timeout:timeout,expected_bundle_sha256:bundle_sha)
+          backup:backup,protected_env:protected,timeout:timeout,expected_bundle_sha256:bundle_sha,additional_guard:image_guard)
         store.record('verified')
         store.report.merge(status:'cable_write_stage_verified',image_writes_performed:images[:writes_performed],
           protection_writes_performed:protection[:writes_performed],roles:images[:roles])
@@ -96,7 +115,7 @@ module A133Cable
     raise Invalid.new(reason(error),{status:'cable_write_stage_stopped',effects_unknown:true,
       possible_write:true,possible_reboot:true,installation_ready:false}),cause:nil
   end
-  private_class_method :pin
+  private_class_method :pin,:recovery_guard
 end
 
 if $PROGRAM_NAME==__FILE__

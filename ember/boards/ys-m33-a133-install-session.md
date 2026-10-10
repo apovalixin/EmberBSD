@@ -58,6 +58,11 @@ An optional `expected_bundle_sha256` checks the semantic fingerprint of the
 freshly verified release before USB admission. `A133Install.bundle_digest`
 produces that digest from a verified receipt, independent of artifact order.
 The [composed cable stage](ys-m33-a133-cable-stage.md) supplies this pin.
+Only `nil` disables expected-release admission. A non-nil pin is validated and
+copied before the bundle verifier performs blocking I/O.
+Its optional `additional_guard` is passed to every Client core guard, including
+before/after readback and writes. It must return true or raise a bounded error;
+it adds caller policy and cannot replace the existing mandatory core checks.
 
 The caller must first identify and bind the tablet, freshly verify its full
 backup and quiescent mutable-data copies, retain boot0/boot1, accept release

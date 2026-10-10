@@ -224,13 +224,18 @@ module A133Install
     private_class_method :new
   end
 
-  def run(directory:,manifest:,adb:,serial:,cid:,backup:,protected_env:,timeout: 600,expected_bundle_sha256:nil)
+  def run(directory:,manifest:,adb:,serial:,cid:,backup:,protected_env:,timeout: 600,expected_bundle_sha256:nil,additional_guard:nil)
     store=nil
     active=nil
     written=0
     attempted=false
+    unless expected_bundle_sha256.nil?
+      raise Invalid,'session_bundle_changed' unless expected_bundle_sha256.is_a?(String) &&
+        expected_bundle_sha256.ascii_only? && sha?(expected_bundle_sha256)
+      expected_bundle_sha256=expected_bundle_sha256.dup.freeze
+    end
     verified=A133Bundle.verify(manifest)
-    if expected_bundle_sha256
+    unless expected_bundle_sha256.nil?
       raise Invalid,'session_bundle_changed' unless sha?(expected_bundle_sha256) &&
         bundle_digest(verified[:receipt])==expected_bundle_sha256
     end
@@ -255,7 +260,7 @@ module A133Install
     Store.open(directory,context) do |locked|
       store=locked
       begin
-        client=A133Usb::Client.new(adb: adb,serial: serial,cid: cid,timeout: timeout)
+        client=A133Usb::Client.new(adb: adb,serial: serial,cid: cid,timeout: timeout,additional_guard:additional_guard)
         ORDER.each do |role|
           active=role
           row=verified[:receipt][:artifacts].find { |artifact| artifact[:role]==role }

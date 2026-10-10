@@ -55,3 +55,9 @@ if writer
 else
   load File.join(base,'adb-source.rb')
 end
+if imagewrite && command.start_with?('dd of=/dev/block/mmcblk0p17 ') && state['after_root']
+  changed=JSON.parse(File.read(state_path))
+  changed['holders']=true
+  changed['mode']='partial'
+  File.write(state_path,JSON.generate(changed))
+end

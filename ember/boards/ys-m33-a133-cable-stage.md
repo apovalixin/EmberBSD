@@ -56,6 +56,11 @@ Verified unlock and hardware boot sizes are persisted before protection intent.
 After that intent, every invocation skips unlock, checks selected unlocked
 USB recovery/CID/GPT/hardware sizes and repeats live protection verification.
 Protection requires unlocked recovery at its own repeated guards in this flow.
+The pinned outer policy is also checked inside Protection and every image
+read/write guard: outer lock scope, unlocked USB recovery, CID/GPT/hardware,
+all-task mount inventories/swaps/holders and the full env hash. Protection
+accepts the pinned original/protected env pair; images require exact protected
+env. Standalone core guards remain mandatory alongside these additional checks.
 Exact original or exact protected full env is accepted; unknown partial env
 stops without a blind repair. The env tail and retained recovery are checked.
 
@@ -81,6 +86,8 @@ ruby ember/tools/a133-cable-install-test.rb
 ruby ember/tools/a133-cable-install-cli-test.rb
 ruby ember/tools/a133-install-session-regression-test.rb
 ruby ember/tools/a133-recovery-protection-unlocked-test.rb
+ruby ember/tools/a133-cable-stage-guard-test.rb
+ruby ember/tools/a133-bundle-pin-regression-test.rb
 ```
 
 The CLI only inspects an existing locked journal and emits one JSON after

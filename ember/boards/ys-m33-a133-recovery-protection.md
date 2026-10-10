@@ -51,6 +51,10 @@ The composed cable stage passes `require_unlocked: true` to the constructor.
 That opt-in mode requires0/orange at every protection guard; the default
 continues to support both locked1/green and unlocked0/orange recovery.
 Non-boolean values are refused before transport observation.
+An optional `additional_guard` adds the composed pinned policy to every
+Protection guard, before/after the transition. It must return true; existing
+identity, recovery and env checks remain mandatory. The composed flow uses
+this to retain outer hardware/GPT/full-env and usage guards across handoff.
 
 Each ADB subprocess has the configured timeout1..7200 seconds. Source
 inspection pins USB serial, eMMC CID, root/state, hardware sizes, GPT and
