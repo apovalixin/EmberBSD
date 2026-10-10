@@ -15,5 +15,7 @@
 bool	bcmv3d_takeover_complete(void);
 int	bcmv3d_takeover_hub_peek(bus_size_t, uint32_t *);
 int	bcmv3d_takeover_hub_poke(bus_size_t, uint32_t);
+int	bcmv3d_takeover_core_peek(bus_size_t, uint32_t *);
+int	bcmv3d_takeover_core_poke(bus_size_t, uint32_t);
 
 #endif /* _ARM_BROADCOM_BCM2712_V3D_TAKEOVER_H */

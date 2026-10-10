@@ -378,3 +378,21 @@ bcmv3d_takeover_hub_poke(bus_size_t offset, uint32_t value)
 		return EPERM;
 	return tv3d_write(TV3D_HUB, offset, value);
 }
+
+int
+bcmv3d_takeover_core_peek(bus_size_t offset, uint32_t *value)
+{
+
+	if (!tv3d.complete)
+		return EPERM;
+	return tv3d_read(TV3D_CORE, offset, value);
+}
+
+int
+bcmv3d_takeover_core_poke(bus_size_t offset, uint32_t value)
+{
+
+	if (!tv3d.complete)
+		return EPERM;
+	return tv3d_write(TV3D_CORE, offset, value);
+}

@@ -1,6 +1,9 @@
 # BCM2712 first bin/render queue experiment: handoff design
 
-Status on 2026-10-10: researched design, **not implemented or executed**.
+Status on 2026-10-10: **implemented** behind `BCM2712_V3D_QUEUE_PROBE`
+(`bcm2712_v3d_queue.c`, proposed `EMBERV3DQUEUE`) with the contract and
+review still pending; the configuration is not installable before they
+pass and a physical acceptance has not run.
 The prerequisite [translated DMA/TFU experiment](bcm2712-v3d-dma.md) passed
 once on physical CM5; this experiment is the next step of the same opt-in
 path. All register, sequence and packet facts below are pinned to

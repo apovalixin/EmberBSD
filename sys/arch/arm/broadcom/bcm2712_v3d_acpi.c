@@ -33,6 +33,9 @@ int bcmv3d_takeover_probe(device_t, bus_space_tag_t);
 #if defined(BCM2712_V3D_TAKEOVER) && defined(BCM2712_V3D_DMA_PROBE)
 int bcmv3d_dma_probe(device_t, bus_dma_tag_t);
 #endif
+#if defined(BCM2712_V3D_TAKEOVER) && defined(BCM2712_V3D_QUEUE_PROBE)
+int bcmv3d_queue_probe(device_t, bus_dma_tag_t);
+#endif
 
 #define BCMV3D_HUB	0
 #define BCMV3D_CORE	1
@@ -313,6 +316,11 @@ bcmv3d_finalize(device_t dev)
 		/* The bounded DMA experiment runs only after a full takeover. */
 		if (takeover == 0)
 			(void)bcmv3d_dma_probe(dev, sc->sc_dmat);
+#endif
+#ifdef BCM2712_V3D_QUEUE_PROBE
+		/* The bin/render experiment follows the same rule. */
+		if (takeover == 0)
+			(void)bcmv3d_queue_probe(dev, sc->sc_dmat);
 #endif
 	}
 #endif
