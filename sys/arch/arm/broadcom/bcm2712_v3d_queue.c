@@ -35,8 +35,10 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define QV3D_MMUC_CTL		0x1000
 #define QV3D_MMUC_ENABLE	__BIT(0)
 #define QV3D_MMUC_FLUSH		__BIT(1)
+#define QV3D_MMUC_FLUSHING	__BIT(2)
 #define QV3D_MMU_CTL		0x1200
 #define QV3D_MMU_CTL_TLB_CLEAR	__BIT(2)
+#define QV3D_MMU_CTL_TLB_CLEARING __BIT(7)
 #define QV3D_MMU_CTL_FAULTS	(__BIT(27) | __BIT(20) | __BIT(12))
 #define QV3D_MMU_CTL_VALUE	UINT64_C(0x060d0c01)
 #define QV3D_MMU_PT_BASE	0x1204
@@ -82,6 +84,8 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define QV3D_PT_SIZE		(4 * 1024 * 1024)
 #define QV3D_SCRATCH_SIZE	PAGE_SIZE
 
+#define QV3D_MMU_WAIT_COUNT	1000
+#define QV3D_MMU_WAIT_US	100
 #define QV3D_POLL_COUNT		5000
 #define QV3D_POLL_US		100
 
@@ -98,6 +102,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define QV3D_OP_END_OF_LOADS		26
 #define QV3D_OP_END_OF_TILE		27
 #define QV3D_OP_STORE			29
+#define QV3D_OP_SET_INSTANCEID		54
 #define QV3D_OP_PRIM_LIST_FORMAT	56
 #define QV3D_OP_OQ_COUNTER		92
 #define QV3D_OP_BINNING_CFG		120
@@ -112,7 +117,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define QV3D_SUB_ZS_CLEAR		1
 #define QV3D_SUB_RT_PART1		2
 #define QV3D_STORE_BUFFER_RT0		0
-#define QV3D_STORE_BUFFER_NONE		15
+#define QV3D_STORE_BUFFER_NONE		8
 #define QV3D_STORE_FORMAT_RGBA8		27
 
 enum qv3d_object {
@@ -133,6 +138,8 @@ static struct {
 	device_t dev;
 	bus_dma_tag_t dmat;
 	struct qv3d_buffer obj[QV3D_OBJ_COUNT];
+	uint8_t bcl_copy[QV3D_BCL_SIZE], rcl_copy[QV3D_RCL_SIZE];
+	unsigned int bcl_bytes, rcl_bytes;
 	bool attempted, published;
 	const char *stage, *verdict;
 } qv3d;
@@ -154,7 +161,7 @@ qv3d_field(struct qv3d_cl *cl, unsigned int at, unsigned int size,
 {
 	unsigned int i;
 
-	KASSERT(size <= 64 && value >> size == 0);
+	KASSERT(size <= 64 && (size == 64 || value >> size == 0));
 	for (i = 0; i < size; i++)
 		if ((value & (UINT64_C(1) << i)) != 0)
 			cl->base[(at + i) / 8] |= 1 << ((at + i) % 8);
@@ -270,11 +277,9 @@ qv3d_build_rcl(struct qv3d_cl *cl, uint32_t rcl_va, uint32_t output_va,
 
 	/* Initial double clear of the tile buffer (GFXH-1742 style). */
 	for (unsigned int pass = 0; pass < 2; pass++) {
-		if (pass > 0) {
-			o = qv3d_packet(cl, QV3D_OP_TILE_COORDS, 3);
-			qv3d_set(cl, o, 0, 12, 0);	/* column 0 */
-			qv3d_set(cl, o, 12, 12, 0);	/* row 0 */
-		}
+		o = qv3d_packet(cl, QV3D_OP_TILE_COORDS, 3);
+		qv3d_set(cl, o, 0, 12, 0);		/* column 0 */
+		qv3d_set(cl, o, 12, 12, 0);		/* row 0 */
 		qv3d_packet(cl, QV3D_OP_END_OF_LOADS, 0);
 		o = qv3d_packet(cl, QV3D_OP_STORE, 12);
 		qv3d_set(cl, o, 0, 4, QV3D_STORE_BUFFER_NONE);
@@ -289,6 +294,8 @@ qv3d_build_rcl(struct qv3d_cl *cl, uint32_t rcl_va, uint32_t output_va,
 	qv3d_packet(cl, QV3D_OP_END_OF_LOADS, 0);
 	o = qv3d_packet(cl, QV3D_OP_PRIM_LIST_FORMAT, 1);
 	qv3d_set(cl, o, 0, 6, 2);		/* list triangles */
+	o = qv3d_packet(cl, QV3D_OP_SET_INSTANCEID, 4);
+	qv3d_set(cl, o, 0, 32, 0);		/* PTB assumes zero */
 	o = qv3d_packet(cl, QV3D_OP_BRANCH_IMPLICIT, 1);
 	qv3d_set(cl, o, 0, 8, 0);		/* tile list set 0 */
 	o = qv3d_packet(cl, QV3D_OP_STORE, 12);
@@ -306,9 +313,9 @@ qv3d_build_rcl(struct qv3d_cl *cl, uint32_t rcl_va, uint32_t output_va,
 	qv3d_set(cl, o, 0, 32, rcl_va + generic_start);
 	qv3d_set(cl, o, 32, 32, rcl_va + generic_end);
 
-	o = qv3d_packet(cl, QV3D_OP_SUPERTILE_COORDS, 3);
-	qv3d_set(cl, o, 0, 12, 0);		/* supertile column 0 */
-	qv3d_set(cl, o, 12, 12, 0);		/* supertile row 0 */
+	o = qv3d_packet(cl, QV3D_OP_SUPERTILE_COORDS, 2);
+	qv3d_set(cl, o, 0, 8, 0);		/* supertile column 0 */
+	qv3d_set(cl, o, 8, 8, 0);		/* supertile row 0 */
 	qv3d_packet(cl, QV3D_OP_END_OF_RENDERING, 0);
 }
 
@@ -435,9 +442,50 @@ qv3d_publish_mmu(void)
 	    QV3D_MMUC_ENABLE | QV3D_MMUC_FLUSH);
 	if (error != 0)
 		return error;
+	/* Bounded waits as in the accepted DMA experiment. */
+	{
+		uint32_t value;
+		unsigned int i;
+
+		for (i = 0; i < QV3D_MMU_WAIT_COUNT; i++) {
+			error = bcmv3d_takeover_hub_peek(QV3D_MMUC_CTL,
+			    &value);
+			if (error != 0)
+				return error;
+			if ((value & QV3D_MMUC_FLUSHING) == 0)
+				break;
+			delay(QV3D_MMU_WAIT_US);
+		}
+		if (i == QV3D_MMU_WAIT_COUNT)
+			return ETIMEDOUT;
+	}
 	/* A full overwrite never reflects W1C fault bits back. */
-	return bcmv3d_takeover_hub_poke(QV3D_MMU_CTL,
+	error = bcmv3d_takeover_hub_poke(QV3D_MMU_CTL,
 	    QV3D_MMU_CTL_VALUE | QV3D_MMU_CTL_TLB_CLEAR);
+	if (error != 0)
+		return error;
+	{
+		uint32_t value;
+		unsigned int i;
+
+		for (i = 0; i < QV3D_MMU_WAIT_COUNT; i++) {
+			error = bcmv3d_takeover_hub_peek(QV3D_MMU_CTL,
+			    &value);
+			if (error != 0)
+				return error;
+			if ((value & QV3D_MMU_CTL_TLB_CLEARING) == 0)
+				break;
+			delay(QV3D_MMU_WAIT_US);
+		}
+		if (i == QV3D_MMU_WAIT_COUNT)
+			return ETIMEDOUT;
+		error = bcmv3d_takeover_hub_peek(QV3D_MMU_CTL, &value);
+		if (error != 0)
+			return error;
+		if (value != QV3D_MMU_CTL_VALUE)
+			return EIO;
+	}
+	return 0;
 }
 
 static int
@@ -555,6 +603,12 @@ bcmv3d_queue_probe(device_t dev, bus_dma_tag_t dmat)
 	rcl.base = qv3d.obj[QV3D_OBJ_RCL].kva;
 	rcl.bits = 0;
 	qv3d_build_rcl(&rcl, rcl_va, output_va, tile_alloc_va);
+	KASSERT(qv3d_length(&bcl) <= QV3D_BCL_SIZE);
+	KASSERT(qv3d_length(&rcl) <= QV3D_RCL_SIZE);
+	qv3d.bcl_bytes = qv3d_length(&bcl);
+	qv3d.rcl_bytes = qv3d_length(&rcl);
+	memcpy(qv3d.bcl_copy, qv3d.obj[QV3D_OBJ_BCL].kva, qv3d.bcl_bytes);
+	memcpy(qv3d.rcl_copy, qv3d.obj[QV3D_OBJ_RCL].kva, qv3d.rcl_bytes);
 	qv3d.stage = "identity page table for one job";
 	if ((error = qv3d_map_object(QV3D_OBJ_BCL, false, 1)) != 0 ||
 	    (error = qv3d_map_object(QV3D_OBJ_RCL, false, 2)) != 0 ||
@@ -571,6 +625,19 @@ bcmv3d_queue_probe(device_t dev, bus_dma_tag_t dmat)
 	error = qv3d_publish_mmu();
 	if (error != 0)
 		goto out;
+	qv3d.stage = "clean interrupt status";
+	{
+		uint32_t status;
+
+		error = bcmv3d_takeover_core_peek(QV3D_CTL_INT_STS, &status);
+		if (error != 0)
+			goto out;
+		if (status != 0) {
+			qv3d.verdict = "stale latched interrupt status";
+			error = EBUSY;
+			goto out;
+		}
+	}
 	qv3d.stage = "binner submission";
 	error = bcmv3d_takeover_core_poke(QV3D_PTB_BPOS, 0);
 	if (error != 0)
@@ -624,6 +691,15 @@ bcmv3d_queue_probe(device_t dev, bus_dma_tag_t dmat)
 		bus_dmamap_sync(qv3d.dmat, qv3d.obj[id].map, 0,
 		    qv3d.obj[id].size,
 		    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+	qv3d.stage = "control-list integrity";
+	if (memcmp(qv3d.bcl_copy, qv3d.obj[QV3D_OBJ_BCL].kva,
+	    qv3d.bcl_bytes) != 0 ||
+	    memcmp(qv3d.rcl_copy, qv3d.obj[QV3D_OBJ_RCL].kva,
+	    qv3d.rcl_bytes) != 0) {
+		qv3d.verdict = "control list modified by the GPU";
+		error = EIO;
+		goto out;
+	}
 	qv3d.stage = "cleared-image verification";
 	{
 		const uint32_t *out = qv3d.obj[QV3D_OBJ_OUTPUT].kva;

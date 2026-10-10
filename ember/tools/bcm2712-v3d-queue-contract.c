@@ -85,6 +85,8 @@ static void fake_aprint(device_t, const char *, ...);
 static void delay(unsigned int);
 static bool fake_takeover_complete;
 static unsigned int fail_peek_at, fail_poke_at, mmio_events;
+static unsigned int fail_hub_poke_at, hub_poke_events;
+static unsigned int fail_core_poke_at, core_poke_events;
 static unsigned int allocs, maps, creates, loads;
 static unsigned int frees, unmaps, destroys, unloads;
 static int current_object;
@@ -163,7 +165,8 @@ enum gpu_mode {
 	GPU_PARTIAL_CLEAR,	/* the store writes only half the tile */
 	GPU_TOUCH_CANARY,	/* the store also touches the canary page */
 	GPU_TOUCH_SCRATCH,	/* the store also touches the scratch */
-	GPU_STALE_CACHE		/* a second job without invalidation stalls */
+	GPU_TOUCH_CL,		/* the binner also writes into the BCL */
+	GPU_SPILLUSE		/* SPILLUSE latches instead of done */
 };
 
 static struct fixture {
@@ -432,24 +435,6 @@ fake_translate(bus_addr_t va, bus_addr_t *pa)
 
 /* --- fake control-list engine -------------------------------------- */
 
-static const struct { unsigned int opcode, bytes; } cl_lengths[] = {
-	{ 4, 1 }, { 6, 1 }, { 13, 1 }, { 18, 1 }, { 19, 1 }, { 25, 1 },
-	{ 26, 1 }, { 27, 1 }, { 20, 9 }, { 21, 2 }, { 23, 4 }, { 29, 13 },
-	{ 56, 2 }, { 92, 5 }, { 120, 9 }, { 121, 9 }, { 122, 9 }, { 123, 5 },
-	{ 124, 4 }, { 125, 1 }, { 126, 2 }
-};
-
-static int
-cl_packet_bytes(uint8_t opcode)
-{
-	unsigned int i;
-
-	for (i = 0; i < __arraycount(cl_lengths); i++)
-		if (cl_lengths[i].opcode == opcode)
-			return (int)cl_lengths[i].bytes;
-	return -1;
-}
-
 static uint64_t
 cl_get(const uint8_t *stream, unsigned int payload_bit, unsigned int size)
 {
@@ -495,118 +480,118 @@ fake_gpu_check_bcl(const uint8_t *stream, size_t length)
 	return at == length;
 }
 
+/* The fixture's own independent RCL encoder: every packet of the pinned
+ * stream, byte for byte, with local constants only. Any deviation in the
+ * production packing fails the following comparison. */
+static size_t
+fixture_expected_rcl(uint8_t *out, uint32_t rcl_va)
+{
+	size_t at = 0;
+	unsigned int o, generic_start, generic_end;
+
+	memset(out, 0, QV3D_RCL_SIZE);
+#define P(op, payload) (out[at] = (op), o = (at + 1) * 8, \
+    memset(out + at + 1, 0, (payload)), at += 1 + (payload), o)
+#define F(start, size, value) do { \
+	unsigned int _b = o + (start), _v = 0; _v = (unsigned)(value); \
+	for (unsigned int _i = 0; _i < (size); _i++) \
+		if ((_v >> _i) & 1) \
+			out[(_b + _i) / 8] |= 1 << ((_b + _i) % 8); \
+} while (0)
+	o = P(121, 8);		/* COMMON */
+	F(0, 3, 0); F(4, 4, 0); F(8, 16, 64); F(24, 16, 64);
+	F(44, 1, 1); F(46, 1, 1); F(52, 3, 3); F(55, 3, 3);
+	o = P(121, 8);		/* RENDER TARGET PART1 */
+	F(0, 3, 2); F(3, 3, 0); F(7, 11, 0); F(18, 7, 31);
+	F(25, 2, 0); F(27, 5, 8); F(32, 32, 0x305e7b4c);
+	o = P(121, 8);		/* ZS CLEAR VALUES */
+	F(0, 4, 1);
+	o = P(126, 1);		/* TILE LIST INITIAL BLOCK SIZE */
+	F(0, 2, 1); F(2, 1, 1);
+	o = P(123, 5 - 1);	/* MULTICORE TILE LIST SET BASE */
+	F(0, 4, 0); F(6, 26, default_bases[QV3D_OBJ_TILE_ALLOC] >> 6);
+	o = P(122, 8);		/* MULTICORE SUPERTILE CFG */
+	F(0, 8, 0); F(8, 8, 0); F(16, 8, 1); F(24, 8, 1);
+	F(32, 12, 1); F(44, 12, 1); F(61, 3, 0);
+	for (unsigned int pass = 0; pass < 2; pass++) {
+		o = P(124, 3);	/* TILE COORDINATES */
+		F(0, 12, 0); F(12, 12, 0);
+		P(26, 0);	/* END OF LOADS */
+		o = P(29, 12);	/* STORE NONE */
+		F(0, 4, 8);
+		P(25, 0);	/* CLEAR RENDER TARGETS */
+		P(27, 0);	/* END OF TILE MARKER */
+	}
+	P(19, 0);		/* FLUSH VCD CACHE */
+	generic_start = at;
+	P(125, 0);		/* TILE COORDINATES IMPLICIT */
+	P(26, 0);		/* END OF LOADS */
+	o = P(56, 1);		/* PRIM LIST FORMAT: list triangles */
+	F(0, 6, 2);
+	o = P(54, 4);		/* SET INSTANCEID zero */
+	F(0, 32, 0);
+	o = P(21, 1);		/* BRANCH TO IMPLICIT TILE LIST */
+	F(0, 8, 0);
+	o = P(29, 12);		/* STORE RT0 raster rgba8 */
+	F(0, 4, 0); F(4, 3, 0); F(12, 6, 27);
+	F(28, 20, 256); F(48, 16, 64);
+	F(64, 32, default_bases[QV3D_OBJ_OUTPUT]);
+	P(27, 0);		/* END OF TILE MARKER */
+	P(18, 0);		/* RETURN FROM SUB LIST */
+	generic_end = at;
+	o = P(20, 8);		/* START ADDRESS OF GENERIC TILE LIST */
+	F(0, 32, rcl_va + generic_start);
+	F(32, 32, rcl_va + generic_end);
+	o = P(23, 2);		/* SUPERTILE COORDINATES, 8-bit fields */
+	F(0, 8, 0); F(8, 8, 0);
+	P(13, 0);		/* END OF RENDERING */
+#undef P
+#undef F
+	return at;
+}
+
 /*
- * Validate the RCL and perform the store. Returns false on any packet
- * or field deviation from the pinned stream; the tile is then not
- * stored and no done bit latches.
+ * Validate the RCL byte for byte against the independent expectation
+ * and perform the store. Any deviation leaves the tile unstored and
+ * no done bit latches.
  */
 static bool
 fake_gpu_run_rcl(const uint8_t *stream, size_t length)
 {
-	size_t at = 0;
-	uint64_t clear_color = 0;
-	uint32_t store_address = 0;
-	bool saw_rt = false, saw_store = false;
-	unsigned int stores_none = 0;
+	static uint8_t expected[QV3D_RCL_SIZE];
+	size_t expected_length;
+	bus_addr_t pa;
+	struct fake_allocation *out;
+	size_t words = QV3D_OUTPUT_DATA / 4;
+	size_t limit = fx.mode == GPU_PARTIAL_CLEAR ? words / 2 : words;
+	int i;
 
-	while (at < length) {
-		int bytes = cl_packet_bytes(stream[at]);
-		const uint8_t *p;
-
-		if (bytes < 0 || at + (size_t)bytes > length)
-			return false;
-		p = stream + at;
-		switch (p[0]) {
-		case 121:
-			if (cl_get(p, 0, 3) == QV3D_SUB_RT_PART1) {
-				clear_color = cl_get(p, 32, 32);
-				if (cl_get(p, 18, 7) != 31 ||
-				    cl_get(p, 25, 2) != 0 ||
-				    cl_get(p, 27, 5) != 8)
-					return false;
-				saw_rt = true;
-			}
-			break;
-		case 29:
-			if (cl_get(p, 0, 4) == QV3D_STORE_BUFFER_NONE)
-				stores_none++;
-			else {
-				if (cl_get(p, 4, 3) != 0 ||
-				    cl_get(p, 12, 6) != QV3D_STORE_FORMAT_RGBA8 ||
-				    cl_get(p, 28, 20) != QV3D_DIM * 4 ||
-				    cl_get(p, 48, 16) != QV3D_DIM)
-					return false;
-				store_address = (uint32_t)cl_get(p, 64, 32);
-				saw_store = true;
-			}
-			break;
-		case 122:
-			if (cl_get(p, 0, 8) != 0 || cl_get(p, 8, 8) != 0 ||
-			    cl_get(p, 16, 8) != 1 || cl_get(p, 24, 8) != 1 ||
-			    cl_get(p, 32, 12) != 1 || cl_get(p, 44, 12) != 1)
-				return false;
-			break;
-		case 123:
-			/* The tile-list base must translate to tile_alloc. */
-			{
-				uint64_t address = cl_get(p, 6, 26) << 6;
-
-				if (address != default_bases[QV3D_OBJ_TILE_ALLOC])
-					return false;
-			}
-			break;
-		case 20:
-			/* The generic list must live inside the RCL. */
-			{
-				uint64_t start = cl_get(p, 0, 32);
-				uint64_t end = cl_get(p, 32, 32);
-				bus_addr_t rcl_base =
-				    default_bases[QV3D_OBJ_RCL];
-
-				if (start < rcl_base || end < start ||
-				    end > rcl_base + QV3D_RCL_SIZE)
-					return false;
-			}
-			break;
-		default:
-			break;
-		}
-		at += (size_t)bytes;
-	}
-	if (!saw_rt || !saw_store || stores_none != 2 ||
-	    clear_color != 0x305e7b4c)
+	expected_length = fixture_expected_rcl(expected,
+	    default_bases[QV3D_OBJ_RCL]);
+	if (length != expected_length ||
+	    memcmp(stream, expected, length) != 0)
 		return false;
 
 	/* Perform the store through the fake MMU into the output image. */
-	{
-		struct fake_allocation *out = NULL;
-		bus_addr_t pa;
-		size_t words = QV3D_OUTPUT_DATA / 4;
-		size_t limit = fx.mode == GPU_PARTIAL_CLEAR ? words / 2 : words;
-		int i;
+	if (!fake_translate(default_bases[QV3D_OBJ_OUTPUT], &pa))
+		return false;
+	out = allocation_containing(pa & ~(bus_addr_t)(PAGE_SIZE - 1));
+	if (out == NULL || out->base != default_bases[QV3D_OBJ_OUTPUT])
+		return false;
+	for (i = 0; i < (int)limit; i++)
+		memcpy(out->dev + (pa - out->base) + i * 4,
+		    &(uint32_t){ (uint32_t)(fx.mode == GPU_WRONG_COLOR ?
+		    0xdeadbeef : 0x305e7b4c) }, 4);
+	if (fx.mode == GPU_TOUCH_CANARY)
+		out->dev[QV3D_OUTPUT_DATA] = 1;
+	if (fx.mode == GPU_TOUCH_SCRATCH) {
+		struct fake_allocation *scratch =
+		    allocation_containing(
+		    (bus_addr_t)(hub.illegal &
+		    ~QV3D_MMU_ILLEGAL_ENABLE) << QV3D_PAGE_SHIFT);
 
-		if (!fake_translate(store_address, &pa))
-			return false;
-		out = allocation_containing(pa & ~(bus_addr_t)(PAGE_SIZE - 1));
-		if (out == NULL ||
-		    out->base != default_bases[QV3D_OBJ_OUTPUT])
-			return false;
-		/* The store lands at its translated address, not the base. */
-		for (i = 0; i < (int)limit; i++)
-			memcpy(out->dev + (pa - out->base) + i * 4,
-			    &(uint32_t){ (uint32_t)(fx.mode == GPU_WRONG_COLOR ?
-			    0xdeadbeef : clear_color) }, 4);
-		if (fx.mode == GPU_TOUCH_CANARY)
-			out->dev[QV3D_OUTPUT_DATA] = 1;
-		if (fx.mode == GPU_TOUCH_SCRATCH) {
-			struct fake_allocation *scratch =
-			    allocation_containing(
-			    (bus_addr_t)(hub.illegal &
-			    ~QV3D_MMU_ILLEGAL_ENABLE) << QV3D_PAGE_SHIFT);
-
-			assert(scratch != NULL);
-			scratch->dev[0] = 1;
-		}
+		assert(scratch != NULL);
+		scratch->dev[0] = 1;
 	}
 	return true;
 }
@@ -616,6 +601,14 @@ caches_invalidated_for_round(void)
 {
 
 	return invalidate_rounds > 0;
+}
+
+/* Byte offset inside the BCL payload used by GPU_TOUCH_CL. */
+static size_t
+qv3d_cl_len_probe(void)
+{
+
+	return 5;	/* inside the binning-config payload */
 }
 
 /* --- sealed HUB/CORE windows --------------------------------------- */
@@ -656,6 +649,8 @@ static int
 fake_hub_poke(bus_size_t offset, uint32_t value)
 {
 
+	if (fail_hub_poke_at != 0 && ++hub_poke_events == fail_hub_poke_at)
+		return EIO;
 	assert(hub_pokes < __arraycount(hub_order));
 	hub_order[hub_pokes++] = (unsigned int)offset;
 	switch (offset) {
@@ -705,6 +700,8 @@ static int
 fake_core_poke(bus_size_t offset, uint32_t value)
 {
 
+	if (fail_core_poke_at != 0 && ++core_poke_events == fail_core_poke_at)
+		return EIO;
 	assert(core_pokes < __arraycount(core_order));
 	core_order[core_pokes++] = (unsigned int)offset;
 	switch (offset) {
@@ -758,6 +755,8 @@ fake_core_poke(bus_size_t offset, uint32_t value)
 			core.int_sts |= __BIT(2);	/* OUTOMEM */
 			return 0;
 		}
+		if (fx.mode == GPU_TOUCH_CL)
+			bcl->dev[qv3d_cl_len_probe()] ^= 0xff;
 		/* Tile-list evidence: the binner writes into tile_alloc. */
 		{
 			struct fake_allocation *tile_alloc =
@@ -799,6 +798,10 @@ fake_core_poke(bus_size_t offset, uint32_t value)
 		}
 		if (fx.mode == GPU_INT_FAILURE) {
 			core.int_sts |= __BIT(2);	/* OUTOMEM */
+			return 0;
+		}
+		if (fx.mode == GPU_SPILLUSE) {
+			core.int_sts |= __BIT(3);	/* SPILLUSE */
 			return 0;
 		}
 		core.int_sts |= __BIT(0);	/* FRDONE */
@@ -854,6 +857,8 @@ reset_fixture(void)
 	hub_pokes = core_pokes = 0;
 	mmio_events = 0;
 	fail_peek_at = fail_poke_at = 0;
+	fail_hub_poke_at = fail_core_poke_at = 0;
+	hub_poke_events = core_poke_events = 0;
 	publication_seen = false;
 	tlb_cleared = false;
 	invalidate_rounds = 0;
@@ -1047,6 +1052,41 @@ main(void)
 	reset_fixture();
 	fail_peek_at = 2;
 	run_case("mask read fault", EIO);
+
+	/* Stale latched status must stop the experiment before submission. */
+	reset_fixture();
+	core.int_sts = __BIT(0);
+	run_case("stale FRDONE", EBUSY);
+	CHECK(strstr(fx.last_message, "stale latched") != NULL);
+
+	/* SPILLUSE is a failure like OUTOMEM. */
+	reset_fixture();
+	fx.mode = GPU_SPILLUSE;
+	run_case("SPILLUSE latched", EIO);
+	assert_retained();
+
+	/* A GPU write into a control list is detected after the sync. */
+	reset_fixture();
+	fx.mode = GPU_TOUCH_CL;
+	run_case("BCL modified", EIO);
+	CHECK(strstr(fx.last_message, "control list modified") != NULL);
+	assert_retained();
+
+	/* Publishing and submission writes can fail like any MMIO. */
+	reset_fixture();
+	fail_hub_poke_at = 2;	/* the MMU control write */
+	run_case("MMU write fault", EIO);
+	assert_retained();
+
+	reset_fixture();
+	fail_core_poke_at = 8;	/* the CT0QEA submit */
+	run_case("binner submit fault", EIO);
+	assert_retained();
+
+	reset_fixture();
+	fail_core_poke_at = 9;	/* the INT_CLR ack */
+	run_case("INT_CLR fault", EIO);
+	assert_retained();
 
 	printf("PASS: %u cases, %u checks\n", cases, checks);
 	return 0;

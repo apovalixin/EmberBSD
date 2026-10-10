@@ -18,9 +18,11 @@ Raspberry Pi Linux `43c132e8863c3bff3647033b6a7d2bf87b15501c`
 A separate opt-in `BCM2712_V3D_QUEUE_PROBE` and proposed `EMBERV3DQUEUE`
 configuration, after a completed takeover, in the same boot as the accepted
 DMA experiment. The probe performs its own bounded allocations and republishes
-the MMU exactly like the DMA experiment (same six rules: one segment, 4 KiB
-alignment, 32-bit window, no overlap, full-value control writes, retention
-after the first publishing write). No IRQ handler yet: completion is observed
+the MMU exactly like the DMA experiment, keeping its bounded MMUC/TLB waits
+and control read-back (same six rules: one segment, 4 KiB alignment, 32-bit
+window, no overlap, full-value control writes, retention after the first
+publishing write). The CORE interrupt status must read zero before the
+binner starts, so a stale latch cannot fake completion. No IRQ handler yet: completion is observed
 by polling latched interrupt status with delivery still masked. No DRM, no
 user command submission, no draws, no shaders, no GMP.
 
@@ -70,8 +72,11 @@ Seven objects, same bus_dma rules as the DMA experiment:
 | RCL | 8 KiB | packet stream plus the inline generic tile list |
 | Output image | 20 KiB | 64x64 RGBA8 raster (16 KiB) plus one canary page |
 
-PTE mapping through alias virtual addresses like the DMA experiment:
-BCL/RCL read-only, tile_alloc/tile_state/output writable. tile_alloc and
+PTE mapping: this job maps each buffer at its own DMA address through
+the MMU (identity translation; alias-address translation was proven by
+the DMA experiment). BCL/RCL read-only, tile_alloc/tile_state/output
+writable. Both control lists are snapshotted before publication and
+compared after completion; a GPU write into them fails the experiment. tile_alloc and
 tile_state legitimately change when the binner runs; the experiment must
 not treat their contents as canaries. BCL/RCL/output/scratch are canaries.
 
@@ -108,20 +113,23 @@ after the 8-bit opcode header; encode exactly as `gen_pack_header.py` does.
 6. `MULTICORE_RENDERING_SUPERTILE_CFG` (122): number of bin tile lists - 1
    = 0 at [63:61], total frame 1x1 tiles at [43:32]/[55:44], 1x1 supertiles
    at [23:16]/[31:24], supertile size in tiles - 1 = 0 at [7:0]/[15:8].
-7. Initial double clear (GFXH-1742 style): `TILE_COORDINATES` (124: 0,0),
-   `END_OF_LOADS` (26), `STORE_TILE_BUFFER_GENERAL` (29) with buffer = NONE,
-   `CLEAR_RENDER_TARGETS` (25), `END_OF_TILE_MARKER` (27); then once more
-   with a fresh `TILE_COORDINATES`; then `FLUSH_VCD_CACHE` (19).
+7. Initial double clear (GFXH-1742 style), each pass led by
+   `TILE_COORDINATES` (124: 0,0) as Mesa does: `END_OF_LOADS` (26),
+   `STORE_TILE_BUFFER_GENERAL` (29) with buffer = NONE (value 8),
+   `CLEAR_RENDER_TARGETS` (25), `END_OF_TILE_MARKER` (27); twice; then
+   `FLUSH_VCD_CACHE` (19).
 8. Generic tile list inline in the RCL buffer:
    `TILE_COORDINATES_IMPLICIT` (125), `END_OF_LOADS`, `PRIM_LIST_FORMAT`
-   (56) with a zero-data-format value, `BRANCH_TO_IMPLICIT_TILE_LIST` (21),
+   (56) with list triangles (2), `SET_INSTANCEID` (54) with zero (the PTB
+   assumes zero and the hardware will not set it), `BRANCH_TO_IMPLICIT_TILE_LIST` (21),
    `STORE_TILE_BUFFER_GENERAL` with buffer = render target 0, output image
    format rgba8 = 27, memory format Raster = 0, dither None = 0, decimate
    sample 0, height 64, raster byte stride 256 ("Height in UB or Stride"),
    address = output image VA at [95:64], `END_OF_TILE_MARKER`,
    `RETURN_FROM_SUB_LIST` (18); then `START_ADDRESS_OF_GENERIC_TILE_LIST`
    (20) covering exactly that inline range.
-9. `SUPERTILE_COORDINATES` (23) with column 0, row 0.
+9. `SUPERTILE_COORDINATES` (23) with column 0, row 0; the packet has a
+   two-byte payload with two 8-bit fields (unlike `TILE_COORDINATES` 124).
 10. `END_OF_RENDERING` (13).
 
 ## Verification

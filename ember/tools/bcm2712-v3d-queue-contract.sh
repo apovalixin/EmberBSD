@@ -76,8 +76,8 @@ for mutation in skip-l2t-invalidate skip-int-clr wrong-store-address \
             changed += sub(/0x305e7b4c/, "0x305e7b4d")
         }
         mutation == "skip-tlb-clear" &&
-        /return bcmv3d_takeover_hub_poke\(QV3D_MMU_CTL,$/ {
-            print "\treturn 0;"
+        /error = bcmv3d_takeover_hub_poke\(QV3D_MMU_CTL,$/ {
+            print "\terror = 0;"
             skip = 1
             changed = 1
             next
