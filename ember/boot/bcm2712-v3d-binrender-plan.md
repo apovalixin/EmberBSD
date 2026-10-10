@@ -1,9 +1,14 @@
 # BCM2712 first bin/render queue experiment: handoff design
 
-Status on 2026-10-10: **implemented** behind `BCM2712_V3D_QUEUE_PROBE`
-(`bcm2712_v3d_queue.c`, proposed `EMBERV3DQUEUE`) with the contract and
-review still pending; the configuration is not installable before they
-pass and a physical acceptance has not run.
+Status on 2026-10-10: **implemented, contracted and reviewed** behind
+`BCM2712_V3D_QUEUE_PROBE` (`bcm2712_v3d_queue.c`, `EMBERV3DQUEUE`); the
+review's two packet-encoding blockers are fixed. The first physical boot
+of the built kernel left the stand CM5 unreachable (no SSH or ICMP from
+two peers for ten minutes; see the wiki receipt) — queue execution on
+hardware is neither confirmed nor denied, and a repeat install must first
+address the stalled-MMIO hang risk, for example by submitting the lists
+on explicit operator request with a watchdog timeout instead of running
+from autoconfiguration.
 The prerequisite [translated DMA/TFU experiment](bcm2712-v3d-dma.md) passed
 once on physical CM5; this experiment is the next step of the same opt-in
 path. All register, sequence and packet facts below are pinned to
