@@ -15,6 +15,18 @@ struct umock_record {
 	uint8_t bytes[32];
 };
 
+struct umock_mux_frame {
+	uint64_t token, epoch, cookie;
+	size_t length;
+	unsigned int port;
+	uint8_t bytes[1024];
+};
+int rump_umock_mux_enable(int);
+int rump_umock_mux_pick(uint64_t, struct umock_mux_frame *);
+void rump_umock_mux_done(uint64_t, size_t, int);
+int rump_umock_mux_events(const uint8_t *, size_t);
+int rump_umock_mux_tick(uint64_t);
+
 /* Call only between rump_schedule()/rump_unschedule(). */
 void rump_umock_snapshot(int, struct umock_record *);
 void rump_umock_errors(int, int, int, int);

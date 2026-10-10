@@ -528,6 +528,152 @@ test_fault_kqueue(void)
 	CHECK(rump_sys_close(queue) == 0 && rump_sys_close(fd) == 0);
 }
 
+static struct umock_mux_frame
+mux_pick(uint64_t now)
+{
+	struct umock_mux_frame f;
+	int error;
+
+	KERNEL(error = rump_umock_mux_pick(now, &f));
+	CHECK(error == 0);
+	return f;
+}
+
+static void
+mux_done(struct umock_mux_frame f)
+{
+
+	KERNEL(rump_umock_mux_done(f.token, f.length, 0));
+}
+
+static void
+test_shared_round_robin(void)
+{
+	int fd[4], error;
+	struct umock_mux_frame f, blocked;
+	uint64_t old = 0;
+
+	KERNEL(error = rump_umock_mux_enable(1));
+	CHECK(error == 0);
+	for (int p = 0; p < 4; p++) {
+		fd[p] = open_port(p);
+		unsigned n = snapshot(p).submits;
+		CHECK(rump_sys_write(fd[p], "mux", 3) == 3);
+		(void)pending(p, n);
+	}
+	for (int p = 0; p < 4; p++) {
+		f = mux_pick(p + 1);
+		CHECK(f.port == (unsigned)p && f.length == 7);
+		CHECK(f.bytes[0] == 0 && f.bytes[1] == p);
+		CHECK(memcmp(f.bytes + 4, "mux", 3) == 0);
+		if (old != 0)
+			KERNEL(rump_umock_mux_done(old, 7, EIO));
+		KERNEL(error = rump_umock_mux_pick(p + 1, &blocked));
+		CHECK(error == EBUSY);
+		outq(fd[p], 3);
+		old = f.token;
+		mux_done(f);
+		outq(fd[p], 0);
+	}
+	for (int p = 0; p < 4; p++)
+		CHECK(rump_sys_close(fd[p]) == 0);
+	KERNEL(error = rump_umock_mux_enable(0));
+	CHECK(error == 0);
+}
+
+static void
+test_shared_credit_timeout(void)
+{
+	char data[600], byte;
+	int fd[2], error;
+	struct umock_mux_frame f;
+	struct pollfd pollfd;
+
+	memset(data, 'c', sizeof(data));
+	KERNEL(error = rump_umock_mux_enable(1));
+	CHECK(error == 0);
+	fd[0] = open_port(0);
+	fd[1] = open_port(1);
+	unsigned n = snapshot(0).submits;
+	CHECK(rump_sys_write(fd[0], data, sizeof(data)) == sizeof(data));
+	(void)pending(0, n);
+	f = mux_pick(1);
+	CHECK(f.port == 0 && f.length == 604 && f.bytes[0] == 0);
+	mux_done(f);
+	outq(fd[0], 0);
+	n = snapshot(0).submits;
+	CHECK(rump_sys_write(fd[0], "s", 1) == 1);
+	(void)pending(0, n);
+	f = mux_pick(2);
+	CHECK(f.bytes[0] == 0x80 && f.port == 0);
+	mux_done(f);
+	outq(fd[0], 0);
+	n = snapshot(0).submits;
+	CHECK(rump_sys_write(fd[0], "wait", 4) == 4);
+	(void)pending(0, n);
+	n = snapshot(1).submits;
+	CHECK(rump_sys_write(fd[1], "peer", 4) == 4);
+	(void)pending(1, n);
+	f = mux_pick(3);
+	CHECK(f.port == 1);
+	mux_done(f);
+	outq(fd[1], 0);
+	KERNEL(error = rump_umock_mux_tick(102));
+	CHECK(error == 0);
+	CHECK(rump_sys_read(fd[0], &byte, 1) == -1 && errno == ETIMEDOUT);
+	pollfd = (struct pollfd){ .fd = fd[0], .events = POLLIN | POLLOUT };
+	CHECK(rump_sys_poll(&pollfd, 1, 0) == 1 && (pollfd.revents & POLLERR));
+	n = snapshot(1).submits;
+	CHECK(rump_sys_write(fd[1], "ok", 2) == 2);
+	(void)pending(1, n);
+	f = mux_pick(103);
+	CHECK(f.port == 1);
+	mux_done(f);
+	outq(fd[1], 0);
+	CHECK(rump_sys_close(fd[0]) == 0 && rump_sys_close(fd[1]) == 0);
+	KERNEL(error = rump_umock_mux_enable(0));
+	CHECK(error == 0);
+}
+
+static void
+test_shared_close_bad_event(void)
+{
+	int fd[2], error;
+	struct umock_mux_frame old, fresh, blocked;
+	uint8_t bad[16] = { 0, 0, 0, 2, 0, 0, 0, 0, 0, 4, 0, 2 };
+	char byte;
+
+	KERNEL(error = rump_umock_mux_enable(1));
+	CHECK(error == 0);
+	fd[0] = open_port(0);
+	unsigned n = snapshot(0).submits;
+	CHECK(rump_sys_write(fd[0], "old", 3) == 3);
+	(void)pending(0, n);
+	old = mux_pick(1);
+	CHECK(rump_sys_close(fd[0]) == 0);
+	fd[0] = open_port(0);
+	fd[1] = open_port(1);
+	n = snapshot(0).submits;
+	CHECK(rump_sys_write(fd[0], "fresh", 5) == 5);
+	(void)pending(0, n);
+	fresh = mux_pick(2);
+	CHECK(fresh.epoch != old.epoch && fresh.token != old.token);
+	KERNEL(rump_umock_mux_done(old.token, old.length, 0));
+	outq(fd[0], 5);
+	KERNEL(error = rump_umock_mux_pick(2, &blocked));
+	CHECK(error == EBUSY);
+	mux_done(fresh);
+	outq(fd[0], 0);
+	KERNEL(error = rump_umock_mux_events(bad, sizeof(bad)));
+	CHECK(error == EPROTO);
+	for (int p = 0; p < 2; p++) {
+		CHECK(rump_sys_read(fd[p], &byte, 1) == -1 && errno == EPROTO);
+		CHECK(rump_sys_close(fd[p]) == 0);
+	}
+	KERNEL(error = rump_umock_mux_enable(0));
+	CHECK(error == 0);
+}
+
 static void
 test_detach_failed_attach_legacy(void)
 {
@@ -569,6 +715,9 @@ main(int argc, char **argv)
 		{ "fault_wakeup_poll", test_fault_wakeup_poll },
 		{ "fault_blocked_poll", test_fault_blocked_poll },
 		{ "fault_kqueue", test_fault_kqueue },
+		{ "shared_round_robin", test_shared_round_robin },
+		{ "shared_credit_timeout", test_shared_credit_timeout },
+		{ "shared_close_bad_event", test_shared_close_bad_event },
 		{ "detach_failed_attach_legacy", test_detach_failed_attach_legacy }
 	};
 

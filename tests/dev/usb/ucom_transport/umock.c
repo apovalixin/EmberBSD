@@ -10,16 +10,20 @@
 #include <dev/usb/usb.h>
 #include <dev/usb/usbdi.h>
 #include <dev/usb/ucomvar.h>
+#include <dev/usb/umoxa_g2_txq.h>
 #include <rump/rumpuser.h>
 #include "umock_test.h"
 
 struct umock_port {
+	int started;
 	device_t device;
 	struct ucom_softc *child;
 	struct umock_record record;
 };
 struct umock_softc {
 	kmutex_t lock;
+	int mux;
+	struct umoxa_g2_txq txq;
 	struct umock_port port[7];
 };
 static struct umock_softc *mock;
@@ -45,6 +49,10 @@ mock_start(void *arg, int port, uint64_t epoch)
 	s->port[port].record.epoch = epoch;
 	s->port[port].record.starts++;
 	error = s->port[port].record.start_error;
+	if (error == 0 && s->mux)
+		error = umoxa_g2_txq_open(&s->txq, port, epoch);
+	if (error == 0)
+		s->port[port].started = 1;
 	mutex_exit(&s->lock);
 	return error;
 }
@@ -57,6 +65,16 @@ mock_stop(void *arg, int port, uint64_t epoch)
 	(void)epoch;
 	mutex_enter(&s->lock);
 	KASSERT(!s->port[port].record.active);
+	if (s->mux) {
+		struct umoxa_g2_result ignored;
+
+		(void)umoxa_g2_txq_close(&s->txq, port);
+		/* Test-only abort is synchronous; closed owner receives no done. */
+		if (s->txq.active && s->txq.flight.port == (unsigned)port)
+			(void)umoxa_g2_txq_done(&s->txq, s->txq.flight.token,
+			    0, 0, &ignored);
+	}
+	s->port[port].started = 0;
 	s->port[port].record.pending = 0;
 	s->port[port].record.stops++;
 	mutex_exit(&s->lock);
@@ -68,10 +86,18 @@ mock_submit(void *arg, int port, uint64_t epoch, uint64_t cookie,
 {
 	struct umock_softc *s = arg;
 	struct umock_record *r = &s->port[port].record;
-	int gate;
+	int gate, error;
 
 	mutex_enter(&s->lock);
 	KASSERT(!r->pending);
+	if (s->mux) {
+		error = umoxa_g2_txq_submit(&s->txq, port, epoch, cookie,
+		    data, length);
+		if (error != 0) {
+			mutex_exit(&s->lock);
+			return error;
+		}
+	}
 	r->epoch = epoch;
 	r->cookie = cookie;
 	r->length = length;
@@ -180,7 +206,7 @@ umock_attach(device_t parent, device_t self, void *aux)
 	for (int i = 0; i < 7; i++) {
 		memset(&a, 0, sizeof(a));
 		a.ucaa_portno = i;
-		a.ucaa_obufsize = i == 4 ? 0 : 1024;
+		a.ucaa_obufsize = i == 4 ? 0 : 1020;
 		a.ucaa_ibufsize = a.ucaa_ibufsizepad = 64;
 		a.ucaa_methods = i == 6 ? &legacy : &methods;
 		a.ucaa_arg = s;
@@ -262,4 +288,130 @@ rump_umock_param_gate(int p, int on)
 	mutex_enter(&mock->lock);
 	mock->port[p].record.param_gate = on;
 	mutex_exit(&mock->lock);
+}
+
+/* Test calls hold device lifetime; notifications never hold parent lock. */
+struct mux_notice {
+	struct ucom_softc *child[4];
+	uint64_t epoch[4];
+	int error[4];
+	uint32_t mask;
+};
+
+static void
+mux_notice_capture(struct mux_notice *n, uint32_t mask)
+{
+
+	KASSERT(mutex_owned(&mock->lock));
+	n->mask = mask;
+	for (int p = 0; p < 4; p++) {
+		n->child[p] = mock->port[p].child;
+		n->epoch[p] = mock->txq.ports[p].epoch;
+		n->error[p] = mock->txq.ports[p].error;
+		if (mask & (1U << p))
+			mock->port[p].record.pending = 0;
+	}
+}
+
+static void
+mux_notice_deliver(const struct mux_notice *n)
+{
+
+	KASSERT(!mutex_owned(&mock->lock));
+	for (int p = 0; p < 4; p++)
+		if (n->mask & (1U << p))
+			ucom_transport_fault(n->child[p], n->epoch[p], n->error[p]);
+}
+
+int
+rump_umock_mux_enable(int on)
+{
+	int error = 0;
+
+	mutex_enter(&mock->lock);
+	for (int p = 0; p < 4; p++)
+		if (mock->port[p].started || mock->port[p].record.active)
+			error = EBUSY;
+	if (mock->mux && mock->txq.active)
+		error = EBUSY;
+	if (error == 0) {
+		if (on)
+			error = umoxa_g2_txq_init(&mock->txq, 1024, 100);
+		mock->mux = on != 0;
+	}
+	mutex_exit(&mock->lock);
+	return error;
+}
+
+int
+rump_umock_mux_pick(uint64_t now, struct umock_mux_frame *f)
+{
+	struct umoxa_g2_xfer x;
+	struct mux_notice n;
+	int error;
+
+	memset(f, 0, sizeof(*f));
+	mutex_enter(&mock->lock);
+	error = umoxa_g2_txq_pick(&mock->txq, now, &x);
+	if (error == 0) {
+		f->token = x.token;
+		f->epoch = x.epoch;
+		f->cookie = x.cookie;
+		f->port = x.port;
+		f->length = x.len;
+		memcpy(f->bytes, x.data, x.len);
+	}
+	mux_notice_capture(&n, x.fault_mask);
+	mutex_exit(&mock->lock);
+	mux_notice_deliver(&n);
+	return error;
+}
+
+void
+rump_umock_mux_done(uint64_t token, size_t actual, int error)
+{
+	struct umoxa_g2_result r;
+	struct mux_notice n;
+	struct ucom_softc *child;
+
+	mutex_enter(&mock->lock);
+	(void)umoxa_g2_txq_done(&mock->txq, token, actual, error, &r);
+	child = mock->port[r.port].child;
+	if (r.deliver)
+		mock->port[r.port].record.pending = 0;
+	mux_notice_capture(&n, r.fault_mask);
+	mutex_exit(&mock->lock);
+	if (r.deliver)
+		ucom_transport_done(child, r.epoch, r.cookie, r.actual, r.error);
+	mux_notice_deliver(&n);
+}
+
+int
+rump_umock_mux_events(const uint8_t *data, size_t len)
+{
+	struct mux_notice n;
+	uint32_t mask;
+	int error;
+
+	mutex_enter(&mock->lock);
+	error = umoxa_g2_txq_events(&mock->txq, data, len, &mask);
+	mux_notice_capture(&n, mask);
+	mutex_exit(&mock->lock);
+	mux_notice_deliver(&n);
+	return error;
+}
+
+int
+rump_umock_mux_tick(uint64_t now)
+{
+	struct mux_notice n;
+	uint32_t mask;
+	int error;
+
+	mutex_enter(&mock->lock);
+	error = umoxa_g2_txq_tick(&mock->txq, now, &mask);
+	mux_notice_capture(&n, mask);
+	mutex_exit(&mock->lock);
+	mux_notice_deliver(&n);
+	return error;
 }
