@@ -661,10 +661,16 @@ bcmv3d_irq_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 		error = ENXIO;
 		goto out;
 	}
-	core_irq = acpi_res_irq(&res, 0);
-	hub_irq = acpi_res_irq(&res, 1);
+	/*
+	 * The firmware header names index 0 (GSI 282) "core" and index 1
+	 * (GSI 281) "hub", but the wire says otherwise: the TFU completion
+	 * (a HUB-only event) arrives on GSI 282. Register by evidence:
+	 * hub handler on index 0 / GSI 282, core handler on index 1 / 281.
+	 */
+	hub_irq = acpi_res_irq(&res, 0);
+	core_irq = acpi_res_irq(&res, 1);
 	if (core_irq == NULL || hub_irq == NULL ||
-	    core_irq->ar_irq != 282 || hub_irq->ar_irq != 281 ||
+	    hub_irq->ar_irq != 282 || core_irq->ar_irq != 281 ||
 	    core_irq->ar_type != ACPI_LEVEL_SENSITIVE ||
 	    hub_irq->ar_type != ACPI_LEVEL_SENSITIVE) {
 		iv3d.verdict = "unexpected GPU0 interrupt resources";
@@ -673,14 +679,14 @@ bcmv3d_irq_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 		goto out;
 	}
 	iv3d.stage = "establishing handlers";
-	iv3d.core_ih = acpi_intr_establish_irq(dev, core_irq, IPL_VM, true,
-	    iv3d_core_intr, NULL, "v3d core");
-	if (iv3d.core_ih != NULL)
-		iv3d.core_established = true;
 	iv3d.hub_ih = acpi_intr_establish_irq(dev, hub_irq, IPL_VM, true,
 	    iv3d_hub_intr, NULL, "v3d hub");
 	if (iv3d.hub_ih != NULL)
 		iv3d.hub_established = true;
+	iv3d.core_ih = acpi_intr_establish_irq(dev, core_irq, IPL_VM, true,
+	    iv3d_core_intr, NULL, "v3d core");
+	if (iv3d.core_ih != NULL)
+		iv3d.core_established = true;
 	if (!iv3d.core_established || !iv3d.hub_established) {
 		/* Whatever was established is disestablished on exit. */
 		iv3d.verdict = "could not establish a handler";

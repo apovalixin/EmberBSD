@@ -12,15 +12,20 @@ The stand CM5 firmware declares four GPU0 interrupts in `_CRS`, all
 firmware source `Silicon/Broadcom/Bcm27xx/Include/IndustryStandard/Bcm2712.h`
 of eotics-com/edk2-platforms `c4b5d05de1f2ef633bdb4c175b5c118fcb2666ed`):
 
-| _CRS index | GSI | Firmware name | Meaning |
+| _CRS index | GSI | Firmware header name | Meaning by wire evidence |
 | --- | --- | --- | --- |
-| 0 | 282 (0x11A) | `BCM2712_V3D_CORE_INTERRUPT` (GIC_SPI 250+32) | bin/render/CSD done, OOM |
-| 1 | 281 (0x119) | `BCM2712_V3D_HUB_INTERRUPT` (GIC_SPI 249+32) | TFU done, MMU faults |
+| 0 | 282 (0x11A) | `BCM2712_V3D_CORE_INTERRUPT` (GIC_SPI 250+32) | **HUB line** (TFU done arrived here) |
+| 1 | 281 (0x119) | `BCM2712_V3D_HUB_INTERRUPT` (GIC_SPI 249+32) | **CORE line** (by elimination) |
 | 2 | 133 | `BCM2712_PIXELVALVE0_INTERRUPT` | display; not ours |
 | 3 | 142 | `BCM2712_PIXELVALVE1_INTERRUPT` | display; not ours |
 
-Note the ACPI order is core-first; Linux device-tree uses hub-first, so
-the mapping must come from the table above, not from DT examples.
+The firmware header names are swapped relative to the silicon: on the
+stand CM5 the TFU completion (a HUB-only event) latched `HUB_INT_STS`
+bit 1 and stormed the line registered from _CRS index 0 (GSI 282) with
+no core bits set, while GSI 281 stayed silent (first EMBERV3DIRQ boot,
+post-mortem `latched hub=0x2 core=0 spurious core=8185567`). The probe
+therefore registers the hub handler on index 0 and the core handler on
+index 1, by evidence rather than by the header's comment.
 
 ## Register facts (pinned to raspberrypi/linux 43c132e, v3d_regs.h/v3d_irq.c)
 

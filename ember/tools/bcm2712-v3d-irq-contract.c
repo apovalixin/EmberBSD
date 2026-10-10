@@ -191,9 +191,9 @@ fake_acpi_res_irq(struct acpi_resources *res, int index)
 	(void)res;
 	if (index > 1)
 		return NULL;
-	irqs[0].ar_irq = fx_core_gsi;
+	irqs[0].ar_irq = fx_hub_gsi;	/* index 0 = 282 = hub line */
 	irqs[0].ar_type = ACPI_LEVEL_SENSITIVE;
-	irqs[1].ar_irq = fx_hub_gsi;
+	irqs[1].ar_irq = fx_core_gsi;	/* index 1 = 281 = core line */
 	irqs[1].ar_type = ACPI_LEVEL_SENSITIVE;
 	return &irqs[index];
 }
@@ -215,11 +215,11 @@ fake_acpi_intr_establish_irq(device_t dev, struct acpi_irq *irq, int ipl,
 	(void)ipl;
 	(void)mpsafe;
 	(void)xname;
-	/* The core line is GSI 282, the hub line is GSI 281. */
+	/* Wire evidence: GSI 282 carries the HUB line, 281 the CORE. */
 	if (irq->ar_irq == 282)
-		slot = 0;
-	else if (irq->ar_irq == 281)
 		slot = 1;
+	else if (irq->ar_irq == 281)
+		slot = 0;
 	else
 		return NULL;
 	if (fake_handlers[slot].established || establish_should_fail[slot])
@@ -906,8 +906,8 @@ reset_fixture(void)
 		fx.fail_alloc[i] = false;
 	fx.fail_create = -1;
 	fx_parse_ok = 1;
-	fx_core_gsi = 282;
-	fx_hub_gsi = 281;
+	fx_hub_gsi = 282;	/* _CRS index 0 */
+	fx_core_gsi = 281;	/* _CRS index 1 */
 	hub_bank.mask = 0x7f;
 	core_bank.mask = 0xffffffff;
 	fake_takeover_complete = true;
