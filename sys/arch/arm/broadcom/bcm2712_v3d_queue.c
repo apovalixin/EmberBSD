@@ -120,7 +120,7 @@ enum qv3d_object {
 	QV3D_OBJ_BCL, QV3D_OBJ_RCL, QV3D_OBJ_OUTPUT, QV3D_OBJ_COUNT
 };
 
-struct qv3d_object {
+struct qv3d_buffer {
 	bus_dma_segment_t seg;
 	bus_dmamap_t map;
 	void *kva;
@@ -132,7 +132,7 @@ struct qv3d_object {
 static struct {
 	device_t dev;
 	bus_dma_tag_t dmat;
-	struct qv3d_object obj[QV3D_OBJ_COUNT];
+	struct qv3d_buffer obj[QV3D_OBJ_COUNT];
 	bool attempted, published;
 	const char *stage, *verdict;
 } qv3d;
@@ -322,7 +322,7 @@ qv3d_allocate(void)
 		QV3D_TILE_STATE_SIZE, QV3D_BCL_SIZE, QV3D_RCL_SIZE,
 		QV3D_OUTPUT_SIZE
 	};
-	struct qv3d_object *object;
+	struct qv3d_buffer *object;
 	enum qv3d_object id, other;
 	int nsegs, error;
 
@@ -370,7 +370,7 @@ qv3d_allocate(void)
 static void
 qv3d_release_unpublished(void)
 {
-	struct qv3d_object *object;
+	struct qv3d_buffer *object;
 	enum qv3d_object id;
 
 	for (id = 0; id < QV3D_OBJ_COUNT; id++) {
