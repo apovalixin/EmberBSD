@@ -96,7 +96,7 @@ struct clk { int acquired; };
 #include "sun60i_a733_pck600.h"
 
 static uint32_t pd[2], clocks[2], power_cells, clock_cells;
-static int prepare_len = -1;
+static int prepare_len = -1, request_len = -1;
 static int pd_len, clock_len, managed_len, supply_len, observe_len;
 static bool bad_power_compat, bad_pmic, bad_supply;
 static bool missing_supply, missing_clock;
@@ -111,6 +111,8 @@ static bool supply_on, power_on;
 static unsigned supply_calls, fail_supply_call;
 static u_int voltage, core_hz, bus_hz;
 static uint64_t pbvnc;
+static uint32_t core_id;
+static int coreid_peek_error;
 static struct fdtbus_regulator regulator;
 static struct clk clock_fixture;
 static struct sun60i_a733_gpu_state clock_observation;
@@ -144,6 +146,8 @@ OF_getproplen(int phandle, const char *name)
 {
 	if (strcmp(name, "netbsd,experimental-clock-prepare") == 0)
 		return prepare_len;
+	if (strcmp(name, "netbsd,experimental-domain-request") == 0)
+		return request_len;
 	if (strcmp(name, "netbsd,observe-only") == 0)
 		return observe_len;
 	if (strcmp(name, "netbsd,consumer-managed-power") == 0)
@@ -295,6 +299,15 @@ bus_space_map(bus_space_tag_t tag, bus_addr_t addr, bus_size_t size,
 	return map_error;
 }
 static int
+bus_space_peek_4(bus_space_tag_t tag, bus_space_handle_t handle,
+    bus_size_t offset, uint32_t *value)
+{
+	assert(handle == 0x1234 && offset == 0x18);
+	record('i');
+	*value = core_id;
+	return coreid_peek_error;
+}
+static int
 bus_space_peek_8(bus_space_tag_t tag, bus_space_handle_t handle,
     bus_size_t offset, uint64_t *value)
 {
@@ -351,8 +364,8 @@ aprint_error_dev(device_t dev, const char *fmt, ...)
 }
 #include "autoconf.h"
 static int prepare_error, reserve_error, wait_error, retain_error;
-static int power_reserve_error, second_wait_error, final_ready_error;
-static unsigned prepares, reserves, waits, retains, unreserves;
+static int request_error;
+static int power_reserve_error, second_wait_error, final_ready_error;static unsigned prepares, reserves, waits, retains, unreserves, requests;
 int sun60i_a733_ccu_gpu_reserve(struct clk *c, const void *owner)
 { reserves++; record('C'); return reserve_error; }
 int sun60i_a733_pck_gpu_reserve(int node, const void *owner)
@@ -363,6 +376,8 @@ int sun60i_a733_pck_gpu_release(int node, const void *owner)
 { unreserves++; record('p'); return 0; }
 int sun60i_a733_pck_gpu_retain(int node, const void *owner)
 { retains++; record('H'); return retain_error; }
+int sun60i_a733_pck_gpu_request_on(int node, const void *owner)
+{ requests++; record('R'); return request_error; }
 int sun60i_a733_ccu_gpu_prepare(struct clk *c, const void *owner, bool *held)
 {
 	prepares++; record('W'); *held = true;
@@ -398,12 +413,13 @@ reset(void)
 	power_cells = clock_cells = 1;
 	pd_len = clock_len = 8;
 	managed_len = 0;
-	observe_len = prepare_len = -1;
+	observe_len = prepare_len = request_len = -1;
 	prepare_error = reserve_error = wait_error = retain_error = 0;
+	request_error = 0;
 	power_reserve_error = second_wait_error = final_ready_error = 0;
 	inspect_calls = 0; terminal_error = initial_error = 0;
 	preparation_timed_out = false;
-	prepares = reserves = waits = retains = unreserves = 0;
+	prepares = reserves = waits = retains = unreserves = requests = 0;
 	supply_calls = fail_supply_call = 0;
 	supply_len = 4;
 	bad_power_compat = bad_pmic = bad_supply = false;
@@ -422,6 +438,8 @@ reset(void)
 	memset(&initial_observation, 0, sizeof(initial_observation));
 	clock_observation.hosc_hz[0] = clock_observation.hosc_hz[1] = 24000000;
 	pbvnc = UINT64_C(0x00240038006800b7);
+	core_id = 0;
+	coreid_peek_error = 0;
 	maps = peeks = unmaps = releases = clock_puts = 0;
 	nevents = 0;
 	events[0] = normal_output[0] = error_output[0] = '\0';
@@ -662,6 +680,110 @@ test_experimental_prepare(void)
 	printf("PASS: %u experimental GPU consumer checks\n", checks - start);
 }
 
+static void
+test_domain_request(void)
+{
+	unsigned start = checks;
+	const int errors[] = { EIO, EBUSY, EFAULT, ENXIO, ETIMEDOUT };
+	char expected[192];
+
+	/* The fresh request requires the prepared-clock opt-in. */
+	reset(); request_len = 0;
+	unavailable(EINVAL); CHECK(nevents == 0 && requests == 0);
+	reset(); request_len = 0; observe_len = 0;
+	unavailable(EINVAL); CHECK(nevents == 0 && requests == 0);
+	for (int len = 1; len <= 4; len++) {
+		reset(); request_len = len; prepare_len = 0;
+		unavailable(EINVAL); CHECK(nevents == 0);
+	}
+
+	/* Full success keeps the request between clock preparation and wait. */
+	reset(); prepare_len = request_len = 0;
+	CHECK(sun60i_gpu_identify(&sc) == 0);
+	CHECK(requests == 1 && prepares == 1 && waits == 2 && retains == 1);
+	CHECK(strcmp(events, "ASVPCQPCSVHWQRKSVKFMIUcs") == 0);
+	CHECK(strstr(normal_output, "TOP-only") == NULL);
+
+	/* A failed request stops before the waiter and reads identification. */
+	for (u_int i = 0; i < __arraycount(errors); i++) {
+		reset(); prepare_len = request_len = 0; request_error = errors[i];
+		CHECK(sun60i_gpu_identify(&sc) == errors[i]);
+		CHECK(requests == 1 && waits == 0 && sc.sc_retained);
+		CHECK(sc.sc_have_id && sc.sc_bvnc == pbvnc);
+		CHECK(maps == 1 && peeks == 1 && unmaps == 1);
+		CHECK(!regulator.acquired && !clock_fixture.acquired);
+		snprintf(expected, sizeof(expected),
+		    "TOP-only identification: CORE_ID 0x00000000, PBVNC "
+		    "0x00240038006800b7: 36.56.104.183");
+		CHECK(strstr(normal_output, expected) != NULL);
+		CHECK(strstr(normal_output,
+		    "(expected A733 GPU; GPU_CORE not confirmed ON)") != NULL);
+		CHECK(strcmp(sc.sc_stage, "experimental domain request") == 0);
+	}
+
+	/* A failed wait still reaches the same bounded identification. */
+	reset(); prepare_len = request_len = 0; wait_error = ETIMEDOUT;
+	CHECK(sun60i_gpu_identify(&sc) == ETIMEDOUT);
+	CHECK(requests == 1 && waits == 1 && sc.sc_have_id);
+	CHECK(strstr(events, "RKQ") != NULL && strstr(events, "SVPFMiIUcs") != NULL);
+	CHECK(strstr(normal_output, "terminal CCU observation") != NULL);
+	reset(); prepare_len = request_len = 0; second_wait_error = EIO;
+	CHECK(sun60i_gpu_identify(&sc) == EIO);
+	CHECK(requests == 1 && waits == 2 && sc.sc_have_id);
+	CHECK(strcmp(sc.sc_stage, "experimental final CORE check") == 0);
+
+	/* Readiness changes skip the TOP-only access instead of forcing it. */
+	reset(); prepare_len = request_len = 0; request_error = EIO;
+	final_ready_error = ENXIO;
+	CHECK(sun60i_gpu_identify(&sc) == EIO);
+	CHECK(maps == 0 && peeks == 0 && !sc.sc_have_id);
+	CHECK(strstr(normal_output, "TOP-only identification skipped:") != NULL);
+	reset(); prepare_len = request_len = 0; request_error = EIO;
+	supply_on = false;
+	CHECK(sun60i_gpu_identify(&sc) == EBUSY);
+	CHECK(maps == 0 && requests == 0);
+	reset(); prepare_len = request_len = 0; request_error = EIO; voltage = 735000;
+	CHECK(sun60i_gpu_identify(&sc) == EOPNOTSUPP);
+	CHECK(maps == 0 && requests == 0 && !sc.sc_have_id);
+	reset(); prepare_len = request_len = 0; request_error = EIO;
+	power_on = false;
+	CHECK(sun60i_gpu_identify(&sc) == EBUSY);
+	CHECK(maps == 0 && requests == 0 && !sc.sc_have_id);
+	reset(); prepare_len = request_len = 0; request_error = EIO;
+	core_hz = 600000000;
+	CHECK(sun60i_gpu_identify(&sc) == EBUSY);
+	CHECK(maps == 0 && requests == 0 && !sc.sc_have_id);
+
+	/* Mapping and read faults stay bounded diagnostics. */
+	reset(); prepare_len = request_len = 0; request_error = EIO;
+	map_error = ENOMEM;
+	CHECK(sun60i_gpu_identify(&sc) == EIO);
+	CHECK(maps == 1 && peeks == 0 && !sc.sc_have_id);
+	CHECK(strstr(normal_output, "TOP-only identification unavailable:") != NULL);
+	reset(); prepare_len = request_len = 0; request_error = EIO;
+	peek_error = 1;
+	CHECK(sun60i_gpu_identify(&sc) == EIO);
+	CHECK(maps == 1 && peeks == 1 && unmaps == 1 && !sc.sc_have_id);
+	CHECK(strstr(normal_output, "TOP-only PBVNC read failed") != NULL);
+	reset(); prepare_len = request_len = 0; request_error = EIO;
+	coreid_peek_error = 1; core_id = 0x10300;
+	CHECK(sun60i_gpu_identify(&sc) == EIO);
+	CHECK(sc.sc_have_id && sc.sc_bvnc == pbvnc);
+	CHECK(strstr(normal_output, "TOP-only CORE_ID read failed") != NULL);
+	CHECK(strstr(normal_output, "CORE_ID 0x00000000") == NULL);
+	reset(); prepare_len = request_len = 0; request_error = EIO;
+	pbvnc = UINT64_C(0x00240037006800b7);
+	CHECK(sun60i_gpu_identify(&sc) == EIO);
+	CHECK(sc.sc_have_id && sc.sc_bvnc == pbvnc);
+	CHECK(strstr(normal_output, "36.55.104.183 (unexpected") != NULL);
+	/* Without the opt-in no fresh request and no TOP-only access exist. */
+	reset(); prepare_len = 0; wait_error = ETIMEDOUT;
+	CHECK(sun60i_gpu_identify(&sc) == ETIMEDOUT);
+	CHECK(requests == 0 && maps == 0 && !sc.sc_have_id);
+	printf("PASS: %u experimental CORE request consumer checks\n",
+	    checks - start);
+}
+
 int
 main(void)
 {
@@ -831,6 +953,7 @@ main(void)
 	test_clock_observation();
 
 	test_experimental_prepare();
+	test_domain_request();
 	printf("PASS: %u A733 GPU identification checks\n", checks);
 	return 0;
 }

@@ -19,6 +19,7 @@ cat > "$work/input.dts" <<'DTS'
 &gpu {
 	/delete-property/ netbsd,observe-only;
 	netbsd,experimental-clock-prepare;
+	netbsd,experimental-domain-request;
 };
 DTS
 base=$src/sys/external/gpl2/dts/dist

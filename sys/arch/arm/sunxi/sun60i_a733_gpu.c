@@ -45,6 +45,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <arm/sunxi/sun60i_a733_pck600.h>
 
 #define A733_GPU_BASE		0x01800000
+#define A733_GPU_CORE_ID	0x18
 #define A733_GPU_PBVNC		0x20
 #define A733_GPU_ID_SIZE		(A733_GPU_PBVNC + sizeof(uint64_t))
 #define A733_GPU_TOP		5
@@ -160,6 +161,59 @@ sun60i_gpu_clock_terminal(struct sun60i_gpu_softc *sc, struct clk *gpu)
 	sun60i_gpu_clock_report(sc, &state);
 }
 
+/*
+ * Vendor kernels keep GPU_CORE outside the GPU binding and read this bank
+ * with only GPU_TOP managed.  After a failed CORE transition the same
+ * resources still allow one bounded, fault-tolerant identification peek;
+ * it never authorizes further GPU access.
+ */
+static void
+sun60i_gpu_top_identify(struct sun60i_gpu_softc *sc, bus_addr_t addr,
+    struct fdtbus_regulator *supply, struct clk *gpu)
+{
+	bus_space_handle_t bsh;
+	u_int core_hz, bus_hz;
+	uint64_t id;
+	uint32_t core;
+	bool enabled;
+
+	if (fdtbus_regulator_is_enabled(supply, &enabled) != 0 || !enabled ||
+	    fdtbus_regulator_get_voltage(supply, &sc->sc_uvol) != 0 ||
+	    sc->sc_uvol != 800000 ||
+	    fdtbus_powerdomain_is_enabled_index(sc->sc_phandle, 0, &enabled) != 0 ||
+	    !enabled || sun60i_a733_ccu_gpu_ready(gpu, &core_hz, &bus_hz) != 0 ||
+	    core_hz != 400000000 || bus_hz != 200000000) {
+		aprint_normal_dev(sc->sc_dev, "TOP-only identification "
+		    "skipped: supply, GPU_TOP or clock readiness changed\n");
+		return;
+	}
+	if (bus_space_map(sc->sc_bst, addr, A733_GPU_ID_SIZE, 0, &bsh) != 0) {
+		aprint_normal_dev(sc->sc_dev, "TOP-only identification "
+		    "unavailable: mapping\n");
+		return;
+	}
+	if (bus_space_peek_4(sc->sc_bst, bsh, A733_GPU_CORE_ID, &core) != 0)
+		aprint_normal_dev(sc->sc_dev, "TOP-only CORE_ID read failed\n");
+	if (bus_space_peek_8(sc->sc_bst, bsh, A733_GPU_PBVNC, &id) != 0) {
+		aprint_normal_dev(sc->sc_dev, "TOP-only PBVNC read failed\n");
+		bus_space_unmap(sc->sc_bst, bsh, A733_GPU_ID_SIZE);
+		return;
+	}
+	sc->sc_bvnc = id;
+	sc->sc_have_id = true;
+	aprint_normal_dev(sc->sc_dev, "TOP-only identification: CORE_ID "
+	    "0x%08x, PBVNC 0x%016llx: %u.%u.%u.%u%s\n", core,
+	    (unsigned long long)id,
+	    (u_int)(id >> 48),
+	    (u_int)((id >> 32) & 0xffff),
+	    (u_int)((id >> 16) & 0xffff),
+	    (u_int)(id & 0xffff),
+	    id == A733_GPU_EXPECTED ?
+	    " (expected A733 GPU; GPU_CORE not confirmed ON)" :
+	    " (unexpected)");
+	bus_space_unmap(sc->sc_bst, bsh, A733_GPU_ID_SIZE);
+}
+
 static int
 sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
 {
@@ -174,9 +228,8 @@ sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
 	uint32_t cells;
 	uint64_t id;
 	int len, node, error, power_node;
-	bool enabled, observe_only, prepare;
+	bool enabled, observe_only, prepare, request;
 	bool power_reserved = false, clock_reserved = false;
-
 	sc->sc_have_id = false;
 	sc->sc_stage = "binding";
 	if (OF_getproplen(sc->sc_phandle, "netbsd,consumer-managed-power") != 0)
@@ -190,6 +243,13 @@ sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
 		return EINVAL;
 	prepare = len == 0;
 	if (prepare && observe_only)
+		return EINVAL;
+	len = OF_getproplen(sc->sc_phandle, "netbsd,experimental-domain-request");
+	if (len != -1 && len != 0)
+		return EINVAL;
+	request = len == 0;
+	/* The fresh static request re-uses the prepared clock reservation. */
+	if (request && !prepare)
 		return EINVAL;
 	error = fdtbus_get_reg(sc->sc_phandle, 0, &addr, &size);
 	if (error != 0)
@@ -331,6 +391,12 @@ sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
 			error = EBUSY;
 			goto out;
 		}
+		if (request) {
+			sc->sc_stage = "experimental domain request";
+			error = sun60i_a733_pck_gpu_request_on(power_node, sc);
+			if (error != 0)
+				goto out;
+		}
 		sc->sc_stage = "experimental CORE ON/Q acceptance";
 		error = sun60i_a733_pck_gpu_wait(power_node, sc);
 		if (error != 0)
@@ -384,6 +450,8 @@ sun60i_gpu_identify(struct sun60i_gpu_softc *sc)
 out:
 	if (prepare && sc->sc_retained && error == ETIMEDOUT)
 		sun60i_gpu_clock_terminal(sc, gpu);
+	if (request && error != 0 && sc->sc_retained)
+		sun60i_gpu_top_identify(sc, addr, supply, gpu);
 	if (!sc->sc_retained) {
 		if (clock_reserved)
 			(void)sun60i_a733_ccu_gpu_release(gpu, sc);
@@ -414,7 +482,8 @@ sun60i_gpu_finalize(device_t dev)
 		    (u_int)((sc->sc_bvnc >> 32) & 0xffff),
 		    (u_int)((sc->sc_bvnc >> 16) & 0xffff),
 		    (u_int)(sc->sc_bvnc & 0xffff),
-		    error == 0 ? " (expected A733 GPU)" : " (unexpected)");
+		    sc->sc_bvnc == A733_GPU_EXPECTED ?
+		    " (expected A733 GPU)" : " (unexpected)");
 	}
 	if (error != 0)
 		aprint_error_dev(dev, "identification unavailable at %s: %d; %s\n",

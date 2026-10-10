@@ -203,6 +203,34 @@ it does not establish the cause of the remaining physical CORE timeout. Run the 
 clock/power/identification contracts and `sh ember/tools/a733-gpu-prepare-mutations.sh`.
 The experiment remains disabled in normal board DTBs.
 
+## Experimental domain request
+
+A further opt-in property, `netbsd,experimental-domain-request`, extends the
+prepared-clock experiment. It requires `netbsd,experimental-clock-prepare`,
+is rejected together with `netbsd,observe-only`, and adds two stages only.
+
+The first stage re-issues the static GPU_CORE ON request after strict CCU
+readiness and before the read-only CORE waiter. Allwinner's own writers do
+exactly this without comparing the previous policy and status: the SCP
+standby-resume loop ORs 8 into every PWPR (skipping only the domain-6 wait),
+and the BSP `pck600_domains.c` power-on path writes COMMAND_ON and polls PWSR.
+`sun60i_a733_pck_gpu_request_on` programs the same five delay registers,
+writes the already-requested ON policy, verifies the readback, and polls
+PWSR for at most 10000 microseconds. A write that does not land or a policy
+that reverts is a denial: the domain is quarantined like an ordinary failed
+transition. A status timeout does not quarantine, so the read-only waiter
+stays usable afterwards. GPU_CORE power-off remains impossible.
+
+The second stage is a bounded TOP-only identification after any failed
+request or wait. Vendor kernels keep GPU_CORE outside the GPU binding, so
+this register bank is read with only GPU_TOP managed. After re-verifying the
+800000 microvolt supply, the statically ON TOP domain and strict 400/200 MHz
+CCU readiness, the consumer maps the identification window and reads
+`RGX_CR_CORE_ID` (0x18) and `RGX_CR_CORE_ID__PBVNC` (0x20) through
+fault-tolerant peeks. A successful read publishes the real PBVNC explicitly
+marked "GPU_CORE not confirmed ON"; a fault or readiness change only prints.
+This diagnostic never authorizes further GPU access, mapping or resets.
+
 ## Source audit: remaining cold-start boundary
 
 In Linux `0c2669a9f4a1d607e7591ae50ccf3c432a0aff08`, the

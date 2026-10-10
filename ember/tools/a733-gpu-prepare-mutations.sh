@@ -77,6 +77,15 @@ mutate pck-write "$pck" sun60i_a733_pck600.c \
     'error = sun60i_pck600_gpu_check(sc, false, last); (void)sun60i_pck600_write(sc, 0x6000, 8);'
 mutate consumer-wait-bypass "$gpu" sun60i_a733_gpu.c \
     'error = sun60i_a733_pck_gpu_wait(power_node, sc);' 'error = 0;'
+mutate consumer-request-bypass "$gpu" sun60i_a733_gpu.c \
+    'error = sun60i_a733_pck_gpu_request_on(power_node, sc);' 'error = 0;'
+mutate top-identify-bypass "$gpu" sun60i_a733_gpu.c \
+    'if (request && error != 0 && sc->sc_retained)' \
+    'if (false && request && error != 0 && sc->sc_retained)'
+mutate pck-request-quarantine "$pck" sun60i_a733_pck600.c \
+    'sc->sc_failed[PCK600_GPU_CORE] = true;' '(void)0;'
+mutate pck-request-success "$pck" sun60i_a733_pck600.c \
+    'if ((status & PCK600_MODE) == PCK600_ON) {' 'if (false) {'
 mutate conflicting-opt-in "$gpu" sun60i_a733_gpu.c \
     'if (prepare && observe_only)' 'if (false && prepare && observe_only)'
 mutate consumer-release-after-write "$gpu" sun60i_a733_gpu.c \
