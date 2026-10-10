@@ -630,7 +630,7 @@ bcmv3d_irq_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 	struct acpi_irq *core_irq, *hub_irq;
 	struct iv3d_cl bcl, rcl;
 	uint32_t debug, tfu_cs;
-	uint32_t asrc, adst, lsrc, ldst, out_va, tile_alloc_va;
+	uint32_t lsrc, ldst, out_va, tile_alloc_va;
 	uint32_t bcl_va, rcl_va, tile_state_va;
 	const uint32_t *image;
 	size_t words, i;
@@ -665,16 +665,19 @@ bcmv3d_irq_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 	iv3d.stage = "establishing handlers";
 	iv3d.core_ih = acpi_intr_establish_irq(dev, core_irq, IPL_VM, true,
 	    iv3d_core_intr, NULL, "v3d core");
+	if (iv3d.core_ih != NULL)
+		iv3d.core_established = true;
 	iv3d.hub_ih = acpi_intr_establish_irq(dev, hub_irq, IPL_VM, true,
 	    iv3d_hub_intr, NULL, "v3d hub");
-	if (iv3d.core_ih == NULL || iv3d.hub_ih == NULL) {
+	if (iv3d.hub_ih != NULL)
+		iv3d.hub_established = true;
+	if (!iv3d.core_established || !iv3d.hub_established) {
+		/* Whatever was established is disestablished on exit. */
 		iv3d.verdict = "could not establish a handler";
 		error = ENXIO;
 		acpi_resource_cleanup(&res);
 		goto out;
 	}
-	iv3d.core_established = iv3d.core_ih != NULL;
-	iv3d.hub_established = iv3d.hub_ih != NULL;
 	acpi_resource_cleanup(&res);
 
 	iv3d.stage = "MMU geometry";
@@ -687,12 +690,26 @@ bcmv3d_irq_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 		error = EOPNOTSUPP;
 		goto out;
 	}
+	iv3d.stage = "clean interrupt status";
+	{
+		uint32_t hub_sts, core_sts;
+
+		error = bcmv3d_takeover_hub_peek(IV3D_INT_STS, &hub_sts);
+		if (error == 0)
+			error = bcmv3d_takeover_core_peek(IV3D_INT_STS,
+			    &core_sts);
+		if (error != 0)
+			goto out;
+		if (hub_sts != 0 || core_sts != 0) {
+			iv3d.verdict = "stale latched interrupt status";
+			error = EBUSY;
+			goto out;
+		}
+	}
 	iv3d.stage = "eleven bounded DMA allocations";
 	error = iv3d_allocate();
 	if (error != 0)
 		goto out;
-	asrc = iv3d.obj[IV3D_OBJ_TFU_ASRC].map->dm_segs[0].ds_addr;
-	adst = iv3d.obj[IV3D_OBJ_TFU_ADST].map->dm_segs[0].ds_addr;
 	lsrc = iv3d.obj[IV3D_OBJ_TFU_LSRC].map->dm_segs[0].ds_addr;
 	ldst = iv3d.obj[IV3D_OBJ_TFU_LDST].map->dm_segs[0].ds_addr;
 	out_va = iv3d.obj[IV3D_OBJ_OUTPUT].map->dm_segs[0].ds_addr;
