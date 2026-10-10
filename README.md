@@ -483,8 +483,12 @@ on every board in the hardware catalog.
   reads HUB/CORE/MMU registers after validated clock/reset and stable idle SMS
   checks. A separate opt-in [native reset probe](ember/boot/bcm2712-v3d-takeover.md)
   completes SMS and PM reset on that CM5 and validates the post-reset inventory.
-  The ordinary kernel remains a passive observer. GPU DMA/MMU operation, interrupts,
-  command submission, Mesa rendering and acceleration remain unverified.
+  A further opt-in [first DMA/TFU experiment](ember/boot/bcm2712-v3d-dma.md)
+  published the GPU MMU on that CM5 and executed one translated 64x64 R32F
+  TFU copy through alias addresses with verified destination data, untouched
+  canaries and an exactly-once completion counter. The ordinary kernel remains
+  a passive observer. GPU interrupts, fault recovery, bin/render queues, a
+  DRM render interface, Mesa rendering and acceleration remain unverified.
 
 ### Board support and system builds
 

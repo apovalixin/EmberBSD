@@ -1,7 +1,8 @@
 # BCM2712 V3D first DMA/TFU experiment
 
 Status on 2026-10-10: implemented in the opt-in `EMBERV3DDMA`
-configuration; physical acceptance pending. This realizes the reviewed
+configuration and **physically accepted once** on the stand CM5:
+the translated copy passed (see the result below). This realizes the reviewed
 [handoff design](bcm2712-v3d-dma-plan.md) after a completed
 [takeover](bcm2712-v3d-takeover.md). It is the first GPU DMA and
 command execution on EmberBSD CM5; it is not DRM, not a driver for
@@ -93,6 +94,29 @@ without POSTREAD and release-after-publication) are rejected.
 On 2026-10-10 the contract passed 35 cases and 209 checks on macOS
 with ASan/UBSan. These tests substitute hardware services; they do
 not access physical V3D.
+
+## Physical CM5 result
+
+The complete `EMBERV3DDMA` kernel from clean commit `5d7278c3bab4`
+(Kernel SHA256 `93f0741ec93247e020e3c17172463c87898d06d191550f90176215f5473d745e`)
+booted on physical Compute Module 5 Rev 1.0, BCM2712 D0, 4 GiB, on
+2026-10-10. The observer identified V3D 7.1, the reset takeover
+completed a second time with identical identification fields, and the
+DMA experiment printed:
+
+```text
+MMU_DEBUG=0x20804664 PA36 VA36; using the 32-bit DMA window only
+translated DMA PASS: TFU copied the actual source pattern through alias addresses; CVTCT 0->1; allocations retained until reboot
+```
+
+This establishes the first GPU DMA and command execution on EmberBSD:
+one TFU raster copy translated through the published page table with
+both sources, the alias destination, canary pages and the scratch
+verified unchanged. It does not establish interrupts, fault recovery,
+bin/render queues, DRM, Mesa or any application path. After recording,
+the board was returned to the ordinary `EMBER64` kernel; the passive
+observer and SSH were rechecked. The source boot log SHA256 is
+`27e9685bd409a4985f9444a00937d8a9423b96a550283e94108b1e6fc224a99e`.
 
 ## Physical acceptance guide
 
