@@ -36,6 +36,9 @@ int bcmv3d_dma_probe(device_t, bus_dma_tag_t);
 #if defined(BCM2712_V3D_TAKEOVER) && defined(BCM2712_V3D_QUEUE_PROBE)
 int bcmv3d_queue_probe(device_t, bus_dma_tag_t);
 #endif
+#if defined(BCM2712_V3D_TAKEOVER) && defined(BCM2712_V3D_IRQ_PROBE)
+int bcmv3d_irq_probe(device_t, bus_dma_tag_t, ACPI_HANDLE);
+#endif
 
 #define BCMV3D_HUB	0
 #define BCMV3D_CORE	1
@@ -76,6 +79,7 @@ struct bcmv3d_softc {
 	device_t sc_dev;
 	bus_space_tag_t sc_bst;
 	bus_dma_tag_t sc_dmat;
+	ACPI_HANDLE sc_handle;
 	const char *sc_stage;
 	struct bcmv3d_clock_result sc_clock_state, sc_clock_rate;
 	uint32_t sc_pm;
@@ -322,6 +326,12 @@ bcmv3d_finalize(device_t dev)
 		if (takeover == 0)
 			(void)bcmv3d_queue_probe(dev, sc->sc_dmat);
 #endif
+#ifdef BCM2712_V3D_IRQ_PROBE
+		/* The interrupt experiment owns the jobs; no polling probe. */
+		if (takeover == 0)
+			(void)bcmv3d_irq_probe(dev, sc->sc_dmat,
+			    sc->sc_handle);
+#endif
 	}
 #endif
 	return 0;
@@ -357,6 +367,7 @@ bcmv3d_attach(device_t parent, device_t self, void *aux)
 	sc->sc_bst = aa->aa_memt;
 	/* GPU0's own ACPI DMA tag: the 32-bit window honoring _CCA=0. */
 	sc->sc_dmat = aa->aa_dmat;
+	sc->sc_handle = aa->aa_node->ad_handle;
 	aprint_naive("\n");
 	aprint_normal(": BCM2712 V3D passive observer\n");
 	if (ACPI_FAILURE(acpi_eval_integer(aa->aa_node->ad_handle,
