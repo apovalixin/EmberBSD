@@ -11,6 +11,7 @@ IOCONF= UCOM.ioconf
 
 SRCS=	ucom.c ucom_transport_core.c ucom_transport_rx.c uplcom.c u3g.c
 
+SRCS+=	umoxa_frame.c umoxa_g2_txq.c
 SRCS+=	ucom_at_usb.c
 
 .include <bsd.lib.mk>

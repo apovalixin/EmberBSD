@@ -483,10 +483,11 @@ on every board in the hardware catalog.
 
 ### Board support and system builds
 
-- **MOXA G2 driver preparation:** [framing, state and bounded RX helpers](ember/boot/moxa-serial.md)
-  pass 22 host C contract groups. An opt-in `ucom` backend passes thirteen native
+- **MOXA G2 driver preparation:** [framing, shared TX, state and bounded RX helpers](ember/boot/moxa-serial.md)
+  pass 33 host C contract groups. An opt-in `ucom` backend passes sixteen native
   rump groups with test-only USB, including TTY exchange, close barriers,
-  stale completions, faults and concurrent control. All 17 existing serial
+  stale completions, per-port SEND_NEXT timeout, shared-stream faults and
+  concurrent control. All 17 existing serial
   method-table owners cross-compile. A real MOXA USB parent, firmware and
   physical serial checks remain pending.
 - **Allwinner A733** (Orange Pi Zero 4 and Zero 3W), a chip the base

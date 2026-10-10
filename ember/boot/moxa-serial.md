@@ -16,9 +16,11 @@ pending. UPort 1150 and Ethernet NPort require separate implementations.
   detach, fault and TX completion state. Its contract has eight named groups.
 - `sys/dev/usb/ucom_transport_rx.{c,h}` provides a bounded per-port RX ring;
   six groups pin FIFO/wrap, capacity, atomic overflow, hysteresis and isolation.
+- `sys/dev/usb/umoxa_g2_txq.{c,h}` schedules four copied TX jobs over one
+  owned wire frame; eleven groups check credit, fairness, lifetime and faults.
 - Host C99 builds use `-Wall -Wextra -Werror`; available ASan/UBSan builds
   run the same contracts. Host execution validates a sequential model.
-  The real `ucom`/TTY path has a separate ten-group native rump fixture.
+  The real `ucom`/TTY path has a separate sixteen-group native rump fixture.
   Its USB stubs exercise no hardware. Physical USB behaviour and sustained
   operation still need validation before a device support claim.
 
@@ -27,6 +29,7 @@ outside the source tree for each command:
 
 ```sh
 sh ember/tools/umoxa-frame-test.sh /absolute/new-frame-output
+sh ember/tools/umoxa-g2-txq-test.sh /absolute/new-txq-output
 sh ember/tools/ucom-transport-core-test.sh /absolute/new-state-output
 sh ember/tools/ucom-transport-rx-test.sh /absolute/new-rx-output
 ```
@@ -39,14 +42,14 @@ runtime/test failure fails the command. These runners execute host binaries,
 so an AArch64 cross compiler is not a replacement for their host `CC`.
 
 After preparing an EMBER64 cross build with the fork's
-[wrapper](cross-build.md), compile the three conditional kernel helpers:
+[wrapper](cross-build.md), compile the four conditional kernel helpers:
 
 ```sh
 sh ember/tools/moxa-core-cross-check.sh /absolute/clean-source \
     /absolute/kernel-build /absolute/new-kernel-object-output
 ```
 
-The output's parent must already exist. This checks three AArch64 kernel
+The output's parent must already exist. This checks four AArch64 kernel
 objects using the generated `nbmake-evbarm` compiler and kernel headers;
 it does not link the helpers into a kernel or execute target code. Keep
 source revisions and header/toolchain provenance with the resulting receipt.
@@ -84,8 +87,8 @@ B7A1FD7C2E1A23259E5696611FBE0CDEF50912E85200C70EBA6CF80DF86B90985ED774E69B8E7A24
 
 These are independent BSD-2-Clause helpers based on wire facts. Vendor GPL
 code and firmware are not included. Device revision and actual descriptors
-still need validation. SEND_NEXT event processing, its timeout/scheduling
-and UART drain semantics belong to the future USB parent.
+still need validation. SEND_NEXT scheduling is implemented below. Actual USB event delivery,
+receive/purge barriers and UART drain semantics belong to the future parent.
 
 ## State contract
 
@@ -104,12 +107,54 @@ Other NULL arguments produce EINVAL or a rejected boolean query/completion.
 - Close permits a new lifetime after a fault. Detach is final. Epoch overflow
   leaves the port detached; cookie overflow faults it. Neither counter wraps.
 - Each instance is independent. This does not prove isolation in a shared USB
-  scheduler; that scheduler and quiescent stop/detach are still to be built.
+  scheduler; the shared scheduler below is exercised in a software fixture,
+  while actual USB stop/detach barriers remain to be built.
 
 An epoch identifies host callbacks, not bytes still in a UART or device queue.
 The parent must establish purge/enable and USB completion barriers on reopen.
 The core leaves TTY output accounting to the bridge; it cannot infer whether
 an errored USB transfer already reached the physical line.
+
+## Shared G2 transmit scheduling
+
+`umoxa_g2_txq` takes a frame budget5..1024 (including the four-byte header)
+and a nonzero timeout in monotonic milliseconds. Each of four ports owns one
+copied payload1..budget-4; all ports share one stable borrowed wire frame.
+No allocation, I/O or child callback occurs inside the engine. Caller supplies
+locking and physical USB abort/completion barriers. Output structs/masks and
+input spans must not alias the engine or one another. Reinitialize only after
+quiescence. Struct fields are caller storage, not mutable configuration.
+
+Open requires a strictly increasing nonzero per-port epoch; submit requires
+an increasing nonzero cookie. Closed/faulted/old submissions return errno.
+Round-robin pick returns EBUSY for the shared active transfer, EAGAIN for no
+eligible job, or a token/port/epoch/cookie/frame on success. Tokens never wrap.
+Done consumes only a matching physical token; stale/duplicate tokens return0.
+Its result delivers child acknowledgement only for the still-open matching job.
+Payload accounting excludes the wire header. Close invalidates a port but
+retains its active frame; reopen is EBUSY until physical completion/abort.
+
+Following the pinned v6.2 ordering, when prior dispatched payload totals>=512,
+the next dispatch sets SEND_NEXT and arms that port's credit deadline. USB done
+and event2 are separate: early event2 clears the wait before done; an unarmed
+credit is ignored. Only an armed wait resets the payload counter. A queued job
+behind a wait does not block peers. The timeout is caller policy, not measured
+MOXA latency. Pick/tick reject backward time. Token/deadline overflow faults
+all open ports EOVERFLOW instead of wrapping.
+
+Successful short/overlong completion faults its owner EIO/EPROTO. SEND_NEXT-only
+expiry faults its owner ETIMEDOUT. USB error/watchdog or malformed shared event
+batch faults all open ports. The event decoder validates every record before
+admitting credit. Fault masks describe new faults; notify children outside the
+parent lock. Fault clears queued jobs but retains an active frame until real
+completion/abort; never replay an uncertain transfer automatically.
+
+Wire credits have no epoch/cookie. A late old event during a new armed wait is
+indistinguishable; the real parent must establish receive/purge barriers and
+verify them on hardware. These helpers do not claim UART drain semantics.
+The private rump parent uses a1024-byte frame/1020-byte payload budget and a
+100ms synthetic clock policy. It aborts its software flight synchronously on
+stop; that test operation is not proof of USB controller quiescence.
 
 ## External ucom backend
 
@@ -206,11 +251,12 @@ sh ember/tools/ucom-transport-rump-test.sh /absolute/clean-source \
 
 The runner builds a private component containing real ucom/core/RX and a
 test-only parent, links to the runtime's TTY/VFS/rump libraries, and records
-those library hashes. Thirteen groups exercise actual device nodes, data exchange,
+those library hashes. Sixteen groups exercise actual device nodes, data exchange,
 stale completion/reopen, partial TX fault, RX pressure/overflow, flush,
 rejected/serialized controls, drain/resume/flush progress, dispatch-close
 ordering, blocked read/poll, poll-registration races, healthy/fault kqueue
-faults and detach/failed attach. Three attach warnings are intentional
+faults, shared four-port scheduling/credit timeout/shared event faults and
+detach/failed attach. Three attach warnings are intentional
 invalid children. Raw rump syscall clients retry RUMP_ERESTART where ordinary
 kernel/libc syscall handling would restart. This is bounded native software
 acceptance, not a complete rebuilt OS, USB stack or physical-device test.
@@ -226,5 +272,5 @@ sh ember/tools/ucom-transport-cross-check.sh /absolute/clean-source \
 
 This matrix does not link a kernel; run the full kernel wrapper separately
 from that same pinned source for the configured link and matched modules.
-GitHub CI runs the 22 host groups on Linux/macOS; it does not run the native
+GitHub CI runs the 33 host groups on Linux/macOS; it does not run the native
 fixture or kernel build. Keep those separate receipts with a published change.

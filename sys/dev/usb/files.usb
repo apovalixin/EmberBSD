@@ -139,6 +139,8 @@ attach	ucom at ucombus
 file	dev/usb/ucom.c			ucom | ucombus		needs-flag
 file	dev/usb/ucom_transport_core.c	ucom | ucombus
 file	dev/usb/ucom_transport_rx.c	ucom | ucombus
+file	dev/usb/umoxa_frame.c		ucom | ucombus
+file	dev/usb/umoxa_g2_txq.c		ucom | ucombus
 
 
 # Generic devices
