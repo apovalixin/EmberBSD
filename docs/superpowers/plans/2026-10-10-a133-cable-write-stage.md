@@ -50,7 +50,7 @@ native combined fixture; README.md and ember/boards/ys-m33-a133-cable-stage.md.
 - [x] Check syntax, diff and public links; commit implementation/docs.
 - [x] One fresh GPT-6 Astra high review of full current plan range; regression-first
   Important/Critical fixes once, record every ruling/minor and final test evidence.
-- [ ] Update existing draft PR and both wikis; cleanup only this plan scratch.
+- [x] Update existing draft PR and both wikis; cleanup only this plan scratch.
 
 ## Current verification
 
@@ -89,6 +89,14 @@ a133-recovery-protection-regression-test.rb
 a133-cable-install-test.rb
 a133-unlock-stage-test.rb
 ```
+
+Host milestone completed. Code fix1c0d362f5904 is published in the existing
+draft PR; both knowledge bases are synchronized. The task-done checkpoint
+repeated Journal15 and bundle-pin2 on both runtimes after reading the complete
+26-suite outputs; the cheap checkpoint does not substitute for those matrices.
+Only this plan's completed scratch was removed. The worktree is retained.
+Next: accepted first boot/recovery release, then fresh capture integration and
+physical cable installation/restoration acceptance. No merge or physical write.
 
 ## Execution rulings
 
