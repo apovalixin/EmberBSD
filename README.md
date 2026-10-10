@@ -99,7 +99,7 @@ application stacks, adaptations and runnable checks. Small installations
 can keep only the components they need. Upstream components retain their
 own licenses and authorship.
 
-Status updated **2026-10-08**; linked component documents record their own
+Status updated **2026-10-10**; linked component documents record their own
 validation dates. Application tests on an AArch64 VM do not establish support
 on every board in the hardware catalog.
 
@@ -493,6 +493,27 @@ on every board in the hardware catalog.
   through the published page table. The ordinary kernel remains a passive
   observer. GPU interrupts, fault recovery, multi-job queues, a DRM render
   interface, Mesa rendering and acceleration remain unverified.
+
+### Network diagnostics kit
+
+- **Board-side capture, analysis and load tools:** EmberBSD-Ports carries a
+  [network diagnostics profile](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/network-diagnostics)
+  with libpcap 1.10.7, tcpdump 4.99.6, iperf3 3.21 and the Wireshark 4.6.8
+  CLI set (dumpcap, tshark, capinfos, editcap, mergecap), cross-built from
+  binary packages on the development host. On Raspberry Pi 5 (EmberBSD
+  11.0, board `ember-rpi5-01`) tcpdump captured live Wi-Fi traffic through
+  BPF without kernel drops, iperf3 measured TCP, reverse TCP and zero-loss
+  UDP jitter against a LAN peer, and dumpcap completed a three-file
+  ring-buffer capture under load with per-interface drop accounting.
+- **Native Bluetooth HCI recording:** the `hcisnoop` recorder in the same
+  profile reads the netbt HCI socket tap (direction from
+  `SCM_HCI_DIRECTION`, timestamps from `SO_TIMESTAMP`) and writes BTSnoop
+  traces that Wireshark opens as "Bluetooth HCI H4" without any Linux
+  BlueZ dependency. It recorded a real controller inquiry on the same
+  board with correct host/controller directions. Wi-Fi monitor mode with
+  Radiotap, Lua dissectors, the Wireshark GUI on boards and Ethernet
+  MAC/PHY telemetry remain separate queue items; see the profile README
+  for the current boundaries.
 
 ### Board support and system builds
 
