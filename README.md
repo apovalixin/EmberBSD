@@ -36,28 +36,33 @@ are maintained in the related repositories below.
 | [EmberBSD-Runtime](https://github.com/oxtech-ember/EmberBSD-Runtime) | Application execution, lifecycle, permissions and shared device operations | Design stage; no released runtime implementation |
 | [EmberBSD-SDK](https://github.com/oxtech-ember/EmberBSD-SDK) | Application interfaces, package contracts, developer tools and compatibility checks | Design stage; no stable application API or released SDK tools |
 | [Ember-Agent-Skills](https://github.com/oxtech-ember/Ember-Agent-Skills) | Instructions for developers and their AI assistants | Application development, board bring-up, shared ports and tested contributions |
-| [EmberBSD-User-Skills](https://github.com/oxtech-ember/EmberBSD-User-Skills) | Instructions for users and their local or remote AI assistants | Applications, device diagnostics, personal Ports and GitHub workflows; package checks and client discovery verified |
+| [EmberBSD-User-Skills](https://github.com/oxtech-ember/EmberBSD-User-Skills) | Instructions for users and their local or remote AI assistants | OS installation onto boards, desktop VMs and USB-cabled phones, applications, device diagnostics, personal Ports and GitHub workflows; package checks and client discovery verified |
 
 Runtime will execute applications on the device; SDK will define their
 interfaces and development tools. Examples demonstrate usable scenarios;
 Ports owns adaptations to third-party software. Agent-Skills helps developers
-use these projects and contribute fixes. User-Skills guides device operation
-and personal software changes, including source patches that follow upstream.
+use these projects and contribute fixes. User-Skills guides OS installation,
+device operation and personal software changes, including source patches that
+follow upstream.
 A repository's intended purpose is not a claim that all of its planned features
 are implemented.
 
 ## Connect user skills
 
 [EmberBSD-User-Skills](https://github.com/oxtech-ember/EmberBSD-User-Skills)
-provides the `emberbsd-user` package and `emberbsd-user-guide` skill. Use it to
-install and configure applications, diagnose faults, or maintain personal Ports
-patches and publish them to your selected GitHub repository. Personal source
-customization stays a user workflow; it does not require a contribution PR.
+provides the `emberbsd-user` package with the `emberbsd-install` and
+`emberbsd-user-guide` skills. Use it to install EmberBSD on a board, a desktop
+VM or a USB-cabled phone from the host, then configure applications, diagnose
+faults, or maintain personal Ports patches and publish them to your selected
+GitHub repository. Installation methods stay device-general; per-board
+procedures live in `ember/boards`. Personal source customization stays a user
+workflow; it does not require a contribution PR.
 
 Follow the [loading instructions](https://github.com/oxtech-ember/EmberBSD-User-Skills#load-the-package)
-for your client. Both skill packages can coexist. Version 0.1.0 passed package
-consistency and native Codex discovery checks; these checks do not establish
-on-device agent behavior or end-to-end personal Ports maintenance. The package
+for your client. Both skill packages can coexist. Version 0.2.1 passed package
+consistency checks and version 0.1.0 passed native Codex discovery; these
+checks do not establish on-device agent behavior, cable-installer acceptance
+or end-to-end personal Ports maintenance. The package
 uses available tools and supplies no agent runtime or credentials.
 
 ## Connect developer skills
@@ -630,9 +635,9 @@ on every board in the hardware catalog.
   Migrating GCC16's hardcoded bootstrap as/ld defaults remains pending.
   [Developer skills](#connect-developer-skills) help
   AI coding assistants find the owning project, test changes and prepare
-  contributions. [User skills](#connect-user-skills) guide application use,
+  contributions. [User skills](#connect-user-skills) guide OS installation, application use,
   device diagnosis and personal Ports maintenance with the available tools;
-  package discovery is verified, while on-device agent behavior remains untested.
+  package checks are verified, while on-device agent behavior remains untested.
   A general validated installation image is not yet released.
 
 The costs are equally plain. Fixes from upstream are merged by hand.
