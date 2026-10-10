@@ -1043,6 +1043,25 @@ main(void)
 	run_case("cleared image mismatch", EIO);
 	CHECK(strstr(fx.last_message, "cleared image mismatch") != NULL);
 
+	/* Handler self-protection: a level line asserting without our bit
+	 * must be masked by the handler itself, not by the waiting thread. */
+	{
+		int rc;
+
+		reset_fixture();
+		fake_handlers[1].established = true;
+		fake_handlers[1].fn = iv3d_hub_intr;
+		hub_bank.mask = 0;	/* line unmasked, nothing latched */
+		for (i = 0; i < IV3D_STORM_LIMIT + 3; i++)
+			rc = fake_handlers[1].fn(NULL);
+		cases++;
+		checks++;
+		if (!(rc == 0 && (hub_bank.mask & IV3D_HUB_TFUC) != 0)) {
+			printf("FAIL case 'hub handler self-mask'\n");
+			exit(1);
+		}
+	}
+
 	printf("PASS: %u cases, %u checks\n", cases, checks);
 	return 0;
 }

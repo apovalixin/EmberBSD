@@ -177,15 +177,21 @@ static int
 iv3d_hub_intr(void *arg)
 {
 	uint32_t status;
+	int error;
 
 	(void)arg;
-	int error;
 
 	error = bcmv3d_takeover_hub_peek(IV3D_INT_STS, &status);
 	if (error != 0)
 		return 0;
 	if ((status & IV3D_HUB_TFUC) == 0) {
-		iv3d.hub_spurious++;
+		/* A level line we cannot handle must be masked HERE:
+		 * waiting-thread logic never runs during a livelock. */
+		if (++iv3d.hub_spurious > IV3D_STORM_LIMIT) {
+			bcmv3d_takeover_hub_poke(IV3D_MSK_SET,
+			    IV3D_HUB_TFUC);
+			wakeup(&iv3d.hub_delivered);
+		}
 		return 0;
 	}
 	/* Level-high line: ack exactly the handled bit before waking. */
@@ -208,7 +214,11 @@ iv3d_core_intr(void *arg)
 		return 0;
 	ours = status & IV3D_CORE_DONE;
 	if (ours == 0) {
-		iv3d.core_spurious++;
+		if (++iv3d.core_spurious > IV3D_STORM_LIMIT) {
+			bcmv3d_takeover_core_poke(IV3D_MSK_SET,
+			    IV3D_CORE_DONE);
+			wakeup(&iv3d.core_delivered);
+		}
 		return 0;
 	}
 	bcmv3d_takeover_core_poke(IV3D_INT_CLR, ours);
