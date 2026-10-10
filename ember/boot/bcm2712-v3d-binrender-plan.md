@@ -1,14 +1,15 @@
 # BCM2712 first bin/render queue experiment: handoff design
 
-Status on 2026-10-10: **implemented, contracted and reviewed** behind
-`BCM2712_V3D_QUEUE_PROBE` (`bcm2712_v3d_queue.c`, `EMBERV3DQUEUE`); the
-review's two packet-encoding blockers are fixed. The first physical boot
-of the built kernel left the stand CM5 unreachable (no SSH or ICMP from
-two peers for ten minutes; see the wiki receipt) — queue execution on
-hardware is neither confirmed nor denied, and a repeat install must first
-address the stalled-MMIO hang risk, for example by submitting the lists
-on explicit operator request with a watchdog timeout instead of running
-from autoconfiguration.
+Status on 2026-10-10: **implemented, contracted, reviewed and physically
+accepted once** behind `BCM2712_V3D_QUEUE_PROBE` (`bcm2712_v3d_queue.c`,
+`EMBERV3DQUEUE`); the review's two packet-encoding blockers were fixed
+before the build. On the stand CM5 the kernel booted the observer, the
+takeover, the translated DMA experiment and then this queue experiment,
+which printed `bin/render PASS: one 64x64 tile cleared to 0x305e7b4c and
+stored through both control lists`. An earlier unreachable period after
+the first install turned out to be the stand's Wi-Fi (band steering on
+2.4 GHz), not the kernel; the board was returned to the ordinary kernel
+and rechecked. See the result section below for the bounds.
 The prerequisite [translated DMA/TFU experiment](bcm2712-v3d-dma.md) passed
 once on physical CM5; this experiment is the next step of the same opt-in
 path. All register, sequence and packet facts below are pinned to
@@ -167,6 +168,25 @@ wrong store address/format/stride, missing START_TILE_BINNING, missing
 FLUSH epilogue, release-after-publication. Independent review and a
 complete clean-commit build of `EMBERV3DQUEUE` before any installation;
 the ordinary CM5 recovery bundle must still verify.
+
+## Physical CM5 result
+
+The complete `EMBERV3DQUEUE` kernel from clean commit `927088a3343`
+(Kernel SHA256 `8c9b78943db28185f2976fa303d6ac4aae874aec56716ebd6eeb9ac43a6b6652`)
+booted on physical Compute Module 5 Rev 1.0 on 2026-10-10. After the
+observer, the takeover and the accepted DMA experiment in the same boot,
+the queue experiment cleared one 64x64 tile through both control lists:
+
+```text
+bin/render PASS: one 64x64 tile cleared to 0x305e7b4c and stored through both control lists; allocations retained until reboot
+```
+
+This establishes the first bin and render control-list execution and the
+first tile clear/store datapath on EmberBSD: the binner completed (FLDONE)
+and the render stored the verified RGBA8 image (FRDONE) with every output
+word equal to the clear color, intact canaries, unmodified control lists
+and no MMU fault. The source boot log SHA256 is
+`c23e4d9f96ffb0d63b9624159187745ea00289bbc5369ce00a9bc5427349783a`.
 
 ## Bounds and next stages
 

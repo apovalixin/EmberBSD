@@ -486,9 +486,13 @@ on every board in the hardware catalog.
   A further opt-in [first DMA/TFU experiment](ember/boot/bcm2712-v3d-dma.md)
   published the GPU MMU on that CM5 and executed one translated 64x64 R32F
   TFU copy through alias addresses with verified destination data, untouched
-  canaries and an exactly-once completion counter. The ordinary kernel remains
-  a passive observer. GPU interrupts, fault recovery, bin/render queues, a
-  DRM render interface, Mesa rendering and acceleration remain unverified.
+  canaries and an exactly-once completion counter. A second opt-in
+  [bin/render queue experiment](ember/boot/bcm2712-v3d-binrender-plan.md)
+  then executed both control lists on that CM5: the binner completed and the
+  render stage cleared one 64x64 tile and stored the verified RGBA8 image
+  through the published page table. The ordinary kernel remains a passive
+  observer. GPU interrupts, fault recovery, multi-job queues, a DRM render
+  interface, Mesa rendering and acceleration remain unverified.
 
 ### Board support and system builds
 
