@@ -108,6 +108,16 @@ and the [NetBSD cross-build guide](https://www.netbsd.org/docs/guide/en/chap-bui
 
 ## Verified scope
 
+On 2026-10-10, the same cross path on Apple Silicon macOS also built the
+complete reduced base set (not only the kernel) following
+[aarch64-base-update.md](aarch64-base-update.md). The strict `checkflist`
+validation passed after correcting a stale `libdwarf` entry in the set lists,
+and the kernel, modules and base installed and passed their on-board
+acceptance on a physical Pi 5. One transient host `cc1` SIGTRAP under `-j8`
+did not reproduce; the build continued at `-j6`. The kernel wrapper itself
+does not yet pass `BUILDINFO`; the update guide requires the explicit
+`-V BUILDINFO=...` relink to record the source revision.
+
 On Apple Silicon macOS, the wrapper built the in-tree host tools, full
 `EMBER64`, four board modules and all three DTBs. The two portable contracts
 passed on that host; the full six-contract suite passed in AArch64 NetBSD
