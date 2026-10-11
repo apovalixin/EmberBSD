@@ -39,6 +39,9 @@ int bcmv3d_queue_probe(device_t, bus_dma_tag_t);
 #if defined(BCM2712_V3D_TAKEOVER) && defined(BCM2712_V3D_IRQ_PROBE)
 int bcmv3d_irq_probe(device_t, bus_dma_tag_t, ACPI_HANDLE);
 #endif
+#if defined(BCM2712_V3D_TAKEOVER) && defined(BCM2712_V3D_FAULT_PROBE)
+int bcmv3d_fault_probe(device_t, bus_dma_tag_t, ACPI_HANDLE);
+#endif
 
 #define BCMV3D_HUB	0
 #define BCMV3D_CORE	1
@@ -330,6 +333,12 @@ bcmv3d_finalize(device_t dev)
 		/* The interrupt experiment owns the jobs; no polling probe. */
 		if (takeover == 0)
 			(void)bcmv3d_irq_probe(dev, sc->sc_dmat,
+			    sc->sc_handle);
+#endif
+#ifdef BCM2712_V3D_FAULT_PROBE
+		/* The fault experiment owns the jobs; no polling probe. */
+		if (takeover == 0)
+			(void)bcmv3d_fault_probe(dev, sc->sc_dmat,
 			    sc->sc_handle);
 #endif
 	}
