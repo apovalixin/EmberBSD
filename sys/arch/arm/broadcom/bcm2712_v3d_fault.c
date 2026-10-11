@@ -130,6 +130,8 @@ static struct {
 
 int bcmv3d_irq_probe(device_t, bus_dma_tag_t, ACPI_HANDLE);
 
+int bcmv3d_fault_probe(device_t, bus_dma_tag_t, ACPI_HANDLE);
+
 /* --- interrupt handlers: ack only what we handle, then wake -------- */
 
 static int
