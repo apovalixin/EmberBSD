@@ -45,8 +45,27 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define FV3D_HUB_MMU_WRV	__BIT(5)
 #define FV3D_HUB_MMU_FAULTS	(FV3D_HUB_MMU_CAP | FV3D_HUB_MMU_PTI | \
     FV3D_HUB_MMU_WRV)
+#define FV3D_MMU_DEBUG		0x1238
+#define FV3D_MMU_PA_WIDTH	__BITS(11, 8)
+#define FV3D_MMU_VA_WIDTH	__BITS(7, 4)
+#define FV3D_MMUC_CTL		0x1000
+#define FV3D_MMUC_ENABLE	__BIT(0)
+#define FV3D_MMUC_FLUSH		__BIT(1)
+#define FV3D_MMUC_FLUSHING	__BIT(2)
+#define FV3D_MMU_CTL		0x1200
+#define FV3D_MMU_CTL_TLB_CLEAR	__BIT(2)
+#define FV3D_MMU_CTL_TLB_CLEARING __BIT(7)
+#define FV3D_MMU_CTL_FAULTS	(__BIT(27) | __BIT(20) | __BIT(12))
+#define FV3D_MMU_CTL_VALUE	UINT64_C(0x060d0c01)
+#define FV3D_MMU_PT_BASE	0x1204
+#define FV3D_MMU_ILLEGAL	0x1230
+#define FV3D_MMU_ILLEGAL_ENABLE	__BIT(31)
 #define FV3D_MMU_VIO_ID		0x122c
 #define FV3D_MMU_VIO_ADDR	0x1234
+#define FV3D_PAGE_SHIFT		12
+#define FV3D_PTE_VALID		__BIT(28)
+#define FV3D_PTE_WRITEABLE	__BIT(29)
+#define FV3D_PTE_PFN_LIMIT	__BIT(24)
 #define FV3D_TFU_CS		0x700
 #define FV3D_TFU_CVTCT_SHIFT	16
 #define FV3D_TFU_BUSY		__BIT(0)
@@ -414,7 +433,7 @@ bcmv3d_fault_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 {
 	struct acpi_resources res;
 	struct acpi_irq *hub_irq;
-	uint32_t debug, lsrc, ldst, asrc;
+	uint32_t debug, lsrc, ldst;
 	uint32_t vio_id = 0, vio_addr = 0, ctl;
 	size_t i, words;
 	int error;
@@ -478,7 +497,6 @@ bcmv3d_fault_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 	error = fv3d_allocate();
 	if (error != 0)
 		goto out;
-	asrc = fv3d.obj[FV3D_OBJ_TFU_ASRC].map->dm_segs[0].ds_addr;
 	lsrc = fv3d.obj[FV3D_OBJ_TFU_LSRC].map->dm_segs[0].ds_addr;
 	ldst = fv3d.obj[FV3D_OBJ_TFU_LDST].map->dm_segs[0].ds_addr;
 
@@ -535,7 +553,7 @@ bcmv3d_fault_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 	    FV3D_TFU_ICFG_VALUE /* starts the faulting copy */);
 	if (error != 0)
 		goto out;
-	error = fv3d_wait_delivered(FV3D_HUB_MMU_FAULTS);
+	error = fv3d_wait_delivered(FV3D_HUB_MMU_FAULTS | FV3D_HUB_TFUC);
 	if (error == ETIMEDOUT) {
 		fv3d.verdict = "MMU fault never arrived";
 		goto out;
@@ -544,7 +562,8 @@ bcmv3d_fault_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 		fv3d.verdict = "hub handler storm";
 		goto out;
 	}
-	if ((fv3d.delivered & FV3D_HUB_TFUC) != 0) {
+	if ((fv3d.delivered & FV3D_HUB_TFUC) != 0 &&
+	    (fv3d.delivered & FV3D_HUB_MMU_FAULTS) == 0) {
 		fv3d.verdict = "faulting job completed unexpectedly";
 		error = EIO;
 		goto out;
@@ -561,6 +580,25 @@ bcmv3d_fault_probe(device_t dev, bus_dma_tag_t dmat, ACPI_HANDLE handle)
 	fv3d.fault_bits = ctl & FV3D_MMU_CTL_FAULTS;
 	fv3d.vio_id = vio_id;
 	fv3d.vio_addr = vio_addr;
+	/* A faulted job must not have written the destination. */
+	bus_dmamap_sync(fv3d.dmat, fv3d.obj[FV3D_OBJ_TFU_ADST].map, 0,
+	    fv3d.obj[FV3D_OBJ_TFU_ADST].size,
+	    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
+	{
+		const uint32_t *image = fv3d.obj[FV3D_OBJ_TFU_ADST].kva;
+		size_t w, n = FV3D_IMAGE_SIZE / 4;
+
+		for (w = 0; w < n; w++) {
+			uint32_t page = w / (PAGE_SIZE / 4);
+
+			if (image[w] != fv3d_pattern(FV3D_OBJ_TFU_ADST, page,
+			    w % (PAGE_SIZE / 4))) {
+				fv3d.verdict = "destination canary modified";
+				error = EIO;
+				goto out;
+			}
+		}
+	}
 
 	/* Recovery exactly as pinned. */
 	fv3d.stage = "MMU fault recovery";
